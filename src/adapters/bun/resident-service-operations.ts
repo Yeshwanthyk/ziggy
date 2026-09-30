@@ -39,7 +39,8 @@ import {
   AutomationScheduler,
   type AutomationSchedulerApi,
 } from "../../application/automation-scheduler";
-import { ResidentGateway, type ResidentGatewayApi } from "../../application/resident-gateway";
+import type { ResidentGatewayApi } from "../../application/resident-gateway";
+import { inspectGatewayOwner } from "./gateway-owner";
 
 import {
   ResidentServiceOperations,
@@ -275,7 +276,7 @@ const startDefinition = (
 const waitForReady = (
   target: ProfileTarget,
   definition: ResidentServiceDefinition,
-  gateway: ResidentGatewayApi,
+  gateway: Pick<ResidentGatewayApi, "status">,
   runtime: ResidentServiceRuntime,
   previous?: GatewayOwnerStatus,
 ) =>
@@ -309,7 +310,7 @@ const waitForReady = (
 const waitForStopped = (
   target: ProfileTarget,
   definition: ResidentServiceDefinition,
-  gateway: ResidentGatewayApi,
+  gateway: Pick<ResidentGatewayApi, "status">,
   runtime: ResidentServiceRuntime,
 ) =>
   Effect.gen(function* () {
@@ -340,7 +341,7 @@ const waitForStopped = (
   });
 
 export const makeResidentService = (
-  gateway: ResidentGatewayApi,
+  gateway: Pick<ResidentGatewayApi, "status">,
   scheduler: AutomationSchedulerApi,
   runtime: ResidentServiceRuntime,
 ): ResidentServiceApi => {
@@ -519,6 +520,7 @@ export const makeResidentService = (
 
         return { manager: definition.manager, ...result };
       }),
+    owner: gateway.status,
     status: (target) =>
       Effect.gen(function* () {
         const definitionResult = yield* definitionFor(target, runtime, false).pipe(Effect.result);
@@ -577,6 +579,10 @@ export const ResidentServiceOperationsLive = Layer.effect(
     const paths = yield* ZiggyPaths;
     const runtime = yield* Effect.sync(() => liveRuntime(paths));
 
-    return makeResidentService(yield* ResidentGateway, yield* AutomationScheduler, runtime);
+    return makeResidentService(
+      { status: (target) => inspectGatewayOwner(target) },
+      yield* AutomationScheduler,
+      runtime,
+    );
   }),
 );

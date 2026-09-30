@@ -79,6 +79,8 @@ export interface ResidentServiceApi {
     follow: boolean,
   ) => Effect.Effect<ResidentLogsResult, ResidentServiceError>;
   readonly status: (target: ProfileTarget) => Effect.Effect<ResidentServiceStatus>;
+  /** Whether a resident owns the Profile right now, managed or not. */
+  readonly owner: (target: ProfileTarget) => Effect.Effect<GatewayOwnerStatus, GatewayOwnerError>;
 }
 
 export class ResidentService extends Context.Service<ResidentService, ResidentServiceApi>()(

@@ -594,7 +594,7 @@ read the artifact back first.
     - move delivery into `automations.ts` and drop the fence;
     - delete the transcript reset;
     - move UI verbs out.
-- [ ] **8. Composition.** Per-command layers only; delete `runCommand` and `CliLayer`.
+- [x] **8. Composition.** Per-command layers only; delete `runCommand` and `CliLayer`.
 - [ ] **9. Clean up.**
   - All face tests use `fake-chat.ts`.
   - Delete the re-exports at old paths.

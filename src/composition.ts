@@ -82,33 +82,64 @@ const ResidentGatewayLayer = ResidentGatewayLive.pipe(
 const ResidentServiceLayer = ResidentServiceLive.pipe(
   Layer.provide(
     ResidentServiceOperationsLive.pipe(
-      Layer.provide(Layer.mergeAll(ResidentGatewayLayer, AutomationSchedulerLayer, ZiggyPathsLive)),
+      Layer.provide(Layer.merge(AutomationSchedulerLayer, ZiggyPathsLive)),
     ),
   ),
 );
 
-const ResidentLayer = Layer.merge(ResidentGatewayLayer, ResidentServiceLayer);
-
-/** Every service the CLI commands use, with Pi's standalone registrations installed first. */
-export const CliLayer = Layer.mergeAll(
-  Profiles.layer,
-  ZiggyAgentLayer,
-  Auth.layer,
-  Models.layer,
-  DoctorLayer,
+/** `ziggy init`, `profiles`, `doctor`, `auth ...`: setting up and checking a Profile. */
+export const ProfileCommandsLayer = Layer.mergeAll(
   SetupLayer,
-  ProfileAgentsLayer,
-  AutomationDefinitionsLive,
-  AutomationsLayer,
-  AutomationSchedulerLayer,
-  Sessions.layer,
-  Extensions.layer,
-  SelfUpdateLayer,
-  MemoryLayer,
-  ResidentLayer,
+  Profiles.layer,
+  Auth.layer,
+  DoctorLayer,
   ZiggyPathsLive,
   TerminalStyle.layer,
 ).pipe(Layer.provide(PiStandaloneRuntimeLive));
+
+/** `ziggy update`: replace this Ziggy install with the latest release. */
+export const UpdateCommandsLayer = SelfUpdateLayer;
+
+/** `ziggy extensions ...`: the catalog and a Profile's selection. */
+export const ExtensionsCommandsLayer = Layer.mergeAll(
+  Profiles.layer,
+  Extensions.layer,
+  ResidentServiceLayer,
+  ZiggyPathsLive,
+  TerminalStyle.layer,
+).pipe(Layer.provide(PiStandaloneRuntimeLive));
+
+/** `ziggy agents ...`: a Profile's agent files and one-off agent runs. */
+export const AgentsCommandsLayer = Layer.merge(ProfileAgentsLayer, ZiggyPathsLive).pipe(
+  Layer.provide(PiStandaloneRuntimeLive),
+);
+
+/** `ziggy run` and `ziggy acp`: one session in the foreground. */
+export const RunCommandsLayer = Layer.mergeAll(
+  ZiggyAgentLayer,
+  Models.layer,
+  Sessions.layer,
+  ZiggyPathsLive,
+).pipe(Layer.provide(PiStandaloneRuntimeLive));
+
+/** `ziggy automations ...` and `ziggy wake`. */
+export const AutomationsCommandsLayer = Layer.mergeAll(
+  AutomationDefinitionsLive,
+  AutomationsLayer,
+  AutomationSchedulerLayer,
+  ResidentServiceLayer,
+  ZiggyPathsLive,
+).pipe(Layer.provide(PiStandaloneRuntimeLive));
+
+/** `ziggy serve install|start|stop|...`, `web ...` and `open`: the managed resident. */
+export const ResidentCommandsLayer = Layer.merge(ResidentServiceLayer, ZiggyPathsLive).pipe(
+  Layer.provide(PiStandaloneRuntimeLive),
+);
+
+/** `ziggy serve <profile>`: the resident itself, in the foreground. */
+export const ServeCommandsLayer = Layer.merge(ResidentGatewayLayer, ZiggyPathsLive).pipe(
+  Layer.provide(PiStandaloneRuntimeLive),
+);
 
 /** `ziggy models ...`: the model catalog and a Profile's selection. */
 export const ModelsCommandsLayer = Layer.mergeAll(Models.layer, ZiggyPathsLive).pipe(
