@@ -33,7 +33,13 @@ import { SidebarSection } from "@/components/sidebar-section";
 import { Textarea } from "@/components/ui/textarea";
 import { readSavedConnection } from "@/components/settings/connection-pane";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
-import { type ConversationSummary, useZiggyGateway } from "@/gateway";
+import { type ConversationSummary, type GatewayConnector, useZiggyGateway } from "@/gateway";
+
+// The DOM lib does not yet declare the CSSOM View container option.
+const transcriptEndScrollOptions: ScrollIntoViewOptions & { container: "nearest" } = {
+  block: "end",
+  container: "nearest",
+};
 
 const avatar = (name: string, active = false, size = 32) => (
   <BotAvatar active={active} className="bot-avatar" name={name} size={size} />
@@ -162,13 +168,18 @@ const shortAgentDescription = (description: string, profileName: string): string
     : first;
 };
 
-export function App() {
-  const gateway = useZiggyGateway();
+/** A fixed connection skips auth discovery; the dev gallery uses it to render sample data. */
+export type AppConnection = { readonly connector: GatewayConnector; readonly url: string };
+
+export function App({ connection }: { readonly connection?: AppConnection } = {}) {
+  const gateway = useZiggyGateway(connection?.connector);
   const [connectionOpen, setConnectionOpen] = useState(false);
   const [hosted, setHosted] = useState(false);
   const [pairingRequired, setPairingRequired] = useState(false);
   const [discoveryAttempt, setDiscoveryAttempt] = useState(0);
-  const [startupPending, setStartupPending] = useState(() => readSavedConnection() !== undefined);
+  const [startupPending, setStartupPending] = useState(
+    () => connection !== undefined || readSavedConnection() !== undefined,
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
@@ -189,14 +200,14 @@ export function App() {
   }, [gateway.profile?.name]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
+    endRef.current?.scrollIntoView(transcriptEndScrollOptions);
   }, [gateway.pendingUser, gateway.streamText, gateway.tools]);
 
   useEffect(() => {
     const first = gateway.history[0];
     const nextKey = first === undefined ? undefined : historyKey(first, 0);
     if (nextKey !== undefined && firstHistoryKeyRef.current === undefined)
-      endRef.current?.scrollIntoView({ block: "end" });
+      endRef.current?.scrollIntoView(transcriptEndScrollOptions);
     firstHistoryKeyRef.current = nextKey;
   }, [gateway.history]);
 
@@ -288,8 +299,12 @@ export function App() {
 
   useEffect(() => {
     if (autoConnectStartedRef.current) return;
-    const saved = readSavedConnection();
     autoConnectStartedRef.current = true;
+    if (connection !== undefined) {
+      void connect(connection.url, undefined, false, false);
+      return;
+    }
+    const saved = readSavedConnection();
     const pairingCode = new URLSearchParams(location.hash.slice(1)).get("code");
     const pairing =
       pairingCode === null
@@ -821,7 +836,15 @@ export function App() {
               <ToolActivity count={tools.length} key={groupIndex}>
                 {tools.map((tool) => (
                   <div className="tool-line live" key={tool.id}>
-                    <span className={tool.failed ? "tool-dot is-error" : "tool-dot"} />
+                    <span
+                      className={
+                        tool.failed
+                          ? "tool-dot is-error"
+                          : tool.phase === "end"
+                            ? "tool-dot"
+                            : "tool-dot is-running"
+                      }
+                    />
                     <span>{tool.name}</span>
                     <span>
                       {tool.phase === "end" ? (tool.failed ? "failed" : "finished") : "working"}
@@ -830,6 +853,20 @@ export function App() {
                 ))}
               </ToolActivity>
             ))}
+            {gateway.busy &&
+            gateway.streamText.length === 0 &&
+            gateway.tools.every((tool) => tool.phase === "end") ? (
+              <article className="message assistant thinking" role="status">
+                <div className="message-author">{gateway.selectedTitle}</div>
+                <div className="message-body">
+                  <span className="typing-dots" aria-label="Thinking">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                </div>
+              </article>
+            ) : null}
             {gateway.streamText.length === 0 ? null : (
               <article className="message assistant streaming">
                 <div className="message-author">{gateway.selectedTitle}</div>
@@ -843,7 +880,7 @@ export function App() {
                 {gateway.localError}
               </div>
             )}
-            <div ref={endRef} />
+            <div className="transcript-end" ref={endRef} />
           </div>
         </ScrollArea>
 

@@ -1,0 +1,26 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "ZIGGY_HOME=/Users/yesh/code/personal/dump/ziggy-verify/home",
+        "bun",
+        "src/main.ts",
+        "serve",
+        "/Users/yesh/code/personal/dump/ziggy-verify/luna"
+      ],
+      "port": 4318
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd clients/web && exec node_modules/.bin/vp dev --host 127.0.0.1 --port 4175 --strictPort"
+      ],
+      "port": 4175
+    }
+  ]
+}

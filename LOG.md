@@ -1501,9 +1501,23 @@ Automation delivery to a channel goes through one seam, `Deliver = (profile, tar
 - `makeResidentService` takes an `inspectOwner` function instead of a `Pick<ResidentGatewayApi, "status">`; the adapter no longer imports the gateway application type.
 - LOG step 8 entry corrected: the service layer still builds the agent stack through `AutomationScheduler`.
 
+## Web UI: dev component gallery and phone chat layout
+
+- `clients/web/src/gallery/`: dev-only gallery at `/gallery` (phone and desktop iframes of the real chat screen per scenario, plus buttons, avatars, messages, composer, sidebar rows). `/gallery/screen?scenario=conversation|working|empty` runs the real `App` against `fixture-gateway.ts`, a typed `GatewayClient` stand-in that serves sample data and streams a reply on submit. `main.tsx` loads it only under `import.meta.env.DEV`; a production build contains no gallery code.
+- `App` takes an optional `connection` (`{ connector, url }`) that skips auth discovery; the gallery is its only user.
+- Phone layout (`@media (max-width: 720px)` only; implemented by codex gpt-6.1-sol, reviewed in the browser): header overlays the transcript with a top fade, frosted round menu/pin buttons, centered 56px avatar with a name pill; assistant messages as rounded cards, rounder user bubbles, author labels kept for screen readers; floating frosted composer with round send/stop. The scroll-to-end sentinel has `scroll-margin-bottom` so the last message clears the composer.
+- `.claude/launch.json` gains a `web` dev server on port 4175.
+- `bun run --cwd clients/web check` passes (81 tests); `tsc -p clients/web/tsconfig.json` passes. `src/generated/web-assets` not regenerated.
+
 ## Executor extension: MCP client for Executor v2
 
 - `extensions/executor` (0.2.0) is now a Streamable HTTP MCP client for Executor v2 instead of a wrapper over an installed catalog. It registers `executor_skills`, `executor_execute` and `executor_resume`, keeps one MCP session per Pi session (a paused execution resumes only on its own session), starts a new session once on a 404, and turns `isError` results into failed tool calls.
 - Default endpoint is the local server `http://127.0.0.1:4312/mcp` (`executor serve`, Executor 2.0.0-beta.6, Node 24.14+); `EXECUTOR_MCP_URL` overrides it, e.g. hosted `https://v2.executor.sh/mcp` with an org-scoped personal access token. The bearer token comes from `EXECUTOR_API_KEY` or the Keychain item `ziggy-executor`; it is never read from files or chat.
 - The skill covers setup, discovery through `tools.search`, approvals (ask before send/delete/publish; `resume` with `accept` only after the user approves; never rerun past a decline) and building apps through the management tools. It still needs checking against the server's live guides.
 - `bun test ./extensions/executor/test` passes (3); fmt, lint, typecheck, catalog and pi-docs checks pass. `check:web-assets` fails on the uncommitted web UI work.
+
+## Web UI: activity feedback while a reply is pending
+
+- While the selected session is busy with no streamed text and no running tool, the transcript shows the agent's name with three animated dots (`.message.thinking`, `role="status"`). A running tool's dot pulses (`.tool-dot.is-running`). The optimistic user message, the thinking row and the streaming reply fade in (`message-in`); reduced motion turns these off.
+- `settled` no longer clears the streamed reply and tool lines before history reloads; `loadHistory` clears them in the same render that adds the stored message, so the reply no longer blinks out and back in at the end of a turn.
+- `bun run --cwd clients/web check` passes (81 tests). Gallery: pulse, dots and fade render; the fixture starts a tool on submit, so the dots were checked with injected markup.

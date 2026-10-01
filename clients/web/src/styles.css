@@ -1305,6 +1305,60 @@
   background: var(--destructive);
 }
 
+.tool-dot.is-running {
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.message.optimistic,
+.message.thinking,
+.message.streaming {
+  animation: message-in var(--dur-press) var(--ease-out);
+}
+
+.typing-dots {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+  height: 1.5em;
+}
+
+.typing-dots > span {
+  animation: typing-dot 1.2s ease-in-out infinite;
+  background: var(--muted-foreground);
+  border-radius: var(--radius-full);
+  height: 6px;
+  width: 6px;
+}
+
+.typing-dots > span:nth-child(2) {
+  animation-delay: 150ms;
+}
+
+.typing-dots > span:nth-child(3) {
+  animation-delay: 300ms;
+}
+
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes message-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
 .tool-activity {
   color: var(--muted-foreground);
   font-size: 12px;
@@ -1669,7 +1723,7 @@
     }
   }
 
-  .mobile-only {
+  .mobile-only:not([hidden]) {
     display: inline-flex;
   }
 
@@ -1679,19 +1733,148 @@
 
   .conversation-main {
     --content-pad: 16px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
     height: 100dvh;
   }
 
+  .conversation-header {
+    align-self: start;
+    background: linear-gradient(to bottom, var(--background) 60%, transparent);
+    border-bottom: 0;
+    grid-area: 1 / 1;
+    height: 110px;
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  .conversation-header-inner {
+    padding-top: 12px;
+    position: relative;
+  }
+
+  .conversation-header .mobile-only,
+  .header-actions button {
+    align-self: flex-start;
+    backdrop-filter: blur(12px);
+    background: color-mix(in oklch, var(--background) 80%, transparent);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    box-shadow: var(--shadow-sm);
+    flex: 0 0 auto;
+    height: 40px;
+    pointer-events: auto;
+    width: 40px;
+  }
+
+  .conversation-header-inner > .bot-avatar {
+    height: 56px;
+    left: 50%;
+    position: absolute;
+    top: 12px;
+    transform: translateX(-50%);
+    width: 56px;
+  }
+
+  .conversation-title {
+    left: 50%;
+    max-width: calc(100% - 208px);
+    position: absolute;
+    top: 60px;
+    transform: translateX(-50%);
+  }
+
+  .conversation-title strong {
+    background: var(--muted);
+    border-radius: var(--radius-full);
+    font-size: 13px;
+    padding: 3px 10px;
+  }
+
+  .header-actions {
+    align-self: flex-start;
+    gap: 8px;
+  }
+
+  .conversation-title span,
+  .message.assistant:not(.automation-result) .message-author,
+  .message.user .message-author {
+    clip-path: inset(50%);
+    height: 1px;
+    margin: 0;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+
+  /* Extend scrolling beneath the composer; matching padding keeps the last message clear. */
+  .transcript-scroll {
+    grid-area: 1 / 1;
+    margin-bottom: -72px;
+  }
+
   .transcript {
-    padding-top: 24px;
+    padding-bottom: 96px;
+    padding-top: 110px;
+  }
+
+  .transcript-end {
+    scroll-margin-bottom: 72px;
+  }
+
+  .message.assistant {
+    background: var(--message);
+    border-radius: 28px;
+    max-width: none;
+    padding: 18px 20px;
+    width: 100%;
   }
 
   .message.user {
     max-width: 88%;
   }
 
+  .message.user .message-body {
+    border-radius: 22px 22px 6px 22px;
+    padding: 12px 16px;
+  }
+
+  .welcome-state {
+    margin-top: 8vh;
+  }
+
   .composer-wrap {
+    background: linear-gradient(to bottom, transparent, var(--background));
+    grid-area: 2 / 1;
     padding-bottom: max(8px, env(safe-area-inset-bottom));
+    padding-top: 24px;
+    pointer-events: none;
+    position: relative;
+    z-index: 1;
+  }
+
+  .composer-panel {
+    pointer-events: auto;
+  }
+
+  .composer {
+    align-items: center;
+    backdrop-filter: blur(16px);
+    background: color-mix(in oklch, var(--background) 85%, transparent);
+    border-radius: 26px;
+    box-shadow: var(--shadow-md);
+    padding: 8px 8px 8px 18px;
+  }
+
+  .composer button {
+    border-radius: var(--radius-full);
+    flex: 0 0 auto;
+    height: 36px;
+  }
+
+  .composer .send-button {
+    width: 36px;
   }
 
   .composer-hint {
@@ -1701,6 +1884,8 @@
   /* 16px keeps iOS from zooming the page when the composer takes focus. */
   .composer textarea {
     font-size: 16px;
+    min-height: 36px;
+    padding: 7px 0;
   }
 
   .definition-fields {

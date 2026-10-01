@@ -557,9 +557,9 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       return;
     }
     if (event.event === "settled") {
+      // Keep the streamed reply on screen; loadHistory clears it in the same render that adds
+      // the stored message, so the reply does not blink out and back in.
       activityActiveRef.current = false;
-      setStreamText("");
-      setTools([]);
       setBusy(false);
       void loadHistoryRef.current?.(event.session);
       return;
