@@ -1500,3 +1500,10 @@ Automation delivery to a channel goes through one seam, `Deliver = (profile, tar
 
 - `makeResidentService` takes an `inspectOwner` function instead of a `Pick<ResidentGatewayApi, "status">`; the adapter no longer imports the gateway application type.
 - LOG step 8 entry corrected: the service layer still builds the agent stack through `AutomationScheduler`.
+
+## Executor extension: MCP client for Executor v2
+
+- `extensions/executor` (0.2.0) is now a Streamable HTTP MCP client for Executor v2 instead of a wrapper over an installed catalog. It registers `executor_skills`, `executor_execute` and `executor_resume`, keeps one MCP session per Pi session (a paused execution resumes only on its own session), starts a new session once on a 404, and turns `isError` results into failed tool calls.
+- Default endpoint is the local server `http://127.0.0.1:4312/mcp` (`executor serve`, Executor 2.0.0-beta.6, Node 24.14+); `EXECUTOR_MCP_URL` overrides it, e.g. hosted `https://v2.executor.sh/mcp` with an org-scoped personal access token. The bearer token comes from `EXECUTOR_API_KEY` or the Keychain item `ziggy-executor`; it is never read from files or chat.
+- The skill covers setup, discovery through `tools.search`, approvals (ask before send/delete/publish; `resume` with `accept` only after the user approves; never rerun past a decline) and building apps through the management tools. It still needs checking against the server's live guides.
+- `bun test ./extensions/executor/test` passes (3); fmt, lint, typecheck, catalog and pi-docs checks pass. `check:web-assets` fails on the uncommitted web UI work.
