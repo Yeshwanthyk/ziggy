@@ -529,6 +529,13 @@ const historyEntry = (entry: TranscriptEntry): SessionHistoryEntry | undefined =
   if (message.role === "user" || message.role === "assistant") {
     const text = bounded(textOf(message.content, ""), HISTORY_TEXT_CODE_POINTS);
 
+    const imageCount =
+      message.role === "user" && message.content !== undefined && !isText(message.content)
+        ? message.content.filter((part) => part.type === "image").length
+        : 0;
+
+    if (imageCount > 0) return { kind: "user", timestamp, text, imageCount };
+
     return text.length > 0 ? { kind: message.role, timestamp, text } : undefined;
   }
 

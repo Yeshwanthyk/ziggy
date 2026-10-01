@@ -108,8 +108,14 @@ export interface ChatHandle {
     options?: ChatPromptOptions,
   ) => Effect.Effect<string, ZiggyAgentError>;
   readonly abort: Effect.Effect<void, ZiggyAgentError>;
-  readonly steer: (text: string) => Effect.Effect<void, ZiggyAgentError | ChatNotStreaming>;
-  readonly followUp: (text: string) => Effect.Effect<void, ZiggyAgentError | ChatNotStreaming>;
+  readonly steer: (
+    text: string,
+    images?: Array<ChatPromptImage>,
+  ) => Effect.Effect<void, ZiggyAgentError | ChatNotStreaming>;
+  readonly followUp: (
+    text: string,
+    images?: Array<ChatPromptImage>,
+  ) => Effect.Effect<void, ZiggyAgentError | ChatNotStreaming>;
   readonly subscribe: (listener: (event: ChatEvent) => void) => () => void;
   readonly dispose: Effect.Effect<void, ZiggyAgentError>;
 }
@@ -250,7 +256,13 @@ export type SessionTerminalState = SessionHistoryTerminalState;
 
 export type SessionHistoryEntry =
   | {
-      readonly kind: "user" | "assistant";
+      readonly kind: "user";
+      readonly timestamp: string;
+      readonly text: string;
+      readonly imageCount?: number;
+    }
+  | {
+      readonly kind: "assistant";
       readonly timestamp: string;
       readonly text: string;
     }

@@ -495,8 +495,9 @@ export const makeChatHandle = (
           }),
         ),
       abort: piPromise(profilePath, "abort agent session", abort),
-      steer: (text) => whileStreaming("steer", () => runtime.session.steer(text)),
-      followUp: (text) => whileStreaming("followUp", () => runtime.session.followUp(text)),
+      steer: (text, images) => whileStreaming("steer", () => runtime.session.steer(text, images)),
+      followUp: (text, images) =>
+        whileStreaming("followUp", () => runtime.session.followUp(text, images)),
       subscribe: (listener) => {
         listeners.add(listener);
 

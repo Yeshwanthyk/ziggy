@@ -1521,3 +1521,11 @@ Automation delivery to a channel goes through one seam, `Deliver = (profile, tar
 - While the selected session is busy with no streamed text and no running tool, the transcript shows the agent's name with three animated dots (`.message.thinking`, `role="status"`). A running tool's dot pulses (`.tool-dot.is-running`). The optimistic user message, the thinking row and the streaming reply fade in (`message-in`); reduced motion turns these off.
 - `settled` no longer clears the streamed reply and tool lines before history reloads; `loadHistory` clears them in the same render that adds the stored message, so the reply no longer blinks out and back in at the end of a turn.
 - `bun run --cwd clients/web check` passes (81 tests). Gallery: pulse, dots and fade render; the fixture starts a tool on submit, so the dots were checked with injected markup.
+
+## Web UI: image attachments
+
+- The composer accepts up to four PNG, JPEG, GIF or WebP images through attach, paste or drop, with removable previews, optimistic thumbnails and image-count chips in history. Image-only prompts, steering and follow-up work through the SDK's optional attachment argument.
+- Image bytes use authenticated `POST /uploads`, with magic-byte checks and a 5 MiB limit. Uploads bind to the bearer or browser session owner, expire after ten minutes, cap at eight per owner and consume once; invalid batches submit nothing. WebSocket frames carry only upload IDs. Web assets regenerated.
+- `POST /uploads` reads every body to the end and keeps at most 5 MiB: Bun stalls the next request on a keep-alive connection whose body was left unread, so an early 413 would hang the client's next upload.
+- `prompt.submit` still queues behind a running turn; images are consumed only after the recipient checks pass.
+- `bun run check` passes (23 SDK tests, 84 web tests); `bun test test` passes (666), including the `/uploads` auth, type, size and ownership test.

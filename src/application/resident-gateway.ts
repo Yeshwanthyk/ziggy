@@ -224,7 +224,7 @@ const makeLiveUiRuntime = (
         const existing = connections.get(transport.id);
 
         if (existing !== undefined) return existing;
-        const opened = openedGateway.connect(transport.send);
+        const opened = openedGateway.connect(transport.send, transport.uploadOwner);
         connections.set(transport.id, opened);
 
         return opened;
@@ -248,7 +248,7 @@ const makeLiveUiRuntime = (
             return opened.close;
           },
         },
-        uiOptions,
+        { ...uiOptions, uploads: openedGateway.uploads },
       );
 
       return yield* Effect.never;

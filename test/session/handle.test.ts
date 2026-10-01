@@ -150,3 +150,47 @@ test("disposal waits for an automation append, so the lease outlives the write",
     }),
   );
 });
+
+test("steering and follow-up preserve image blocks at the Pi callback boundary", async () => {
+  const profilePath = await mkdtemp(join(tmpdir(), "ziggy-handle-images-"));
+  roots.push(profilePath);
+  const manager = persisted(profilePath, "images");
+  const images = [{ type: "image", data: "fixture", mimeType: "image/png" }] as const;
+
+  const calls: Array<{
+    operation: string;
+    text: string;
+    images: ReadonlyArray<import("ziggy/session/index").ChatPromptImage> | undefined;
+  }> = [];
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const handle = yield* makeChatHandle({
+        profilePath,
+        leases: makeSessionLeaseSet(profilePath),
+        runtime: fakePiRuntime({
+          sessionManager: manager,
+          isIdle: false,
+          steer: (text, images) => {
+            calls.push({ operation: "steer", text, images });
+
+            return Promise.resolve("queued" as const);
+          },
+          followUp: (text, images) => {
+            calls.push({ operation: "followUp", text, images });
+
+            return Promise.resolve("queued" as const);
+          },
+        }),
+      });
+
+      yield* handle.steer("", [...images]);
+      yield* handle.followUp("look", [...images]);
+      expect(calls).toEqual([
+        { operation: "steer", text: "", images },
+        { operation: "followUp", text: "look", images },
+      ]);
+      yield* handle.dispose;
+    }),
+  );
+});

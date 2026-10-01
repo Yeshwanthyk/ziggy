@@ -174,6 +174,7 @@ export type GatewayClient = Pick<
   | "setPin"
   | "setModel"
   | "state"
+  | "uploadImage"
   | "submitPrompt"
   | "steerSession"
   | "followUp"
@@ -373,6 +374,16 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const [streamText, setStreamText] = useState("");
   const [tools, setTools] = useState<ReadonlyArray<ToolActivity>>([]);
   const [pendingUser, setPendingUser] = useState<string>();
+  const [pendingUserImages, setPendingUserImages] = useState<ReadonlyArray<string>>([]);
+  useEffect(() => {
+    if (pendingUser === undefined) setPendingUserImages([]);
+  }, [pendingUser]);
+  useEffect(
+    () => () => {
+      for (const url of pendingUserImages) URL.revokeObjectURL(url);
+    },
+    [pendingUserImages],
+  );
   const [busy, setBusy] = useState(false);
   const [pendingInputs, setPendingInputs] = useState<
     ReadonlyArray<{
@@ -380,6 +391,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       ref: ZiggySessionRef;
       text: string;
       mode: "steer" | "queue";
+      imageCount?: number;
       occurrence: number;
     }>
   >([]);
@@ -2098,6 +2110,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       text: string,
       recipient?: ZiggyRecipientId,
       mode: "steer" | "queue" = "steer",
+      files: ReadonlyArray<File> = [],
     ): Promise<void> => {
       const client = clientRef.current;
       const ref = selectedRefRef.current;
@@ -2109,15 +2122,35 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       }
       setLocalError(undefined);
       const commandId = `web-${crypto.randomUUID()}`;
-      if (busy) {
+      const images: Array<string> = [];
+      try {
+        for (const file of files) images.push(await client.uploadImage(file));
+        if (!sameRef(selectedRefRef.current, ref))
+          throw new Error("The conversation changed. Send the images again.");
+      } catch (cause) {
+        setLocalError(cause instanceof Error ? cause.message : "The image could not be uploaded.");
+        throw cause;
+      }
+      const attachments = images.length === 0 ? undefined : { images };
+      if (files.length === 0 ? busy : activityActiveRef.current) {
         const occurrence =
           history.filter((entry) => entry.kind === "user" && entry.text === text).length +
           pendingInputs.filter((input) => sameRef(ref, input.ref) && input.text === text).length +
           1;
-        setPendingInputs((current) => [...current, { id: commandId, ref, text, mode, occurrence }]);
+        setPendingInputs((current) => [
+          ...current,
+          {
+            id: commandId,
+            ref,
+            text,
+            mode,
+            occurrence,
+            ...(images.length === 0 ? {} : { imageCount: images.length }),
+          },
+        ]);
         try {
-          if (mode === "queue") await client.followUp(ref, text, commandId);
-          else await client.steerSession(ref, text, commandId);
+          if (mode === "queue") await client.followUp(ref, text, commandId, attachments);
+          else await client.steerSession(ref, text, commandId, attachments);
         } catch (cause) {
           setPendingInputs((current) => current.filter((input) => input.id !== commandId));
           setLocalError(
@@ -2127,14 +2160,21 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
         }
         return;
       }
+      setPendingUserImages(files.map((file) => URL.createObjectURL(file)));
       setPendingUser(text);
       activityActiveRef.current = true;
       setBusy(true);
       try {
         if (recipient === undefined) {
-          await client.submitPrompt(ref, text, commandId);
+          await client.submitPrompt(ref, text, commandId, attachments);
         } else {
-          await client.request("prompt.submit", { ref, text, recipient, commandId });
+          await client.request("prompt.submit", {
+            ref,
+            text,
+            recipient,
+            commandId,
+            ...attachments,
+          });
         }
       } catch (cause) {
         activityActiveRef.current = false;
@@ -2251,6 +2291,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     openSpecialist,
     pauseAutomation,
     pendingUser,
+    pendingUserImages,
     pinnedConversations,
     profile,
     profiles,

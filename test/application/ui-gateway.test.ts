@@ -2161,3 +2161,147 @@ test("health inspection failure still lists selected extensions with a diagnosti
   });
   expect(JSON.stringify(responses)).not.toContain("/secret");
 });
+
+test("prompt images resolve as one owner-bound batch before any turn is submitted", async () => {
+  const calls: Array<{ text: string; options?: import("ziggy/session/index").ChatPromptOptions }> =
+    [];
+
+  const responses: Array<typeof UiResponseFrame.Type> = [];
+  const image = { type: "image", mimeType: "image/png", data: "fixture" } as const;
+
+  const handle = makeChatHandle({
+    prompt: (text, options) =>
+      Effect.sync(() => {
+        calls.push(options === undefined ? { text } : { text, options });
+
+        return "ok";
+      }),
+  });
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const live = yield* makeLiveSessions();
+        const gateway = yield* makeUiGateway(makeConfig(live, makeAgent(handle)));
+
+        const connection = gateway.connect(
+          (frame) => responses.push(decodeResponse(frame)),
+          "alice",
+        );
+
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+        const ref = { profileId, kind: "live", key: "local/main" } as const;
+        const own = gateway.uploads.put("alice", image);
+        const foreign = gateway.uploads.put("bob", image);
+        yield* connection.request({
+          id: "foreign",
+          method: "prompt.submit",
+          params: { ref, text: "", images: [own, foreign] },
+        });
+        yield* connection.request({
+          id: "empty",
+          method: "prompt.submit",
+          params: { ref, text: "" },
+        });
+        expect(calls).toEqual([]);
+        yield* connection.request({
+          id: "send",
+          method: "prompt.submit",
+          params: { ref, text: "", images: [own] },
+        });
+        yield* Effect.yieldNow;
+        expect(calls).toEqual([{ text: "", options: { images: [image] } }]);
+        yield* connection.request({
+          id: "reuse",
+          method: "prompt.submit",
+          params: { ref, text: "again", images: [own] },
+        });
+        yield* Effect.yieldNow;
+        expect(calls).toHaveLength(1);
+      }),
+    ),
+  );
+  expect(responses).toMatchObject([
+    { id: "open", ok: true },
+    { id: "foreign", ok: false, error: { code: "bad_params" } },
+    { id: "empty", ok: false, error: { code: "bad_params" } },
+    { id: "send", ok: true },
+    { id: "reuse", ok: false, error: { code: "bad_params" } },
+  ]);
+});
+
+test("steer and follow-up resolve attachments for the same connection owner", async () => {
+  const calls: Array<{
+    operation: string;
+    text: string;
+    images: ReadonlyArray<import("ziggy/session/index").ChatPromptImage> | undefined;
+  }> = [];
+
+  const responses: Array<typeof UiResponseFrame.Type> = [];
+  const image = { type: "image", data: "fixture", mimeType: "image/png" } as const;
+
+  const handle = makeChatHandle({
+    prompt: () => Effect.succeed("ok"),
+    isIdle: false,
+    steer: (text, images) =>
+      Effect.sync(() => {
+        calls.push({ operation: "steer", text, images });
+      }),
+    followUp: (text, images) =>
+      Effect.sync(() => {
+        calls.push({ operation: "followUp", text, images });
+      }),
+  });
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const live = yield* makeLiveSessions();
+        const gateway = yield* makeUiGateway(makeConfig(live, makeAgent(handle)));
+
+        const connection = gateway.connect(
+          (frame) => responses.push(decodeResponse(frame)),
+          "alice",
+        );
+
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+        const ref = { profileId, kind: "live", key: "local/main" } as const;
+
+        for (const method of ["session.steer", "session.follow-up"] as const) {
+          const foreign = gateway.uploads.put("bob", image);
+          yield* connection.request({
+            id: `${method}-foreign`,
+            method,
+            params: { ref, text: "", images: [foreign] },
+          });
+          const id = gateway.uploads.put("alice", image);
+          yield* connection.request({
+            id: method,
+            method,
+            params: { ref, text: "", images: [id] },
+          });
+        }
+
+        expect(calls).toEqual([
+          { operation: "steer", text: "", images: [image] },
+          { operation: "followUp", text: "", images: [image] },
+        ]);
+      }),
+    ),
+  );
+  expect(responses).toMatchObject([
+    { id: "open", ok: true },
+    { id: "session.steer-foreign", ok: false, error: { code: "bad_params" } },
+    { id: "session.steer", ok: true },
+    { id: "session.follow-up-foreign", ok: false, error: { code: "bad_params" } },
+    { id: "session.follow-up", ok: true },
+  ]);
+});

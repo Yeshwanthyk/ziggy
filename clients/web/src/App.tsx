@@ -5,6 +5,8 @@ import {
   ChevronDown,
   Menu,
   PanelLeftClose,
+  Paperclip,
+  X,
   Pencil,
   Plus,
   RefreshCw,
@@ -40,6 +42,11 @@ const transcriptEndScrollOptions: ScrollIntoViewOptions & { container: "nearest"
   block: "end",
   container: "nearest",
 };
+
+const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const MAX_IMAGE_BYTES = 5 * 1_024 * 1_024;
+
+const imageLabel = (count: number) => `${count} ${count === 1 ? "image" : "images"}`;
 
 const avatar = (name: string, active = false, size = 32) => (
   <BotAvatar active={active} className="bot-avatar" name={name} size={size} />
@@ -154,6 +161,9 @@ export function HistoryEntry({
       <div className="message-author">{entry.kind === "user" ? "You" : assistantName}</div>
       <div className="message-body">
         {entry.kind === "assistant" ? <MessageMarkdown>{entry.text}</MessageMarkdown> : entry.text}
+        {entry.kind === "user" && entry.imageCount !== undefined ? (
+          <span className="image-count">{imageLabel(entry.imageCount)}</span>
+        ) : null}
       </div>
     </article>
   );
@@ -187,6 +197,45 @@ export function App({ connection }: { readonly connection?: AppConnection } = {}
   const [selectedAutomationId, setSelectedAutomationId] = useState<string>();
   const [agentEditorOpen, setAgentEditorOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  const [attachments, setAttachments] = useState<
+    ReadonlyArray<{ readonly file: File; readonly url: string }>
+  >([]);
+  const attachmentsRef = useRef(attachments);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const sendingRef = useRef(false);
+  const [sending, setSending] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string>();
+  const [dragging, setDragging] = useState(false);
+  useEffect(
+    () => () => {
+      for (const attachment of attachmentsRef.current) URL.revokeObjectURL(attachment.url);
+    },
+    [],
+  );
+
+  const updateAttachments = (next: typeof attachments) => {
+    attachmentsRef.current = next;
+    setAttachments(next);
+  };
+  const addAttachments = (files: ReadonlyArray<File>) => {
+    if (sendingRef.current || gateway.connection !== "open" || gateway.selectedRef?.kind !== "live")
+      return;
+    const next = [...attachmentsRef.current];
+    let error: string | undefined;
+    for (const file of files) {
+      if (!IMAGE_TYPES.has(file.type)) error = "Use a PNG, JPEG, GIF or WebP image.";
+      else if (file.size > MAX_IMAGE_BYTES) error = "Images must be 5 MiB or smaller.";
+      else if (next.length >= 4) error = "Attach up to 4 images per message.";
+      else next.push({ file, url: URL.createObjectURL(file) });
+    }
+    updateAttachments(next);
+    setAttachmentError(error);
+  };
+  const removeAttachment = (url: string) => {
+    URL.revokeObjectURL(url);
+    updateAttachments(attachmentsRef.current.filter((attachment) => attachment.url !== url));
+    setAttachmentError(undefined);
+  };
   const [search, setSearch] = useState("");
   const [recipient, setRecipient] = useState("all");
   const [localAction, setLocalAction] = useState<string>();
@@ -400,7 +449,11 @@ export function App({ connection }: { readonly connection?: AppConnection } = {}
   const send = async (event?: FormEvent, mode: "steer" | "queue" = "steer"): Promise<void> => {
     event?.preventDefault();
     const text = draft.trim();
-    if (text.length === 0) return;
+    if (sendingRef.current || (text.length === 0 && attachmentsRef.current.length === 0)) return;
+    const sentAttachments = attachmentsRef.current;
+    sendingRef.current = true;
+    setSending(true);
+    setAttachmentError(undefined);
     const target: ZiggyRecipientId | undefined =
       selectedGroup === undefined
         ? undefined
@@ -411,9 +464,19 @@ export function App({ connection }: { readonly connection?: AppConnection } = {}
             : { kind: "agent", agentId: recipient };
     try {
       setDraft("");
-      await gateway.submit(text, target, mode);
+      await gateway.submit(
+        text,
+        target,
+        mode,
+        sentAttachments.map((attachment) => attachment.file),
+      );
+      for (const attachment of sentAttachments) URL.revokeObjectURL(attachment.url);
+      updateAttachments([]);
     } catch {
       setDraft((current) => (current.length === 0 ? text : current));
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
     }
   };
 
@@ -826,7 +889,16 @@ export function App({ connection }: { readonly connection?: AppConnection } = {}
             {gateway.pendingUser === undefined ? null : (
               <article className="message user optimistic">
                 <div className="message-author">You</div>
-                <div className="message-body">{gateway.pendingUser}</div>
+                <div className="message-body">
+                  {gateway.pendingUser}
+                  {gateway.pendingUserImages.length > 0 ? (
+                    <div className="message-images">
+                      {gateway.pendingUserImages.map((url, index) => (
+                        <img alt={`Attached image ${index + 1}`} key={url} src={url} />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               </article>
             )}
             {groupCompletedActivity(
@@ -885,7 +957,35 @@ export function App({ connection }: { readonly connection?: AppConnection } = {}
         </ScrollArea>
 
         <div className="composer-wrap">
-          <div className="composer-panel">
+          <div
+            className="composer-panel"
+            data-dragging={dragging || undefined}
+            onDragOver={(event) => {
+              if (event.dataTransfer.types.includes("Files")) {
+                event.preventDefault();
+                setDragging(true);
+              }
+            }}
+            onDragLeave={(event) => {
+              if (
+                !(
+                  event.relatedTarget instanceof Node &&
+                  event.currentTarget.contains(event.relatedTarget)
+                )
+              )
+                setDragging(false);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragging(false);
+              addAttachments(Array.from(event.dataTransfer.files));
+            }}
+          >
+            {attachmentError === undefined ? null : (
+              <div className="local-error" role="alert">
+                {attachmentError}
+              </div>
+            )}
             {selectedGroup === undefined ? null : (
               <label className="recipient-control">
                 <span>Send to</span>
@@ -906,28 +1006,87 @@ export function App({ connection }: { readonly connection?: AppConnection } = {}
                 {gateway.pendingInputs.map((input) => (
                   <div key={input.id}>
                     <span>{input.mode === "queue" ? "Queued" : "Steering"}</span>
-                    <p>{input.text}</p>
+                    <p>
+                      {input.text}
+                      {input.imageCount === undefined ? null : (
+                        <span className="image-count">{imageLabel(input.imageCount)}</span>
+                      )}
+                    </p>
                   </div>
                 ))}
               </section>
             ) : null}
             <form className="composer" onSubmit={(event) => void send(event)}>
-              <Textarea
-                aria-label={`Message ${gateway.selectedTitle}`}
-                disabled={!connected || !selectedIsLive}
-                maxLength={gateway.maxPromptCodePoints}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={composerKeyDown}
-                placeholder={
-                  !connected
-                    ? "Offline"
-                    : selectedIsLive
-                      ? `Message ${gateway.selectedTitle}`
-                      : "Past conversations are read only"
-                }
-                rows={1}
-                value={draft}
+              <div className="composer-content">
+                {attachments.length === 0 ? null : (
+                  <div className="attachment-previews" aria-label="Image attachments">
+                    {attachments.map(({ file, url }) => (
+                      <div className="attachment-preview" key={url}>
+                        <img alt={file.name || "Attached image"} src={url} />
+                        <button
+                          aria-label={`Remove ${file.name || "image"}`}
+                          disabled={sending}
+                          onClick={() => removeAttachment(url)}
+                          type="button"
+                        >
+                          <X />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <Textarea
+                  aria-label={`Message ${gateway.selectedTitle}`}
+                  disabled={!connected || !selectedIsLive || sending}
+                  maxLength={gateway.maxPromptCodePoints}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={composerKeyDown}
+                  onPaste={(event) => {
+                    const files = Array.from(event.clipboardData.items)
+                      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+                      .flatMap((item) => {
+                        const file = item.getAsFile();
+                        return file === null ? [] : [file];
+                      });
+                    if (files.length > 0) {
+                      event.preventDefault();
+                      addAttachments(files);
+                    }
+                  }}
+                  placeholder={
+                    !connected
+                      ? "Offline"
+                      : selectedIsLive
+                        ? `Message ${gateway.selectedTitle}`
+                        : "Past conversations are read only"
+                  }
+                  rows={1}
+                  value={draft}
+                />
+              </div>
+              <input
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                aria-label="Choose images"
+                hidden
+                multiple
+                onChange={(event) => {
+                  addAttachments(Array.from(event.target.files ?? []));
+                  event.target.value = "";
+                }}
+                ref={fileInputRef}
+                type="file"
               />
+              <Button
+                aria-label="Attach images"
+                className="send-button"
+                disabled={!connected || !selectedIsLive || sending || attachments.length >= 4}
+                onClick={() => fileInputRef.current?.click()}
+                size="icon"
+                type="button"
+                variant="ghost"
+              >
+                <Paperclip />
+              </Button>
               {gateway.busy ? (
                 <Button
                   aria-label="Stop generating"
@@ -945,7 +1104,9 @@ export function App({ connection }: { readonly connection?: AppConnection } = {}
                   type="button"
                   size="sm"
                   variant="secondary"
-                  disabled={draft.trim().length === 0 || !connected}
+                  disabled={
+                    (draft.trim().length === 0 && attachments.length === 0) || !connected || sending
+                  }
                   onClick={() => void send(undefined, "queue")}
                 >
                   Queue
@@ -954,7 +1115,12 @@ export function App({ connection }: { readonly connection?: AppConnection } = {}
               <Button
                 aria-label={gateway.busy ? "Steer response" : "Send message"}
                 className="send-button"
-                disabled={!connected || !selectedIsLive || draft.trim().length === 0}
+                disabled={
+                  !connected ||
+                  !selectedIsLive ||
+                  sending ||
+                  (draft.trim().length === 0 && attachments.length === 0)
+                }
                 size="icon"
                 type="submit"
               >
@@ -962,9 +1128,11 @@ export function App({ connection }: { readonly connection?: AppConnection } = {}
               </Button>
             </form>
             <p className="composer-hint">
-              {gateway.busy
-                ? "Enter to steer · Queue to send after this response"
-                : "Enter to send"}{" "}
+              {sending
+                ? "Sending…"
+                : gateway.busy
+                  ? "Enter to steer · Queue to send after this response"
+                  : "Enter to send"}{" "}
               · Shift+Enter for a new line
             </p>
           </div>

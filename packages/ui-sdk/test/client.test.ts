@@ -1180,3 +1180,22 @@ test("resume result rejects leading-dot and traversal session ids", () => {
     }, { ref: MAIN_A, sessionId })).toBe(false);
   }
 });
+
+test("image IDs stay in bounded text requests, including image-only prompts", async () => {
+  const images = ["12345678-1234-4123-8123-123456789abc"];
+  for (const method of ["prompt.submit", "session.steer", "session.follow-up"] as const) {
+    expect(isMethodParams(method, { ref: MAIN_A, text: "", images })).toBe(true);
+    expect(isMethodParams(method, { ref: MAIN_A, text: "" })).toBe(false);
+    expect(isMethodParams(method, { ref: MAIN_A, text: "hello", images: [] })).toBe(false);
+    expect(isMethodParams(method, { ref: MAIN_A, text: "hello", images: ["bad"] })).toBe(false);
+    expect(isMethodParams(method, { ref: MAIN_A, text: "hello", images: Array(5).fill(images[0]) })).toBe(false);
+  }
+  const socket = new FakeSocket();
+  const client = connectZiggy({ url: "ws://localhost/ws", socketFactory: () => socket });
+  socket.open();
+  const sent = client.submitPrompt(MAIN_A, "", "image-turn", { images });
+  expect(frame(socket, 0)).toMatchObject({ method: "prompt.submit", params: { ref: MAIN_A, text: "", commandId: "image-turn", images } });
+  socket.message({ id: frameId(socket, 0), ok: true, result: { acknowledged: true } });
+  await sent;
+  client.close();
+});

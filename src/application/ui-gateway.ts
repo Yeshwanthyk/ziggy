@@ -15,6 +15,8 @@ import {
 import { ProfileId as ProfileIdSchema, type ProfileId } from "../domain/profile-directory";
 import { makeProfileRuntimeDirectory } from "./profile-runtime-directory";
 import { makeCommandCache, safeFingerprint } from "./ui-gateway/command-cache";
+import { makeUiUploadStore, type UiUploadStore } from "./ui-gateway/uploads";
+
 import { makeSessionDispatcher } from "./ui-gateway/sessions";
 import { dispatchGroups, makeEnsureGroup } from "./ui-gateway/groups";
 import { dispatchAgents } from "./ui-gateway/management-agents";
@@ -25,6 +27,8 @@ import { dispatchMemory } from "./ui-gateway/management-memory";
 import { dispatchPins } from "./ui-gateway/management-pins";
 import { dispatchSettings } from "./ui-gateway/management-settings";
 import type { UiGatewayBranch, UiGatewayDependencies } from "./ui-gateway/types";
+
+export { makeUiUploadStore, UI_IMAGE_MAX_BYTES, type UiUploadStore } from "./ui-gateway/uploads";
 
 export type { UiGatewayDependencies } from "./ui-gateway/types";
 
@@ -55,7 +59,8 @@ export interface UiGatewayConnection {
 }
 
 export interface UiGatewayApi {
-  readonly connect: (send: (frame: string) => void) => UiGatewayConnection;
+  readonly uploads: UiUploadStore;
+  readonly connect: (send: (frame: string) => void, uploadOwner?: string) => UiGatewayConnection;
 }
 
 /**
@@ -138,14 +143,22 @@ export const makeUiGateway = (
       Effect.succeed(config.defaultProfile);
 
     const ensureGroup = makeEnsureGroup(groups);
+    const uploads = makeUiUploadStore();
 
-    const dispatchSessions = makeSessionDispatcher(config, branchFor, serverEpoch, ensureGroup);
+    const dispatchSessions = makeSessionDispatcher(
+      config,
+      branchFor,
+      serverEpoch,
+      ensureGroup,
+      uploads,
+    );
 
     const dispatch = (
       request: UiRequestEnvelope,
       send: (frame: string) => void,
       subscriptions: Map<string, () => void>,
       isOpen: () => boolean,
+      uploadOwner: string,
     ): Effect.Effect<UiGatewayResult, UiGatewayError> => {
       const route = (profileId: ProfileId): Effect.Effect<UiGatewayBranch, UiGatewayError> =>
         branchFor(profileId);
@@ -273,7 +286,7 @@ export const makeUiGateway = (
         case "session.follow-up":
         case "session.abort":
         case "prompt.submit":
-          return dispatchSessions(request, send, subscriptions, isOpen);
+          return dispatchSessions(request, send, subscriptions, isOpen, uploadOwner);
         case "agent.list":
         case "agent.show":
         case "agent.document":
@@ -323,6 +336,7 @@ export const makeUiGateway = (
         send: (frame: string) => void,
         subscriptions: Map<string, () => void>,
         isOpen: () => boolean,
+        uploadOwner: string,
       ) =>
       (request: UiRequestEnvelope): Effect.Effect<void> => {
         const commandProbe = decodeCommandProbe(request.params);
@@ -333,7 +347,7 @@ export const makeUiGateway = (
             ? commandProbe.value.profileId
             : config.defaultProfile.profileId;
 
-        const run = dispatch(request, send, subscriptions, isOpen).pipe(
+        const run = dispatch(request, send, subscriptions, isOpen, uploadOwner).pipe(
           Effect.map((result) => resultFrame(request.id, result)),
           Effect.catch((cause) =>
             Effect.succeed(failureFrame(request.id, toGatewayError(request.method, cause))),
@@ -343,7 +357,7 @@ export const makeUiGateway = (
         return commandId === undefined
           ? run.pipe(Effect.flatMap((frame) => sendResponse(send, frame)))
           : runCommand(
-              `${profileId}:${commandId}`,
+              `${uploadOwner}:${profileId}:${commandId}`,
               `${request.method}:${safeFingerprint(request.params)}`,
               request.id,
               run,
@@ -357,12 +371,13 @@ export const makeUiGateway = (
       };
 
     return {
-      connect: (send) => {
+      uploads,
+      connect: (send, uploadOwner = "local") => {
         const subscriptions = new Map<string, () => void>();
         let open = true;
 
         return {
-          request: requestFor(send, subscriptions, () => open),
+          request: requestFor(send, subscriptions, () => open, uploadOwner),
           close: Effect.sync(() => {
             open = false;
 

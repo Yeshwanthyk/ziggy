@@ -277,7 +277,13 @@ export type UiSessionShowResult = typeof UiSessionShowResult.Type;
 
 export const UiSessionHistoryEntry = Schema.Union([
   Schema.Struct({
-    kind: Schema.Literals(["user", "assistant"]),
+    kind: Schema.Literal("user"),
+    timestamp: boundedString("session history timestamp", 128),
+    text: boundedCodePointString("session history text", 1_024, 0),
+    imageCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("assistant"),
     timestamp: boundedString("session history timestamp", 128),
     text: boundedCodePointString("session history text", 1_024, 0),
   }),

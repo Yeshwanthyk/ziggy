@@ -1988,3 +1988,71 @@
   max-width: 640px;
   margin: 0 auto 24px;
 }
+
+/* Attachments share the composer's column and leave the action buttons in place. */
+.composer-content {
+  flex: 1;
+  min-width: 0;
+}
+.composer-content textarea {
+  width: 100%;
+}
+.composer-panel[data-dragging] {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+  border-radius: var(--radius-lg);
+}
+.attachment-previews,
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0;
+}
+.attachment-preview {
+  position: relative;
+  width: 56px;
+  height: 56px;
+}
+.attachment-preview img,
+.message-images img {
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  width: 56px;
+  height: 56px;
+}
+.attachment-preview button {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  background: var(--background);
+  color: var(--foreground);
+  border: 1px solid var(--input);
+}
+.attachment-preview button:hover {
+  background: var(--muted);
+}
+.attachment-preview button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.attachment-preview button svg {
+  width: 14px;
+  height: 14px;
+}
+.image-count {
+  display: block;
+  width: fit-content;
+  background: var(--muted);
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  padding: 2px 6px;
+  margin-top: 4px;
+  font-size: 12px;
+}

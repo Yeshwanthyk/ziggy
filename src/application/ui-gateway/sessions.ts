@@ -22,6 +22,7 @@ import {
 } from "../../domain/ui-gateway";
 import { ProfileId as ProfileIdSchema, type ProfileId } from "../../domain/profile-directory";
 import type { UiGatewayBranch, UiGatewayDependencies } from "./types";
+import type { UiUploadStore } from "./uploads";
 import type { ChatPromptOptions } from "../../session";
 import { localSpecialistSessionDirectory } from "../../agents";
 import type { LiveSessionEvent, LiveSessionView } from "../../resident/live-sessions";
@@ -147,6 +148,7 @@ export const makeSessionDispatcher = (
   route: (profileId: ProfileId) => Effect.Effect<UiGatewayBranch, UiGatewayError>,
   serverEpoch: string,
   ensureGroup: ReturnType<typeof makeEnsureGroup>,
+  uploads: UiUploadStore,
 ) => {
   const liveEntry = (branch: UiGatewayBranch, key: UiSessionKey) =>
     branch.live.get(key).pipe(Effect.mapError(liveFailure));
@@ -233,6 +235,7 @@ export const makeSessionDispatcher = (
     send: (frame: string) => void,
     subscriptions: Map<string, () => void>,
     isOpen: () => boolean,
+    uploadOwner: string,
   ): Effect.Effect<UiGatewayResult, UiGatewayError> => {
     switch (isKnownMethod(request.method) ? request.method : undefined) {
       case "session.list":
@@ -652,10 +655,13 @@ export const makeSessionDispatcher = (
             return yield* protocolFailure("watch_only", "stored sessions are read-only");
           }
 
+          if (params.text.trim().length === 0 && params.images === undefined)
+            return yield* protocolFailure("bad_params", "Enter a message or attach an image.");
+
           const branch = yield* route(params.ref.profileId);
 
           if (request.method === "prompt.submit") {
-            const live = yield* liveEntry(branch, params.ref.key);
+            const live = yield* uiEntry(branch, params.ref.key);
 
             const group = live.context?.kind === "group" ? live.context : undefined;
 
@@ -677,6 +683,11 @@ export const makeSessionDispatcher = (
                 "the addressed specialist is not a member of this group",
               );
             }
+
+            const images =
+              params.images === undefined
+                ? undefined
+                : yield* uploads.consume(uploadOwner, params.images);
 
             if (
               group !== undefined &&
@@ -746,23 +757,36 @@ export const makeSessionDispatcher = (
                 "",
               );
 
-              const options: ChatPromptOptions =
+              const context: ChatPromptOptions =
                 synthesisContext.length === 0 ? {} : { ephemeralContext: synthesisContext };
+
+              const options: ChatPromptOptions =
+                images === undefined ? context : { ...context, images };
 
               yield* submit(branch, params.ref.key, params.text, options);
             } else {
-              yield* submit(branch, params.ref.key, params.text);
+              yield* submit(
+                branch,
+                params.ref.key,
+                params.text,
+                images === undefined ? undefined : { images },
+              );
             }
           } else {
             const entry = yield* uiEntry(branch, params.ref.key);
 
-            if (request.method === "session.steer" && entry.idle)
+            if (entry.idle)
               return yield* protocolFailure("not_streaming", `${params.ref.key} is not streaming`);
+
+            const images =
+              params.images === undefined
+                ? undefined
+                : yield* uploads.consume(uploadOwner, params.images);
 
             yield* (
               request.method === "session.steer"
-                ? entry.handle.steer(params.text)
-                : entry.handle.followUp(params.text)
+                ? entry.handle.steer(params.text, images)
+                : entry.handle.followUp(params.text, images)
             ).pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
           }
 

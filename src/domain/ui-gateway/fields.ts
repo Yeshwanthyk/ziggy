@@ -200,9 +200,16 @@ export const UiSessionRefParams = Schema.Struct({
 
 export type UiSessionRefParams = typeof UiSessionRefParams.Type;
 
+export const UiUploadId = Schema.String.check(
+  Schema.isPattern(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u),
+);
+
 export const UiSessionTextParams = Schema.Struct({
   ref: UiSessionRef,
-  text: UiPromptText,
+  text: boundedCodePointString("prompt text", 60_000, 0),
+  images: Schema.optionalKey(
+    Schema.Array(UiUploadId).check(Schema.isMinLength(1), Schema.isMaxLength(4)),
+  ),
   recipient: Schema.optionalKey(UiRecipient),
   commandId: Schema.optionalKey(UiCommandId),
 });

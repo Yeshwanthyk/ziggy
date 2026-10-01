@@ -1,3 +1,5 @@
+import { decodeJson, isRecord } from "./protocol/common";
+import { isUploadId } from "./protocol/conversations";
 import {
   createZiggyConnection,
   type ZiggyConnectionOptions,
@@ -18,6 +20,7 @@ import {
   type ZiggyConversationContext,
   type ZiggySessionHistoryResult,
   type ZiggySessionRef,
+  type ZiggySessionTextParams,
   type ZiggySessionListResult,
   type ZiggySessionModelResult,
   type ZiggySessionSummaryResult,
@@ -68,7 +71,16 @@ import type {
 } from "./protocol/profiles";
 import type { ZiggySystemCapabilitiesResult } from "./protocol/common";
 
-export interface ConnectZiggyOptions extends ZiggyConnectionOptions {}
+export interface ConnectZiggyOptions extends ZiggyConnectionOptions {
+  readonly httpBaseUrl?: string;
+}
+
+export type ZiggyPromptAttachments = Pick<ZiggySessionTextParams, "images">;
+
+const promptParams = (ref: ZiggySessionRef, text: string, commandId?: string, attachments?: ZiggyPromptAttachments): ZiggySessionTextParams => {
+  const params = commandId === undefined ? { ref, text } : { ref, text, commandId };
+  return attachments?.images === undefined ? params : { ...params, images: attachments.images };
+};
 
 interface MutableModelSetParams {
   profileId: ZiggyProfileId;
@@ -156,9 +168,25 @@ export interface ZiggyGatewayClient {
   watchSession(ref: ZiggySessionRef, cursor?: ZiggyEventCursor): Promise<void>;
   unwatchSession(ref: ZiggySessionRef): Promise<void>;
   closeSession(ref: ZiggySessionRef, commandId?: string): Promise<void>;
-  submitPrompt(ref: ZiggySessionRef, text: string, commandId?: string): Promise<void>;
-  steerSession(ref: ZiggySessionRef, text: string, commandId?: string): Promise<void>;
-  followUp(ref: ZiggySessionRef, text: string, commandId?: string): Promise<void>;
+  uploadImage(file: Blob): Promise<string>;
+  submitPrompt(
+    ref: ZiggySessionRef,
+    text: string,
+    commandId?: string,
+    attachments?: ZiggyPromptAttachments,
+  ): Promise<void>;
+  steerSession(
+    ref: ZiggySessionRef,
+    text: string,
+    commandId?: string,
+    attachments?: ZiggyPromptAttachments,
+  ): Promise<void>;
+  followUp(
+    ref: ZiggySessionRef,
+    text: string,
+    commandId?: string,
+    attachments?: ZiggyPromptAttachments,
+  ): Promise<void>;
   abortSession(ref: ZiggySessionRef, commandId?: string): Promise<void>;
   listAgents(profileId: ZiggyProfileId): Promise<ZiggyAgentListResult>;
   showAgent(profileId: ZiggyProfileId, agentId: string): Promise<ZiggyAgentShowResult>;
@@ -323,26 +351,48 @@ export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient =
       connection
         .request("session.close", commandId === undefined ? { ref } : { ref, commandId })
         .then(() => undefined),
-    submitPrompt: (ref, text, commandId) =>
+    uploadImage: async (file) => {
+      const socketUrl = new URL(options.url);
+      const base = new URL(options.httpBaseUrl ?? options.url);
+      if (base.protocol === "ws:") base.protocol = "http:";
+      if (base.protocol === "wss:") base.protocol = "https:";
+      const url = new URL("/uploads", base);
+      const token = options.token ?? socketUrl.searchParams.get("token");
+      const headers = new Headers({ "Content-Type": file.type });
+      if (token) headers.set("Authorization", `Bearer ${token}`);
+      const response = await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        headers,
+        body: file,
+      });
+      if (!response.ok) {
+        throw new Error(
+          response.status === 413
+            ? "Images must be 5 MiB or smaller."
+            : response.status === 415
+              ? "Use a valid PNG, JPEG, GIF or WebP image."
+              : response.status === 401
+                ? "Reconnect to Ziggy before attaching images."
+                : "The image could not be uploaded.",
+        );
+      }
+      const result = decodeJson(await response.text());
+      if (!isRecord(result) || Object.keys(result).length !== 1 || !isUploadId(result.id))
+        throw new Error("Invalid image upload response.");
+      return result.id;
+    },
+    submitPrompt: (ref, text, commandId, attachments) =>
       connection
-        .request(
-          "prompt.submit",
-          commandId === undefined ? { ref, text } : { ref, text, commandId },
-        )
+        .request("prompt.submit", promptParams(ref, text, commandId, attachments))
         .then(() => undefined),
-    steerSession: (ref, text, commandId) =>
+    steerSession: (ref, text, commandId, attachments) =>
       connection
-        .request(
-          "session.steer",
-          commandId === undefined ? { ref, text } : { ref, text, commandId },
-        )
+        .request("session.steer", promptParams(ref, text, commandId, attachments))
         .then(() => undefined),
-    followUp: (ref, text, commandId) =>
+    followUp: (ref, text, commandId, attachments) =>
       connection
-        .request(
-          "session.follow-up",
-          commandId === undefined ? { ref, text } : { ref, text, commandId },
-        )
+        .request("session.follow-up", promptParams(ref, text, commandId, attachments))
         .then(() => undefined),
     abortSession: (ref, commandId) =>
       connection

@@ -282,6 +282,7 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
     watchSession: vi.fn(async () => undefined),
     unwatchSession: vi.fn(async () => undefined),
     getSessionHistory: vi.fn(async (ref) => historyResult(ref)),
+    uploadImage: vi.fn(async () => crypto.randomUUID()),
     submitPrompt: vi.fn(async () => undefined),
     steerSession: vi.fn(async () => undefined),
     followUp: vi.fn(async () => undefined),
@@ -1431,8 +1432,14 @@ describe("useZiggyGateway", () => {
       mainRef,
       "Change direction",
       expect.any(String),
+      undefined,
     );
-    expect(fixture.followUp).toHaveBeenCalledWith(mainRef, "Next task", expect.any(String));
+    expect(fixture.followUp).toHaveBeenCalledWith(
+      mainRef,
+      "Next task",
+      expect.any(String),
+      undefined,
+    );
     expect(hook.result.current.pendingInputs.map((input) => input.mode)).toEqual([
       "steer",
       "queue",
@@ -1447,6 +1454,7 @@ describe("useZiggyGateway", () => {
       commandId: "web-test",
     });
     const { client } = makeClient({
+      uploadImage: vi.fn(async () => crypto.randomUUID()),
       submitPrompt: vi.fn(async () => {
         throw outcomeUnknown;
       }),
@@ -1750,4 +1758,24 @@ it("shows the completed run after a later busy attempt was skipped", async () =>
   const hook = await connectHook(client);
   await act(async () => hook.result.current.runAutomation("morning-weather"));
   expect(hook.result.current.automationRuns["morning-weather"]?.state).toBe("completed");
+});
+
+it("uploads images before sending IDs and releases optimistic previews on unmount", async () => {
+  const id = "12345678-1234-4123-8123-123456789abc";
+  const file = new File(["fixture"], "image.png", { type: "image/png" });
+  const createUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview");
+  const revokeUrl = vi.spyOn(URL, "revokeObjectURL");
+  const { client, fixture } = makeClient({ uploadImage: vi.fn(async () => id) });
+  const hook = await connectHook(client);
+  await act(async () => {
+    await hook.result.current.submit("", undefined, "steer", [file]);
+  });
+  expect(fixture.uploadImage).toHaveBeenCalledWith(file);
+  expect(fixture.submitPrompt).toHaveBeenCalledWith(mainRef, "", expect.any(String), {
+    images: [id],
+  });
+  expect(hook.result.current.pendingUserImages).toEqual(["blob:preview"]);
+  expect(createUrl).toHaveBeenCalledWith(file);
+  hook.unmount();
+  expect(revokeUrl).toHaveBeenCalledWith("blob:preview");
 });

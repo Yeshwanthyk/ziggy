@@ -54,6 +54,7 @@ import {
   isSessionResumeResult,
   isSessionNameValue,
   isSessionReference,
+  isUploadId,
   isSessionShowResult,
 } from "./conversations";
 import {
@@ -333,9 +334,15 @@ export const isMethodParams = <Method extends ZiggyMethod>(
     case "session.follow-up":
       return (
         hasRef(value) &&
-        hasOptionalCommandId(value, ["ref", "text", "recipient", "commandId"]) &&
+        hasOptionalCommandId(value, ["ref", "text", "recipient", "commandId", "images"]) &&
         (value.recipient === undefined || isRecipient(value.recipient)) &&
-        isBoundedCodePointString(value.text, 60_000)
+        (value.images === undefined ||
+          (Array.isArray(value.images) &&
+            value.images.length >= 1 &&
+            value.images.length <= 4 &&
+            value.images.every(isUploadId))) &&
+        isBoundedCodePointString(value.text, 60_000, 0) &&
+        (value.text.trim().length > 0 || value.images !== undefined)
       );
     case "agent.show":
     case "agent.document":

@@ -881,3 +881,30 @@ test("history paginates a transcript larger than the former total-file limit", a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("history preserves image-only user messages and counts image blocks", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ziggy-image-history-"));
+  temporaryPaths.push(root);
+  const timestamp = "2026-01-01T00:00:00.000Z";
+  await writeTranscript(root, [
+    { type: "session", id: "images", timestamp, cwd: root },
+    {
+      type: "message",
+      parentId: null,
+      id: "image-only",
+      timestamp,
+      message: { role: "user", content: [{ type: "image" }, { type: "image" }] },
+    },
+    {
+      type: "message",
+      parentId: null,
+      id: "mixed",
+      timestamp,
+      message: { role: "user", content: [{ type: "text", text: "Look" }, { type: "image" }] },
+    },
+  ]);
+  expect((await Effect.runPromise(sessionHistory(root, "images"))).entries).toEqual([
+    { kind: "user", timestamp, text: "", imageCount: 2 },
+    { kind: "user", timestamp, text: "Look", imageCount: 1 },
+  ]);
+});

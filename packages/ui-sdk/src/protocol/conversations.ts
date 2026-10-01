@@ -117,6 +117,7 @@ export interface ZiggySessionShowResult {
 
 export interface ZiggyHistoryUserEntry {
   readonly kind: "user";
+  readonly imageCount?: number;
   readonly timestamp: string;
   readonly text: string;
 }
@@ -191,7 +192,12 @@ export interface ZiggySessionCommandParams {
   readonly commandId?: string;
 }
 
+export const isUploadId = (value: unknown): value is string =>
+  typeof value === "string" &&
+  /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(value);
+
 export interface ZiggySessionTextParams extends ZiggySessionCommandParams {
+  readonly images?: ReadonlyArray<string>;
   readonly text: string;
   readonly recipient?: ZiggyRecipientId;
 }
@@ -473,7 +479,9 @@ const isHistoryEntry = (value: unknown): value is ZiggySessionHistoryEntry => {
   if (!isRecord(value) || !isBoundedString(value.timestamp, 128)) return false;
   if (value.kind === "user" || value.kind === "assistant") {
     return (
-      hasOnlyKeys(value, ["kind", "timestamp", "text"]) &&
+      hasOnlyKeys(value, ["kind", "timestamp", "text", "imageCount"]) &&
+      (value.imageCount === undefined ||
+        (value.kind === "user" && isSafeInteger(value.imageCount) && value.imageCount > 0)) &&
       isBoundedCodePointString(value.text, 1_024, 0)
     );
   }
@@ -503,7 +511,12 @@ export const isSessionSummaryResult = (value: unknown): value is ZiggySessionSum
   hasOnlyKeys(value, ["profileId", "sessions", "truncated", "canResume", "currentSessionId"]) &&
   isProfileId(value.profileId) &&
   typeof value.canResume === "boolean" &&
-  (value.currentSessionId === null || (isBoundedString(value.currentSessionId, 256) && !value.currentSessionId.includes("/") && !value.currentSessionId.includes("\\") && !value.currentSessionId.includes("..") && !value.currentSessionId.startsWith("."))) &&
+  (value.currentSessionId === null ||
+    (isBoundedString(value.currentSessionId, 256) &&
+      !value.currentSessionId.includes("/") &&
+      !value.currentSessionId.includes("\\") &&
+      !value.currentSessionId.includes("..") &&
+      !value.currentSessionId.startsWith("."))) &&
   typeof value.truncated === "boolean" &&
   Array.isArray(value.sessions) &&
   value.sessions.length <= 32 &&
@@ -685,7 +698,10 @@ export const isGatewayEvent = (value: unknown): value is ZiggyGatewayEvent => {
     );
   }
   if (value.event === "session-state") {
-    return hasOnlyKeys(payload, ["scope"]) && (payload.scope === "transcript" || payload.scope === "model");
+    return (
+      hasOnlyKeys(payload, ["scope"]) &&
+      (payload.scope === "transcript" || payload.scope === "model")
+    );
   }
   if (value.event === "settled") {
     return hasOnlyKeys(payload, []);

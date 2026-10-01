@@ -117,8 +117,17 @@ export const fixtureConnector =
         emit({ ...base(session), event: "settled", payload: {} });
       });
     };
-    const submit = async (session: ZiggySessionRef, text: string): Promise<void> => {
-      store.get(refKey(session))?.push({ kind: "user", timestamp: at(49), text });
+    const submit = async (
+      session: ZiggySessionRef,
+      text: string,
+      images?: ReadonlyArray<string>,
+    ): Promise<void> => {
+      store.get(refKey(session))?.push({
+        kind: "user",
+        timestamp: at(49),
+        text,
+        ...(images === undefined ? {} : { imageCount: images.length }),
+      });
       streamReply(session, `You said: “${text}”. This reply comes from the gallery fixture.`, true);
     };
 
@@ -180,9 +189,13 @@ export const fixtureConnector =
           );
       },
       unwatchSession: async () => undefined,
-      submitPrompt: async (ref, text) => submit(ref, text),
-      steerSession: async (ref, text) => submit(ref, text),
-      followUp: async (ref, text) => submit(ref, text),
+      uploadImage: async () => crypto.randomUUID(),
+      submitPrompt: async (ref, text, _commandId, attachments) =>
+        submit(ref, text, attachments?.images),
+      steerSession: async (ref, text, _commandId, attachments) =>
+        submit(ref, text, attachments?.images),
+      followUp: async (ref, text, _commandId, attachments) =>
+        submit(ref, text, attachments?.images),
       abortSession: async (ref) => {
         for (const timer of timers) clearTimeout(timer);
         timers.clear();
