@@ -2,8 +2,11 @@
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Pi requires thrown tool errors to mark failed executions. */
 /* oxlint-disable ziggy-effect/no-error-constructor -- Pi's tool boundary accepts Error failures, not Effect errors. */
 /* oxlint-disable ziggy-effect/no-json-parse -- MCP wire boundary; every parsed message is checked against a TypeBox schema before use. */
+import { spawn } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
+import { createServer } from "node:http";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
+import { Type, type Static, type TSchema } from "typebox";
 import { Check } from "typebox/value";
 
 const DEFAULT_URL = "http://127.0.0.1:4312/mcp";
@@ -18,15 +21,506 @@ const OUTPUT_LIMIT = 32 * 1024;
 /** Executor stops a program after five minutes; leave room for the response. */
 const CALL_TIMEOUT_MS = 330_000;
 
-const SETUP_HINT = `Executor is not set up: start the local server (\`executor serve\`), copy the API key from its dashboard Connect card, then store it with \`security add-generic-password -U -a executor -s ${KEYCHAIN_SERVICE} -w\` or set EXECUTOR_API_KEY. Never paste the token into chat.`;
+const SETUP_HINT =
+  "Start the local server (`executor serve`), then retry for a sign-in link; no API key is needed. EXECUTOR_API_KEY or the ziggy-executor Keychain item overrides OAuth for hosted or other setups.";
+
+export const OAUTH_KEYCHAIN_SERVICE = "ziggy-executor-oauth";
+
+const OAuthState = Type.Object({
+  url: Type.String(),
+  issuer: Type.String(),
+  tokenEndpoint: Type.String(),
+  clientId: Type.String(),
+  redirectUri: Type.String(),
+  refreshToken: Type.String(),
+});
+
+type OAuthState = Static<typeof OAuthState>;
+
+type OAuthStore = {
+  readonly read: () => Promise<OAuthState | undefined>;
+  readonly write: (state: OAuthState) => Promise<void>;
+  readonly clear: () => Promise<void>;
+};
+
+type CallbackReply = { readonly status: number; readonly html: string };
+
+type Listener = { readonly redirectUri: string; readonly close: () => void };
+
+type Listen = (
+  callback: (method: string, url: string) => Promise<CallbackReply>,
+) => Promise<Listener>;
 
 type Fetch = (input: string, init: RequestInit) => Promise<Response>;
 
 type ClientOptions = {
   readonly url: string;
-  readonly token: () => Promise<string>;
+  readonly token: () => Promise<string | undefined>;
   readonly fetch: Fetch;
+  readonly oauthStore?: OAuthStore;
+  readonly listen?: Listen;
 };
+
+/** Feed Keychain writes through stdin; credentials never become process arguments. */
+const security = (args: readonly string[], input?: string): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const child = spawn("security", args, { stdio: ["pipe", "pipe", "ignore"], timeout: 10_000 });
+    let stdout = "";
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.on("error", () => reject(new Error("Executor could not access Keychain.")));
+    child.on("close", (code) => {
+      if (code === 0 || (code === 44 && args[0] === "delete-generic-password"))
+        resolve(stdout.trim());
+      else reject(new Error("Executor could not access Keychain."));
+    });
+    child.stdin.on("error", () => {
+      /* Process failure is reported by close. */
+    });
+    child.stdin.end(input);
+  });
+
+const createOAuthStore = (): OAuthStore => {
+  let memory: OAuthState | undefined;
+
+  return {
+    async read() {
+      if (process.platform !== "darwin") return memory;
+
+      try {
+        const encoded = await security([
+          "find-generic-password",
+          "-s",
+          OAUTH_KEYCHAIN_SERVICE,
+          "-w",
+        ]);
+
+        const state = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+
+        return Check(OAuthState, state) ? state : undefined;
+      } catch {
+        return undefined;
+      }
+    },
+    async write(state) {
+      if (process.platform !== "darwin") {
+        memory = state;
+
+        return;
+      }
+
+      const encoded = Buffer.from(JSON.stringify(state)).toString("base64");
+
+      await security(
+        ["-i"],
+        `add-generic-password -U -a executor -s ${OAUTH_KEYCHAIN_SERVICE} -w ${encoded}\n`,
+      );
+
+      // Interactive security can exit successfully after a failed command; verify the write.
+      const persisted = await security([
+        "find-generic-password",
+        "-s",
+        OAUTH_KEYCHAIN_SERVICE,
+        "-w",
+      ]);
+
+      if (persisted !== encoded) throw new Error("Executor could not save its OAuth credentials.");
+    },
+    async clear() {
+      memory = undefined;
+
+      if (process.platform !== "darwin") return;
+
+      await security(["delete-generic-password", "-a", "executor", "-s", OAUTH_KEYCHAIN_SERVICE]);
+    },
+  };
+};
+
+const LoopbackAddress = Type.Object({ port: Type.Number() });
+
+const listenLoopback: Listen = (callback) =>
+  new Promise((resolve, reject) => {
+    const server = createServer(async (request, response) => {
+      try {
+        const reply = await callback(request.method ?? "", request.url ?? "");
+
+        response.writeHead(reply.status, { "content-type": "text/html; charset=utf-8" });
+        response.end(reply.html);
+      } catch {
+        response.writeHead(500, { "content-type": "text/html; charset=utf-8" });
+        response.end("Executor sign-in failed. Ask Ziggy again.");
+      }
+    });
+
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+
+      if (!Check(LoopbackAddress, address)) {
+        server.close();
+        reject(new Error("Executor could not start its sign-in listener."));
+
+        return;
+      }
+
+      server.unref();
+      resolve({
+        redirectUri: `http://127.0.0.1:${address.port}/callback`,
+        close: () => {
+          server.close();
+          server.closeIdleConnections();
+        },
+      });
+    });
+  });
+
+const ProtectedResource = Type.Object({
+  resource: Type.String(),
+  authorization_servers: Type.Array(Type.String(), { minItems: 1 }),
+});
+
+const AuthorizationServer = Type.Object({
+  issuer: Type.String(),
+  authorization_endpoint: Type.String(),
+  token_endpoint: Type.String(),
+  registration_endpoint: Type.String(),
+});
+
+const Registration = Type.Object({ client_id: Type.String({ minLength: 1 }) });
+
+const Tokens = Type.Object({
+  access_token: Type.String({ minLength: 1 }),
+  token_type: Type.String(),
+  expires_in: Type.Number({ minimum: 0 }),
+  refresh_token: Type.Optional(Type.String({ minLength: 1 })),
+});
+
+const OAuthError = Type.Object({ error: Type.String() });
+
+/** Malformed OAuth responses must not expose credential bytes in parser errors. */
+const oauthBody = async <Schema extends TSchema>(
+  response: Response,
+  schema: Schema,
+): Promise<Static<Schema>> => {
+  try {
+    const body = await response.json();
+
+    if (Check(schema, body)) return body;
+  } catch {
+    // Report only the boundary failure, never the response body.
+  }
+
+  throw new Error("Executor returned invalid OAuth metadata or credentials.");
+};
+
+/** OAuth owns one pending approval and one cached access token per Pi session. */
+const createOAuth = (options: ClientOptions) => {
+  const store = options.oauthStore ?? createOAuthStore();
+  const listen = options.listen ?? listenLoopback;
+  let state: OAuthState | undefined;
+  let loaded = false;
+  let access: { token: string; expires: number } | undefined;
+
+  let pending:
+    | { url: string; listener: Listener; timer: ReturnType<typeof setTimeout> }
+    | undefined;
+
+  let acquiring: Promise<string> | undefined;
+  let stopped = false;
+
+  const close = () => {
+    if (pending !== undefined) {
+      clearTimeout(pending.timer);
+      pending.listener.close();
+      pending = undefined;
+    }
+  };
+
+  const signIn = async (): Promise<string> => {
+    if (pending !== undefined) throw new Error(signInHint(pending.url));
+
+    if (stopped) throw new Error("Executor session has shut down.");
+
+    const probe = await options.fetch(options.url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 0,
+        method: "initialize",
+        params: {
+          protocolVersion: PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: "ziggy-executor", version: "0.3.0" },
+        },
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    const metadataUrl =
+      /resource_metadata="([^"]+)"/.exec(probe.headers.get("www-authenticate") ?? "")?.[1] ??
+      new URL("/.well-known/oauth-protected-resource", options.url).href;
+
+    await probe.body?.cancel();
+
+    const resourceResponse = await options.fetch(metadataUrl, {
+      method: "GET",
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    const resource = await oauthBody(resourceResponse, ProtectedResource);
+
+    if (!resourceResponse.ok || resource.resource !== options.url)
+      throw new Error(`Executor OAuth discovery failed. ${SETUP_HINT}`);
+
+    const issuer = resource.authorization_servers[0];
+
+    if (issuer === undefined) throw new Error("Executor advertised no OAuth issuer.");
+
+    const issuerUrl = new URL(issuer);
+    const metadataPath = `/.well-known/oauth-authorization-server${issuerUrl.pathname === "/" ? "" : issuerUrl.pathname.replace(/\/$/, "")}`;
+
+    let metadataResponse = await options.fetch(new URL(metadataPath, issuerUrl).href, {
+      method: "GET",
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (
+      metadataResponse.status === 404 &&
+      metadataPath !== "/.well-known/oauth-authorization-server"
+    ) {
+      await metadataResponse.body?.cancel();
+      metadataResponse = await options.fetch(
+        new URL("/.well-known/oauth-authorization-server", issuerUrl).href,
+        { method: "GET", signal: AbortSignal.timeout(10_000) },
+      );
+    }
+
+    const metadata = await oauthBody(metadataResponse, AuthorizationServer);
+
+    if (!metadataResponse.ok || metadata.issuer !== issuer)
+      throw new Error("Executor OAuth issuer discovery failed.");
+
+    const verifier = randomBytes(32).toString("base64url");
+    const callbackState = randomBytes(32).toString("base64url");
+    let consumed = false;
+    let registration: OAuthState | undefined;
+
+    const listener = await listen(async (method, callbackUrl) => {
+      const query = new URL(callbackUrl, "http://127.0.0.1");
+      const fail = (status: number, message: string): CallbackReply => ({ status, html: message });
+
+      if (method !== "GET" || query.pathname !== "/callback")
+        return fail(404, "Executor callback not found.");
+
+      if (query.searchParams.get("state") !== callbackState)
+        return fail(400, "Executor sign-in state did not match.");
+
+      if (consumed || registration === undefined)
+        return fail(409, "Executor callback already used or not ready.");
+
+      consumed = true;
+
+      try {
+        if (query.searchParams.has("error") || !query.searchParams.get("code"))
+          return fail(400, "Executor sign-in was not approved. Ask Ziggy again.");
+
+        const code = query.searchParams.get("code");
+
+        if (code === null) return fail(400, "Executor callback needs a code.");
+
+        const tokens = await exchange(registration, {
+          grant_type: "authorization_code",
+          code,
+          code_verifier: verifier,
+          redirect_uri: registration.redirectUri,
+        });
+
+        if (tokens === undefined || tokens.refresh_token === undefined)
+          return fail(400, "Executor sign-in failed. Ask Ziggy again.");
+
+        if (stopped || pending?.listener !== listener)
+          return fail(400, "Executor sign-in expired. Ask Ziggy again.");
+
+        const connected = { ...registration, refreshToken: tokens.refresh_token };
+
+        await store.write(connected);
+
+        if (stopped || pending?.listener !== listener)
+          return fail(400, "Executor sign-in expired. Ask Ziggy again.");
+        state = connected;
+        cache(tokens);
+
+        return {
+          status: 200,
+          html: "<!doctype html><title>Executor connected</title><p>Executor connected. You can return to Ziggy.</p>",
+        };
+      } catch {
+        return fail(400, "Executor sign-in failed. Ask Ziggy again.");
+      } finally {
+        if (pending?.listener === listener) close();
+      }
+    });
+
+    const timer = setTimeout(close, 10 * 60_000);
+
+    timer.unref();
+    pending = { url: "", listener, timer };
+
+    try {
+      if (stopped) throw new Error("Executor session has shut down.");
+
+      const redirectUri = listener.redirectUri;
+      let clientId = state?.redirectUri === redirectUri ? state.clientId : undefined;
+
+      if (clientId === undefined) {
+        const response = await options.fetch(new URL(metadata.registration_endpoint, issuer).href, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            client_name: "Ziggy Executor",
+            redirect_uris: [redirectUri],
+            grant_types: ["authorization_code", "refresh_token"],
+            response_types: ["code"],
+            token_endpoint_auth_method: "none",
+            scope: "mcp offline_access",
+          }),
+          signal: AbortSignal.timeout(10_000),
+        });
+
+        const client = await oauthBody(response, Registration);
+
+        if (!response.ok) throw new Error("Executor OAuth client registration failed.");
+        clientId = client.client_id;
+      }
+
+      registration = {
+        url: options.url,
+        issuer,
+        tokenEndpoint: new URL(metadata.token_endpoint, issuer).href,
+        clientId,
+        redirectUri,
+        refreshToken: "",
+      };
+      const authorize = new URL(metadata.authorization_endpoint, issuer);
+
+      authorize.search = new URLSearchParams({
+        response_type: "code",
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        scope: "mcp offline_access",
+        resource: options.url,
+        code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+        code_challenge_method: "S256",
+        state: callbackState,
+      }).toString();
+
+      if (stopped || pending?.listener !== listener)
+        throw new Error("Executor sign-in expired. Ask Ziggy again.");
+
+      pending.url = authorize.href;
+    } catch (error) {
+      if (pending?.listener === listener) close();
+      throw error;
+    }
+
+    throw new Error(signInHint(pending.url));
+  };
+
+  const cache = (tokens: Static<typeof Tokens>) => {
+    access = { token: tokens.access_token, expires: Date.now() + tokens.expires_in * 1000 };
+  };
+
+  const exchange = async (credential: OAuthState, fields: Readonly<Record<string, string>>) => {
+    const response = await options.fetch(credential.tokenEndpoint, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        ...fields,
+        client_id: credential.clientId,
+        resource: options.url,
+      }).toString(),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    const body = await oauthBody(response, Type.Union([Tokens, OAuthError]));
+
+    if (!response.ok) {
+      if (Check(OAuthError, body) && body.error === "invalid_grant") {
+        await store.clear();
+        state = undefined;
+        access = undefined;
+
+        return undefined;
+      }
+
+      throw new Error(
+        `Executor OAuth token request failed (HTTP ${response.status}). Ask Ziggy again.`,
+      );
+    }
+
+    if (!Check(Tokens, body) || body.token_type.toLowerCase() !== "bearer")
+      throw new Error("Executor OAuth returned an invalid token response.");
+
+    return body;
+  };
+
+  const acquire = async (force: boolean): Promise<string> => {
+    if (!loaded) {
+      state = await store.read();
+
+      if (state?.url !== options.url) state = undefined;
+      loaded = true;
+    }
+
+    if (!force && access !== undefined && access.expires > Date.now() + 30_000) return access.token;
+    access = undefined;
+
+    if (state !== undefined) {
+      const credential = state;
+
+      const tokens = await exchange(credential, {
+        grant_type: "refresh_token",
+        refresh_token: credential.refreshToken,
+      });
+
+      if (tokens !== undefined) {
+        state = { ...credential, refreshToken: tokens.refresh_token ?? credential.refreshToken };
+
+        if (tokens.refresh_token !== undefined) await store.write(state);
+        cache(tokens);
+
+        return tokens.access_token;
+      }
+    }
+
+    return signIn();
+  };
+
+  return {
+    token(force = false): Promise<string> {
+      if (acquiring !== undefined) return acquiring;
+      acquiring = acquire(force).finally(() => {
+        acquiring = undefined;
+      });
+
+      return acquiring;
+    },
+    close() {
+      stopped = true;
+      close();
+    },
+  };
+};
+
+const signInHint = (url: string) =>
+  `Executor needs you to sign in once. Open ${url} in your browser on this computer, approve, then ask me again.`;
 
 /** Every Executor MCP tool this package calls takes string arguments. */
 export type ToolArguments = Readonly<Record<string, string>>;
@@ -119,17 +613,46 @@ const renderResult = (result: CallToolResult): string => {
 export const createExecutorClient = (options: ClientOptions) => {
   let sessionId: string | undefined;
   let nextId = 1;
+  const oauth = createOAuth(options);
 
-  const post = async (message: JsonRpcRequest, signal: AbortSignal) => {
+  const send = async (init: RequestInit) => {
+    const staticToken = await options.token();
+
+    const authenticated = (token: string) =>
+      options.fetch(options.url, {
+        ...init,
+        headers: {
+          ...Object.fromEntries(new Headers(init.headers)),
+          authorization: `Bearer ${token}`,
+        },
+      });
+
+    let response = await authenticated(staticToken ?? (await oauth.token()));
+
+    if (response.status === 401 && staticToken === undefined) {
+      await response.body?.cancel();
+      response = await authenticated(await oauth.token(true));
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      await response.body?.cancel();
+      throw new Error(
+        `Executor refused the token (HTTP ${response.status}). It may be expired, revoked, or scoped to another organization. ${SETUP_HINT}`,
+      );
+    }
+
+    return response;
+  };
+
+  const post = (message: JsonRpcRequest, signal: AbortSignal) => {
     const session =
       sessionId === undefined
         ? {}
         : { "mcp-session-id": sessionId, "mcp-protocol-version": PROTOCOL_VERSION };
 
-    return options.fetch(options.url, {
+    return send({
       method: "POST",
       headers: {
-        authorization: `Bearer ${await options.token()}`,
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         ...session,
@@ -146,14 +669,6 @@ export const createExecutorClient = (options: ClientOptions) => {
   ) => {
     const id = nextId++;
     const response = await post({ jsonrpc: "2.0", id, method, params }, signal);
-
-    if (response.status === 401 || response.status === 403) {
-      await response.body?.cancel();
-
-      throw new Error(
-        `Executor refused the token (HTTP ${response.status}). It may be expired, revoked, or scoped to another organization. ${SETUP_HINT}`,
-      );
-    }
 
     // A 404 on an established session means the server forgot it.
     if (response.status === 404 && sessionId !== undefined) {
@@ -185,7 +700,7 @@ export const createExecutorClient = (options: ClientOptions) => {
       {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: "ziggy-executor", version: "0.2.0" },
+        clientInfo: { name: "ziggy-executor", version: "0.3.0" },
       },
       signal,
     );
@@ -225,6 +740,8 @@ export const createExecutorClient = (options: ClientOptions) => {
 
   /** Best effort: tell the server this session is over. */
   const close = async () => {
+    oauth.close();
+
     if (sessionId === undefined) return;
 
     const session = sessionId;
@@ -232,9 +749,9 @@ export const createExecutorClient = (options: ClientOptions) => {
     sessionId = undefined;
 
     try {
-      const response = await options.fetch(options.url, {
+      const response = await send({
         method: "DELETE",
-        headers: { authorization: `Bearer ${await options.token()}`, "mcp-session-id": session },
+        headers: { "mcp-session-id": session },
         signal: AbortSignal.timeout(5_000),
       });
 
@@ -248,7 +765,7 @@ export const createExecutorClient = (options: ClientOptions) => {
 };
 
 /** EXECUTOR_API_KEY wins; otherwise read the token from the macOS Keychain. */
-const readToken = async (exec: ExtensionAPI["exec"]): Promise<string> => {
+const readToken = async (exec: ExtensionAPI["exec"]): Promise<string | undefined> => {
   const fromEnv = process.env.EXECUTOR_API_KEY?.trim() ?? "";
 
   if (fromEnv.length > 0) return fromEnv;
@@ -263,7 +780,7 @@ const readToken = async (exec: ExtensionAPI["exec"]): Promise<string> => {
     if (result.code === 0 && token.length > 0) return token;
   }
 
-  throw new Error(SETUP_HINT);
+  return undefined;
 };
 
 const Skills = Type.Object(

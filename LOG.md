@@ -1529,3 +1529,9 @@ Automation delivery to a channel goes through one seam, `Deliver = (profile, tar
 - `POST /uploads` reads every body to the end and keeps at most 5 MiB: Bun stalls the next request on a keep-alive connection whose body was left unread, so an early 413 would hang the client's next upload.
 - `prompt.submit` still queues behind a running turn; images are consumed only after the recipient checks pass.
 - `bun run check` passes (23 SDK tests, 84 web tests); `bun test test` passes (666), including the `/uploads` auth, type, size and ownership test.
+
+## Executor extension: OAuth for the local v2 server
+
+- `extensions/executor` (0.3.0) falls back to OAuth after `EXECUTOR_API_KEY` and the existing `ziggy-executor` Keychain token. It discovers the server's metadata, registers a public loopback client, and returns one browser sign-in link with PKCE S256, state and the MCP resource. The callback listener lasts at most ten minutes and closes on approval, failure or session shutdown.
+- Refresh credentials stay in `ziggy-executor-oauth` (account `executor`), written through `security -i` stdin; off macOS they stay in memory. Access tokens are cached until shortly before expiry; a 401 gets one refresh and retry, rotated refresh tokens are saved, and `invalid_grant` clears state and starts sign-in again. Setup text now describes local sign-in and static credential overrides.
+- Builtin catalog regenerated for 0.3.0. `bun run check` passes; package tests pass (12) with injected fetch, storage and listeners. The live server accepts dynamic registration of a public loopback client (`token_endpoint_auth_method: none`); the browser approval itself is first exercised from Squarey.

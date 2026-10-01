@@ -22,14 +22,17 @@ chat, never read one from files, and never put one in app source.
 
 ## Setup check
 
-If a call fails with "Executor is not set up" or "refused the token", stop and tell the user:
+The local server needs no API key. Start it in the user's own terminal (Node 24.14+):
+`executor serve`. It must keep running while agents use it.
 
-1. Start the local server in their own terminal (Node 24.14+): `executor serve`. It must keep
-   running while agents use it. `executor pair` prints a dashboard link.
-2. In the dashboard, open the **Connect** card and copy the API key.
-3. In their own terminal, store it (the command prompts; the key is not echoed):
-   `security add-generic-password -U -a executor -s ziggy-executor -w`
-4. Retry. (A fresh process may use `EXECUTOR_API_KEY` instead.)
+The first Executor tool call returns a sign-in link. Relay the message verbatim: the user opens
+it in a browser on this computer, approves, then asks again. While sign-in is pending, calls
+return the same link; it expires after ten minutes. OAuth refresh credentials stay in macOS
+Keychain (`ziggy-executor-oauth`); off macOS they last only for this process.
+
+For hosted or other setups, `EXECUTOR_API_KEY` overrides OAuth, followed by the existing
+`ziggy-executor` Keychain item. A refused static token needs replacing in the user's own
+terminal or environment. Never ask them to paste it into chat.
 
 A connection error (not a 401) means the server is not running.
 

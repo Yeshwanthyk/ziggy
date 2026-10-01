@@ -1,9 +1,9 @@
 {
   "name": "@ziggy/executor",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Pi tools for the Executor MCP endpoint (local by default): skills, execute, resume.",
+  "description": "Pi tools for Executor (local by default, browser sign-in): skills, execute, resume.",
   "keywords": ["pi-package"],
   "scripts": {
     "test": "bun test ./test",
