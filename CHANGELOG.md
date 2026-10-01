@@ -13,8 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-30
+
 ### Added
 
+- `executor` extension 0.2.0: Pi tools `executor_skills`, `executor_execute` and `executor_resume` over MCP to Executor v2, the local server (`executor serve`) by default and hosted via `EXECUTOR_MCP_URL`. The token comes from `EXECUTOR_API_KEY` or the Keychain item `ziggy-executor`.
 - Sign in with ChatGPT: `ziggy auth <profile> openai --type oauth` uses a ChatGPT subscription with the OpenAI provider.
 
 ### Changed
