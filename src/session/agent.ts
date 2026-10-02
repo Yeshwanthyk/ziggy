@@ -7,6 +7,7 @@ import {
 import { Effect, Result } from "effect";
 import { piPromise, providerError } from "../adapters/pi/provider-failure";
 import { SpecialistToolUnsupported, type ZiggyAgentError } from "../domain/agent";
+import { isMcpToolName } from "../extensions";
 import { ProviderConfigError, type ProfileTarget } from "../profile";
 import { makeChatHandle } from "./handle";
 import { findRecentTranscript, readTranscriptHeader } from "./transcript";
@@ -24,7 +25,7 @@ import type { ChatContext, ChatHandle, OpenSessionRequest, RunOnceOptions } from
 /** What composition plugs into every session this agent opens. */
 export type SessionDependencies = Pick<
   ProfileRuntimeOptions,
-  "tools" | "prompts" | "runtimeFactory"
+  "tools" | "prompts" | "runtimeFactory" | "mcp"
 > & { readonly prepare?: SessionPrepare };
 
 export const localMainSessionDirectory = (profilePath: string): string =>
@@ -116,14 +117,18 @@ const requireModel = (profilePath: string, runtime: AgentSessionRuntime) =>
         ),
       );
 
-/** Pi drops a tool it cannot find; a Profile agent must not run with less than it declared. */
+/**
+ * Pi drops a tool it cannot find; a Profile agent must not run with less than it declared.
+ * `mcp__*` tools exist only once their server connects, so they are not checked here; a call to
+ * one that never appears fails as an unknown tool.
+ */
 const requirePersonaTools = (
   profilePath: string,
   runtime: AgentSessionRuntime,
   persona: SessionPersona | undefined,
 ) => {
   const active = new Set(runtime.session.getActiveToolNames());
-  const missing = persona?.tools.find((name) => !active.has(name));
+  const missing = persona?.tools.find((name) => !active.has(name) && !isMcpToolName(name));
 
   return persona === undefined || missing === undefined
     ? Effect.void
@@ -164,6 +169,7 @@ export const openSession = (
           beforeServices: leaseEachSession(leases),
           model: request.model,
           persona,
+          automation: request.automation,
         };
 
         const runtime = yield* createProfileRuntime(

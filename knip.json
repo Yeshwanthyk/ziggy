@@ -6,8 +6,6 @@
     "extensions/*/index.ts",
     "extensions/*/bin/**/*.{ts,mjs}",
     "extensions/*/test/**/*.test.ts",
-    "extensions/codemode/test/fixtures/mcp-server.ts",
-    "extensions/codemode/test/profile-smoke.ts",
     "clients/web/src/main.tsx",
     "clients/web/src/**/*.test.ts",
     "clients/web/src/**/*.test.tsx",
@@ -16,7 +14,9 @@
     "packages/ui-sdk/test/**/*.test.ts",
     "tooling/generate-*.mjs",
     "tooling/oxlint/*-plugin.mjs",
-    "tooling/**/*.test.ts"
+    "tooling/**/*.test.ts",
+    "test/extensions/fixtures/*.ts",
+    "src/extensions/codemode/worker.ts"
   ],
   "project": [
     "src/**/*.ts",

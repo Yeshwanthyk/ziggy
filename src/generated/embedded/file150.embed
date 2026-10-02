@@ -1,877 +1,556 @@
-import { Database } from "bun:sqlite";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
-import { Option, Predicate, Schema } from "effect";
+/* oxlint-disable ziggy-effect/no-native-promise-ownership -- This package is a Pi filesystem boundary. */
+/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Filesystem failures become stable tool errors. */
+/* oxlint-disable ziggy-effect/no-error-constructor -- Errors are the standalone Pi tool boundary. */
+/* oxlint-disable ziggy-effect/no-json-parse -- This package's bounded state file is decoded immediately and never enters domain code. */
+/* oxlint-disable ziggy-effect/no-promise-catch -- Cleanup is intentionally best effort at the filesystem boundary. */
+import { createHash, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { appendFile, lstat, mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { Type, type Static } from "typebox";
+import { Check } from "typebox/value";
 
-const INDEX_RELATIVE_PATH = join(".runtime", "lossless-claw", "index.sqlite");
+const MAX_LOG_DETAIL = 2_000;
 
-const DEFAULT_LIMIT = 20;
+const MAX_EVIDENCE = 500;
 
-const MAX_LIMIT = 100;
+const MAX_SKILL_BYTES = 64 * 1024;
 
-const MAX_SNIPPET_CHARS = 600;
+const MAX_SESSION_IDS = 32;
 
-const ContentItemSchema = Schema.Struct({
-  type: Schema.String,
-  text: Schema.optional(Schema.String),
-  name: Schema.optional(Schema.String),
-  arguments: Schema.optional(Schema.Unknown),
+const READY_THRESHOLD = 3;
+
+const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+const RESERVED_EXTENSION_IDS = new Set(["extension-authoring", "pi-packages", "ziggy-operations"]);
+
+const DESCRIPTION_MAX = 1_024;
+
+type ReviewDecision = "applied" | "no-op" | "staged" | "error";
+
+const NodeError = Type.Object(
+  { code: Type.Optional(Type.String()) },
+  { additionalProperties: true },
+);
+
+const CuratorStateValue = Type.Object({
+  version: Type.Literal(1),
+  completedSessionIds: Type.Array(Type.String({ minLength: 1, maxLength: 512 })),
+  lastObservedAt: Type.Optional(Type.String()),
 });
 
-const MessageSchema = Schema.Struct({
-  role: Schema.String,
-  content: Schema.Union([Schema.String, Schema.Array(ContentItemSchema)]),
-  toolName: Schema.optional(Schema.String),
-});
+const SessionMessageValue = Type.Object(
+  {
+    role: Type.Optional(Type.String()),
+    stopReason: Type.Optional(Type.String()),
+  },
+  { additionalProperties: true },
+);
 
-const JsonLineSchema = Schema.Struct({
-  type: Schema.String,
-  id: Schema.optional(Schema.String),
-  parentId: Schema.optional(Schema.Union([Schema.String, Schema.Null])),
-  timestamp: Schema.optional(Schema.String),
-  cwd: Schema.optional(Schema.String),
-  message: Schema.optional(MessageSchema),
-  summary: Schema.optional(Schema.String),
-});
+const SessionEntryValue = Type.Object(
+  {
+    type: Type.Optional(Type.String()),
+    message: Type.Optional(SessionMessageValue),
+    role: Type.Optional(Type.String()),
+    stopReason: Type.Optional(Type.String()),
+  },
+  { additionalProperties: true },
+);
 
-const decodeJsonLine = Schema.decodeUnknownOption(Schema.fromJsonString(JsonLineSchema));
+const ManagedManifest = Type.Object(
+  {
+    name: Type.String(),
+    ziggy: Type.Object({ curatorManaged: Type.Literal(true) }, { additionalProperties: true }),
+    pi: Type.Object(
+      {
+        skills: Type.Array(Type.String()),
+        extensions: Type.Optional(Type.Array(Type.String())),
+      },
+      { additionalProperties: true },
+    ),
+  },
+  { additionalProperties: true },
+);
 
-interface DiscoveredFile {
-  readonly absolutePath: string;
-  readonly sourcePath: string;
-  readonly size: number;
-  readonly mtimeMs: number;
+export type SessionEntry = Static<typeof SessionEntryValue>;
+
+export const decodeSessionEntries = (
+  entries: ReadonlyArray<SessionEntry>,
+): ReadonlyArray<SessionEntry> => entries.filter((entry) => Check(SessionEntryValue, entry));
+
+interface SessionMessageView {
+  role?: string;
+  stopReason?: string;
 }
 
-interface ProjectedEntry {
-  readonly ordinal: number;
-  readonly entryId: string;
-  readonly parentId: string | null;
-  readonly timestamp: string;
-  readonly kind: "message" | "compaction" | "branch_summary";
-  readonly role: string;
-  readonly text: string;
-  readonly active: boolean;
+export interface ObservationInput {
+  readonly profilePath: string;
+  readonly sessionFile: string | undefined;
+  readonly entries: ReadonlyArray<SessionEntry>;
+  readonly observedAt?: Date;
 }
 
-interface FileProjection {
-  readonly file: DiscoveredFile;
-  readonly sessionId: string;
-  readonly headerTimestamp: string;
-  readonly headerCwd: string;
-  readonly latestTimestamp: string;
-  readonly leafId: string | null;
-  readonly entries: ReadonlyArray<ProjectedEntry>;
+export interface ReviewLogInput {
+  decision: ReviewDecision;
+  detail: string;
+  evidence?: string;
+  clearReady?: boolean;
+  at?: Date;
 }
 
-interface FileStateRow {
-  readonly source_path: string;
-  readonly size: number;
-  readonly mtime_ms: number;
+interface CuratorState {
+  readonly version: 1;
+  readonly completedSessionIds: ReadonlyArray<string>;
+  readonly lastObservedAt?: string;
 }
 
-interface SearchDatabaseRow {
-  readonly row_id: number;
-  readonly session_id: string;
-  readonly source_path: string;
-  readonly entry_id: string;
-  readonly parent_id: string | null;
-  readonly timestamp: string;
-  readonly kind: string;
-  readonly role: string;
-  readonly active: number;
-  readonly snippet: string;
-  readonly rank: number;
+export interface CuratorStatus extends CuratorState {
+  readonly ready: boolean;
+  readonly statePath: string;
+  readonly readyPath: string;
+  readonly logsPath: string;
 }
 
-interface NeighborDatabaseRow {
-  readonly entry_id: string;
-  readonly parent_id: string | null;
-  readonly timestamp: string;
-  readonly kind: string;
-  readonly role: string;
-  readonly active: number;
-  readonly text: string;
+export interface ExtensionWriteInput {
+  readonly id: string;
+  readonly body: string;
+  replace?: boolean;
+  expectedOldSha256?: string;
 }
 
-interface SessionDatabaseRow {
-  readonly session_id: string;
-  readonly source_path: string;
-  readonly header_timestamp: string;
-  readonly header_cwd: string;
-  readonly latest_timestamp: string;
-  readonly leaf_id: string | null;
-  readonly size: number;
-  readonly mtime_ms: number;
-  readonly searchable_entries: number;
-  readonly active_entries: number;
-  readonly compactions: number;
-  readonly branch_summaries: number;
+interface ParsedSkill {
+  readonly name: string;
+  readonly description: string;
 }
 
-interface RoleCountRow {
-  readonly role: string;
-  readonly entries: number;
-}
+const runtimePath = (profilePath: string): string =>
+  join(profilePath, ".runtime", "self-improvement");
 
-interface ActiveEntryRow {
-  readonly entry_id: string;
-  readonly parent_id: string | null;
-  readonly kind: string;
-  readonly role: string;
-  readonly timestamp: string;
-}
+const statePath = (profilePath: string): string => join(runtimePath(profilePath), "state.json");
 
-interface RefreshResult {
-  readonly discoveredFiles: number;
-  readonly changedFiles: number;
-  readonly deletedFiles: number;
-  readonly indexedFiles: number;
-}
+const readyPath = (profilePath: string): string => join(runtimePath(profilePath), "curator-ready");
 
-export interface SessionListInput {
-  readonly limit?: number;
-  readonly since?: string;
-}
+const logsPath = (profilePath: string): string => join(runtimePath(profilePath), "logs");
 
-export interface SessionSummary {
-  readonly sessionId: string;
-  readonly path: string;
-  readonly headerTimestamp: string;
-  readonly headerCwd: string;
-  readonly latestTimestamp: string;
-  readonly activeLeafId: string | null;
-  readonly size: number;
-  readonly searchableEntries: number;
-  readonly activeEntries: number;
-  readonly compactions: number;
-  readonly branchSummaries: number;
-}
+const ensureRuntime = async (profilePath: string): Promise<void> => {
+  await ensurePhysicalDirectory(profilePath, false);
+  await ensurePhysicalDirectory(join(profilePath, ".runtime"), true);
+  await ensurePhysicalDirectory(runtimePath(profilePath), true);
+};
 
-export interface SessionDescription {
-  readonly sessionId: string;
-  readonly path: string;
-  readonly headerTimestamp: string;
-  readonly headerCwd: string;
-  readonly latestTimestamp: string;
-  readonly activeLeafId: string | null;
-  readonly size: number;
-  readonly searchableEntries: number;
-  readonly activeEntries: number;
-  readonly compactions: number;
-  readonly branchSummaries: number;
-  readonly roles: ReadonlyArray<{ readonly role: string; readonly entries: number }>;
-  readonly activeBranch: ReadonlyArray<{
-    readonly entryId: string;
-    readonly parentId: string | null;
-    readonly kind: string;
-    readonly role: string;
-    readonly timestamp: string;
-  }>;
-}
+const errorCode = (cause: unknown): string | undefined =>
+  Check(NodeError, cause) ? cause.code : undefined;
 
-export interface SearchInput {
-  readonly query: string;
-  readonly limit?: number;
+const defaultState = (): CuratorState => ({ version: 1, completedSessionIds: [] });
+
+const readState = async (profilePath: string): Promise<CuratorState> => {
+  try {
+    const parsed = JSON.parse(await readFile(statePath(profilePath), "utf8"));
+
+    if (!Check(CuratorStateValue, parsed)) throw new Error("invalid self-improvement state.json");
+    const completedSessionIds = [...new Set(parsed.completedSessionIds)].slice(-MAX_SESSION_IDS);
+
+    if (parsed.lastObservedAt === undefined) {
+      return { version: 1, completedSessionIds };
+    }
+
+    return { version: 1, completedSessionIds, lastObservedAt: parsed.lastObservedAt };
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return defaultState();
+    throw cause;
+  }
+};
+
+const atomicFileWrite = async (targetPath: string, content: string): Promise<void> => {
+  await mkdir(dirname(targetPath), { recursive: true });
+  const temporaryPath = join(dirname(targetPath), `.${basename(targetPath)}.${randomUUID()}.tmp`);
+
+  const file = await open(
+    temporaryPath,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+    0o600,
+  );
+
+  try {
+    await file.writeFile(content, "utf8");
+    await file.sync();
+  } finally {
+    await file.close();
+  }
+
+  try {
+    await rename(temporaryPath, targetPath);
+  } catch (cause) {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw cause;
+  }
+};
+
+const isPhysicalDirectory = async (path: string): Promise<boolean> => {
+  try {
+    const status = await lstat(path);
+
+    return status.isDirectory() && !status.isSymbolicLink();
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return false;
+    throw cause;
+  }
+};
+
+const ensurePhysicalDirectory = async (path: string, create: boolean): Promise<string> => {
+  if (!(await isPhysicalDirectory(path))) {
+    if (!create) throw new Error(`expected a physical directory at ${path}`);
+
+    try {
+      await mkdir(path);
+    } catch (cause) {
+      if (errorCode(cause) !== "EEXIST") throw cause;
+    }
+  }
+
+  const status = await lstat(path);
+
+  if (status.isSymbolicLink() || !status.isDirectory())
+    throw new Error(`expected a physical directory at ${path}`);
+
+  return realpath(path);
+};
+
+const assertContained = (root: string, candidate: string): void => {
+  const remainder = relative(root, candidate);
+
+  if (remainder === ".." || remainder.startsWith(`..${sep}`) || resolve(remainder) === remainder)
+    throw new Error("Profile extension path escapes the Profile");
+};
+
+const rejectRepositoryRoot = async (profilePath: string): Promise<void> => {
+  try {
+    await lstat(join(profilePath, ".git"));
+    throw new Error("refusing to write self-improvement data in a repository checkout");
+  } catch (cause) {
+    if (errorCode(cause) !== "ENOENT") throw cause;
+  }
+};
+
+const textField = (value: string, field: string, maximum: number): string => {
+  const normalized = value.trim();
+
+  if (normalized.length === 0 || normalized.length > maximum || normalized.includes("\0"))
+    throw new Error(`${field} must be non-empty and at most ${maximum} characters`);
+
+  return normalized;
+};
+
+const parseSkillFrontmatter = (id: string, body: string): ParsedSkill => {
+  if (Buffer.byteLength(body, "utf8") > MAX_SKILL_BYTES)
+    throw new Error(`SKILL.md exceeds the ${MAX_SKILL_BYTES}-byte limit`);
+  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(body);
+
+  if (match === null) throw new Error("SKILL.md requires YAML frontmatter");
+  const fields = new Map<string, string>();
+
+  for (const line of (match[1] ?? "").split(/\r?\n/)) {
+    const parsed = /^([a-zA-Z][a-zA-Z0-9_-]*):\s*(.*)$/.exec(line);
+
+    if (parsed === null) throw new Error("SKILL.md frontmatter contains an invalid line");
+    const key = parsed[1];
+    const rawValue = parsed[2];
+
+    if (key === undefined || rawValue === undefined)
+      throw new Error("SKILL.md frontmatter contains an invalid line");
+
+    if (fields.has(key)) throw new Error(`SKILL.md frontmatter repeats '${key}'`);
+    let value = rawValue.trim();
+
+    if (
+      value.length >= 2 &&
+      ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'")))
+    )
+      value = value.slice(1, -1);
+    fields.set(key, value);
+  }
+
+  const name = fields.get("name");
+  const description = fields.get("description");
+
+  if (name !== id || !ID_PATTERN.test(name ?? ""))
+    throw new Error(`SKILL.md frontmatter name must exactly match '${id}'`);
+
+  return { name, description: textField(description ?? "", "description", DESCRIPTION_MAX) };
+};
+
+const toSessionMessageView = (source: {
   readonly role?: string;
-  readonly session?: string;
-  readonly since?: string;
-  readonly until?: string;
-  readonly activeOnly?: boolean;
-}
+  readonly stopReason?: string;
+}): SessionMessageView => {
+  const view: SessionMessageView = {};
 
-export interface SearchResult {
-  readonly sessionId: string;
+  if (source.role !== undefined) {
+    view.role = source.role;
+  }
+
+  if (source.stopReason !== undefined) {
+    view.stopReason = source.stopReason;
+  }
+
+  return view;
+};
+
+const looksLikeMessage = (entry: SessionEntry): SessionMessageView =>
+  toSessionMessageView(entry.message ?? entry);
+
+const eligibleSession = (
+  sessionFile: string | undefined,
+  entries: ReadonlyArray<SessionEntry>,
+): string | undefined => {
+  if (sessionFile === undefined || sessionFile.length === 0) return undefined;
+  const normalized = sessionFile.replaceAll("\\", "/");
+
+  if (
+    normalized.includes("/sessions/automations/") ||
+    normalized.includes("/sessions/agents/") ||
+    normalized.includes("/sessions/specialists/")
+  )
+    return undefined;
+  const messages = entries.filter((entry) => entry.type === "message");
+
+  if (messages.length === 0 || !messages.some((entry) => looksLikeMessage(entry).role === "user"))
+    return undefined;
+
+  const assistantMessages = messages.filter(
+    (entry) => looksLikeMessage(entry).role === "assistant",
+  );
+
+  const lastAssistant = assistantMessages.at(-1);
+
+  if (lastAssistant === undefined) return undefined;
+  const stopReason = looksLikeMessage(lastAssistant).stopReason;
+
+  if (stopReason === "aborted" || stopReason === "error") return undefined;
+
+  return resolve(sessionFile);
+};
+
+const appendObservation = async (
+  profilePath: string,
+  sessionId: string,
+  at: Date,
+): Promise<void> => {
+  const day = at.toISOString().slice(0, 10);
+  const timestamp = at.toISOString();
+  const sessionLabel = basename(sessionId);
+  await mkdir(logsPath(profilePath), { recursive: true });
+  await appendFile(
+    join(logsPath(profilePath), `${day}.md`),
+    `## ${timestamp} — completed foreground session\n\n- session: ${sessionLabel}\n- signal: eligible for Curator review after distinct-session recurrence\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+};
+
+export const observeCompletedForegroundSession = async (
+  input: ObservationInput,
+): Promise<{ readonly observed: boolean; readonly ready: boolean; readonly reason?: string }> => {
+  await ensureRuntime(input.profilePath);
+  const sessionId = eligibleSession(input.sessionFile, input.entries);
+
+  if (sessionId === undefined)
+    return { observed: false, ready: false, reason: "ineligible-session" };
+  const state = await readState(input.profilePath);
+
+  if (state.completedSessionIds.includes(sessionId)) {
+    return {
+      observed: false,
+      ready: await fileExists(readyPath(input.profilePath)),
+      reason: "already-observed",
+    };
+  }
+
+  const at = input.observedAt ?? new Date();
+  const completedSessionIds = [...state.completedSessionIds, sessionId].slice(-MAX_SESSION_IDS);
+
+  const next: CuratorState = {
+    version: 1,
+    completedSessionIds,
+    lastObservedAt: at.toISOString(),
+  };
+
+  await atomicFileWrite(statePath(input.profilePath), `${JSON.stringify(next, null, 2)}\n`);
+  await appendObservation(input.profilePath, sessionId, at);
+  const ready = completedSessionIds.length >= READY_THRESHOLD;
+
+  if (ready) await atomicFileWrite(readyPath(input.profilePath), "ready\n");
+
+  return { observed: true, ready };
+};
+
+const fileExists = async (path: string): Promise<boolean> => {
+  try {
+    await lstat(path);
+
+    return true;
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return false;
+    throw cause;
+  }
+};
+
+export const readStatus = async (profilePath: string): Promise<CuratorStatus> => {
+  await ensureRuntime(profilePath);
+  const state = await readState(profilePath);
+
+  return {
+    ...state,
+    ready: await fileExists(readyPath(profilePath)),
+    statePath: statePath(profilePath),
+    readyPath: readyPath(profilePath),
+    logsPath: logsPath(profilePath),
+  };
+};
+
+export const appendReviewLog = async (
+  profilePath: string,
+  input: ReviewLogInput,
+): Promise<{ readonly path: string; readonly clearedReady: boolean }> => {
+  await ensureRuntime(profilePath);
+
+  if (input.clearReady === true && input.decision !== "applied" && input.decision !== "no-op")
+    throw new Error("readiness can be cleared only after an applied or no-op review");
+  const detail = textField(input.detail.replaceAll("\n", " "), "detail", MAX_LOG_DETAIL);
+
+  const evidence =
+    input.evidence === undefined ? undefined : textField(input.evidence, "evidence", MAX_EVIDENCE);
+
+  const at = input.at ?? new Date();
+  const day = at.toISOString().slice(0, 10);
+  const path = join(logsPath(profilePath), `${day}.md`);
+  await mkdir(logsPath(profilePath), { recursive: true });
+  await appendFile(
+    path,
+    `## ${at.toISOString()} — ${input.decision}\n\n- detail: ${detail}${evidence === undefined ? "" : `\n- evidence: ${evidence}`}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  let clearedReady = false;
+
+  if (input.clearReady === true) {
+    try {
+      await rm(readyPath(profilePath));
+      clearedReady = true;
+    } catch (cause) {
+      if (errorCode(cause) !== "ENOENT") throw cause;
+    }
+  }
+
+  return { path, clearedReady };
+};
+
+const packageManifest = (id: string, description: string): string =>
+  `${JSON.stringify(
+    {
+      name: `@ziggy/${id}`,
+      private: true,
+      type: "module",
+      keywords: ["pi-package"],
+      description,
+      ziggy: { curatorManaged: true },
+      pi: { skills: ["./skills"] },
+    },
+    null,
+  )}\n`;
+
+const managedManifest = (id: string, value: Static<typeof ManagedManifest>): boolean =>
+  value.name === `@ziggy/${id}` &&
+  value.pi.skills.length === 1 &&
+  value.pi.skills[0] === "./skills" &&
+  value.pi.extensions === undefined;
+
+const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
+
+const checkedSkillFile = async (profilePath: string, id: string): Promise<string> => {
+  const extensionRoot = join(profilePath, "extensions", id);
+  const skillsRoot = join(extensionRoot, "skills");
+  const skillRoot = join(skillsRoot, id);
+  const skillFile = join(skillRoot, "SKILL.md");
+  const profileReal = await ensurePhysicalDirectory(profilePath, false);
+  const extensionReal = await ensurePhysicalDirectory(join(profilePath, "extensions"), false);
+  const packageReal = await ensurePhysicalDirectory(extensionRoot, false);
+  const skillsReal = await ensurePhysicalDirectory(skillsRoot, false);
+  const skillReal = await ensurePhysicalDirectory(skillRoot, false);
+  assertContained(profileReal, extensionReal);
+  assertContained(extensionReal, packageReal);
+  assertContained(packageReal, skillsReal);
+  assertContained(skillsReal, skillReal);
+  const fileStatus = await lstat(skillFile);
+
+  if (fileStatus.isSymbolicLink() || !fileStatus.isFile())
+    throw new Error(`SKILL.md must be a regular file at ${skillFile}`);
+  assertContained(skillReal, await realpath(skillFile));
+
+  return skillFile;
+};
+
+export const writeCuratorExtension = async (
+  profilePath: string,
+  input: ExtensionWriteInput,
+): Promise<{
+  readonly id: string;
+  readonly action: "created" | "replaced";
   readonly path: string;
-  readonly entryId: string;
-  readonly parentId: string | null;
-  readonly timestamp: string;
-  readonly kind: string;
-  readonly role: string;
-  readonly active: boolean;
-  readonly snippet: string;
-  readonly score: number;
-  readonly match: "and" | "or";
-}
+  readonly sha256: string;
+}> => {
+  const id = textField(input.id, "extension ID", 64);
 
-export interface ExpandInput extends SearchInput {
-  readonly context?: number;
-}
+  if (!ID_PATTERN.test(id) || RESERVED_EXTENSION_IDS.has(id))
+    throw new Error("extension ID must be kebab-case and non-reserved");
 
-export interface ExpandedMatch {
-  readonly match: SearchResult;
-  readonly evidence: ReadonlyArray<{
-    readonly entryId: string;
-    readonly parentId: string | null;
-    readonly timestamp: string;
-    readonly kind: string;
-    readonly role: string;
-    readonly active: boolean;
-    readonly text: string;
-  }>;
-}
+  if (input.expectedOldSha256 !== undefined && !/^[a-f0-9]{64}$/.test(input.expectedOldSha256))
+    throw new Error("expectedOldSha256 must be a lowercase SHA-256 digest");
+  const parsed = parseSkillFrontmatter(id, input.body);
+  await rejectRepositoryRoot(profilePath);
+  const profileReal = await ensurePhysicalDirectory(profilePath, false);
+  const extensionsPath = join(profilePath, "extensions");
+  const extensionsReal = await ensurePhysicalDirectory(extensionsPath, true);
+  assertContained(profileReal, extensionsReal);
+  const packagePath = join(extensionsPath, id);
+  const packageJsonPath = join(packagePath, "package.json");
+  const skillPath = join(packagePath, "skills", id, "SKILL.md");
+  const exists = await fileExists(packagePath);
 
-const boundedInteger = (value: number | undefined, fallback: number, maximum: number): number => {
-  if (value === undefined || !Number.isFinite(value)) {
-    return fallback;
+  if (exists && input.replace !== true)
+    throw new Error(`Profile extension '${id}' already exists; set replace:true to replace it`);
+
+  if (exists) {
+    const packageReal = await ensurePhysicalDirectory(packagePath, false);
+    assertContained(extensionsReal, packageReal);
+    const manifestStatus = await lstat(packageJsonPath);
+
+    if (manifestStatus.isSymbolicLink() || !manifestStatus.isFile())
+      throw new Error("managed package.json must be a regular file");
+    const manifest = JSON.parse(await readFile(packageJsonPath, "utf8"));
+
+    if (!Check(ManagedManifest, manifest) || !managedManifest(id, manifest))
+      throw new Error("replacement requires ziggy.curatorManaged package manifest");
+    const currentSkill = await checkedSkillFile(profilePath, id);
+    const currentBody = await readFile(currentSkill, "utf8");
+
+    if (input.expectedOldSha256 !== undefined && sha256(currentBody) !== input.expectedOldSha256)
+      throw new Error("replacement expected-old SHA-256 does not match current SKILL.md");
+    await atomicFileWrite(currentSkill, input.body);
+
+    return { id, action: "replaced", path: currentSkill, sha256: sha256(input.body) };
   }
 
-  return Math.max(1, Math.min(maximum, Math.floor(value)));
+  await mkdir(packagePath);
+
+  try {
+    await mkdir(join(packagePath, "skills"));
+    await mkdir(join(packagePath, "skills", id));
+    await atomicFileWrite(packageJsonPath, packageManifest(id, parsed.description));
+    await atomicFileWrite(skillPath, input.body);
+  } catch (cause) {
+    await rm(packagePath, { recursive: true, force: true }).catch(() => undefined);
+    throw cause;
+  }
+
+  return { id, action: "created", path: skillPath, sha256: sha256(input.body) };
 };
-
-const boundedText = (value: string, maximum: number = MAX_SNIPPET_CHARS): string => {
-  const compact = value.replaceAll(/\s+/g, " ").trim();
-
-  return compact.length <= maximum ? compact : `${compact.slice(0, maximum - 1)}…`;
-};
-
-const discoverSessionFiles = (profile: string): ReadonlyArray<DiscoveredFile> => {
-  const sessionsRoot = join(profile, "sessions");
-  const paths: string[] = [];
-
-  const visit = (directory: string): void => {
-    for (const child of readdirSync(directory, { withFileTypes: true })) {
-      const childPath = join(directory, child.name);
-
-      if (child.isSymbolicLink()) {
-        continue;
-      }
-
-      if (child.isDirectory()) {
-        visit(childPath);
-      } else if (child.isFile() && child.name.endsWith(".jsonl")) {
-        paths.push(childPath);
-      }
-    }
-  };
-
-  if (!existsSync(sessionsRoot) || lstatSync(sessionsRoot).isSymbolicLink()) {
-    return [];
-  }
-
-  visit(sessionsRoot);
-  paths.sort((left, right) => left.localeCompare(right));
-
-  return paths.map((absolutePath) => {
-    const metadata = statSync(absolutePath);
-
-    return {
-      absolutePath,
-      sourcePath: relative(profile, absolutePath),
-      size: metadata.size,
-      mtimeMs: metadata.mtimeMs,
-    };
-  });
-};
-
-// oxlint-disable-next-line ziggy/no-unknown-parameters -- JSON.stringify encode boundary for decoded Schema.Unknown tool arguments.
-const stringifyArguments = (value: unknown): string => {
-  if (value === undefined) {
-    return "";
-  }
-
-  const encoded = JSON.stringify(value);
-
-  return encoded === undefined ? "" : encoded;
-};
-
-const messageText = (
-  message: Schema.Schema.Type<typeof MessageSchema>,
-): { readonly role: string; readonly text: string } | undefined => {
-  if (Predicate.isString(message.content)) {
-    const text = message.content.trim();
-
-    return text.length === 0 ? undefined : { role: message.role, text };
-  }
-
-  const parts: string[] = [];
-
-  for (const item of message.content) {
-    if (item.type === "text" && item.text !== undefined) {
-      parts.push(item.text);
-    } else if (item.type === "toolCall" && item.name !== undefined) {
-      const argumentsText = stringifyArguments(item.arguments);
-      parts.push(`tool call ${item.name}${argumentsText.length === 0 ? "" : ` ${argumentsText}`}`);
-    }
-  }
-
-  if (message.role === "toolResult" && message.toolName !== undefined) {
-    parts.unshift(`tool result ${message.toolName}`);
-  }
-
-  const text = parts.join("\n").trim();
-
-  return text.length === 0 ? undefined : { role: message.role, text };
-};
-
-const projectFile = (file: DiscoveredFile): FileProjection | undefined => {
-  const contents = readFileSync(file.absolutePath, "utf8");
-  const lines = contents.split(/\r?\n/);
-  const headerLine = lines.find((line) => line.trim().length > 0);
-
-  if (headerLine === undefined) {
-    return undefined;
-  }
-
-  const decodedHeader = decodeJsonLine(headerLine);
-
-  if (Option.isNone(decodedHeader)) {
-    return undefined;
-  }
-
-  const header = decodedHeader.value;
-  const sessionId = header.id;
-  const headerTimestamp = header.timestamp;
-
-  if (header.type !== "session" || sessionId === undefined || headerTimestamp === undefined) {
-    return undefined;
-  }
-
-  const decodedEntries: Array<{
-    readonly ordinal: number;
-    readonly type: string;
-    readonly id: string;
-    readonly parentId: string | null;
-    readonly timestamp: string;
-    readonly message: Schema.Schema.Type<typeof MessageSchema> | undefined;
-    readonly summary: string | undefined;
-  }> = [];
-
-  const parentById = new Map<string, string | null>();
-  let leafId: string | null = null;
-
-  for (const [lineIndex, line] of lines.entries()) {
-    if (line.trim().length === 0 || line === headerLine) {
-      continue;
-    }
-
-    const decoded = decodeJsonLine(line);
-
-    if (Option.isNone(decoded)) {
-      continue;
-    }
-
-    const entry = decoded.value;
-    const entryId = entry.id;
-    const parentId = entry.parentId;
-
-    if (entry.type === "session" || entryId === undefined || parentId === undefined) {
-      continue;
-    }
-
-    decodedEntries.push({
-      ordinal: lineIndex,
-      type: entry.type,
-      id: entryId,
-      parentId,
-      timestamp: entry.timestamp ?? headerTimestamp,
-      message: entry.message,
-      summary: entry.summary,
-    });
-    parentById.set(entryId, parentId);
-    leafId = entryId;
-  }
-
-  const activeIds = new Set<string>();
-  let cursor: string | null | undefined = leafId;
-
-  while (cursor !== undefined && cursor !== null && !activeIds.has(cursor)) {
-    activeIds.add(cursor);
-    cursor = parentById.get(cursor);
-  }
-
-  const projectedEntries: ProjectedEntry[] = [];
-
-  for (const entry of decodedEntries) {
-    if (entry.type === "message" && entry.message !== undefined) {
-      const extracted = messageText(entry.message);
-
-      if (extracted !== undefined) {
-        projectedEntries.push({
-          ordinal: entry.ordinal,
-          entryId: entry.id,
-          parentId: entry.parentId,
-          timestamp: entry.timestamp,
-          kind: "message",
-          role: extracted.role,
-          text: extracted.text,
-          active: activeIds.has(entry.id),
-        });
-      }
-    } else if (
-      (entry.type === "compaction" || entry.type === "branch_summary") &&
-      entry.summary !== undefined &&
-      entry.summary.trim().length > 0
-    ) {
-      projectedEntries.push({
-        ordinal: entry.ordinal,
-        entryId: entry.id,
-        parentId: entry.parentId,
-        timestamp: entry.timestamp,
-        kind: entry.type,
-        role: entry.type,
-        text: entry.summary,
-        active: activeIds.has(entry.id),
-      });
-    }
-  }
-
-  const latestTimestamp =
-    decodedEntries.length === 0
-      ? headerTimestamp
-      : (decodedEntries[decodedEntries.length - 1]?.timestamp ?? headerTimestamp);
-
-  return {
-    file,
-    sessionId,
-    headerTimestamp,
-    headerCwd: header.cwd ?? "",
-    latestTimestamp,
-    leafId,
-    entries: projectedEntries,
-  };
-};
-
-const openIndex = (profile: string): Database => {
-  const indexPath = join(profile, INDEX_RELATIVE_PATH);
-  mkdirSync(join(profile, ".runtime", "lossless-claw"), { recursive: true });
-  const database = new Database(indexPath, { create: true, readwrite: true, strict: true });
-  database.exec(`
-    PRAGMA busy_timeout = 5000;
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
-    CREATE TABLE IF NOT EXISTS source_files (
-      source_path TEXT PRIMARY KEY,
-      size INTEGER NOT NULL,
-      mtime_ms REAL NOT NULL,
-      session_id TEXT NOT NULL,
-      header_timestamp TEXT NOT NULL,
-      header_cwd TEXT NOT NULL,
-      latest_timestamp TEXT NOT NULL,
-      leaf_id TEXT
-    );
-    CREATE INDEX IF NOT EXISTS source_files_session_id
-      ON source_files(session_id);
-    CREATE TABLE IF NOT EXISTS entries (
-      source_path TEXT NOT NULL REFERENCES source_files(source_path) ON DELETE CASCADE,
-      ordinal INTEGER NOT NULL,
-      session_id TEXT NOT NULL,
-      entry_id TEXT NOT NULL,
-      parent_id TEXT,
-      timestamp TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      role TEXT NOT NULL,
-      text TEXT NOT NULL,
-      active INTEGER NOT NULL,
-      UNIQUE(source_path, ordinal)
-    );
-    CREATE INDEX IF NOT EXISTS entries_source_ordinal
-      ON entries(source_path, ordinal);
-    CREATE INDEX IF NOT EXISTS entries_session
-      ON entries(session_id);
-    CREATE VIRTUAL TABLE IF NOT EXISTS entry_search
-      USING fts5(text, tokenize = 'unicode61');
-  `);
-
-  return database;
-};
-
-const removeProjection = (database: Database, sourcePath: string): void => {
-  database
-    .query<unknown, [string]>(
-      "DELETE FROM entry_search WHERE rowid IN (SELECT rowid FROM entries WHERE source_path = ?)",
-    )
-    .run(sourcePath);
-  database.query<unknown, [string]>("DELETE FROM entries WHERE source_path = ?").run(sourcePath);
-  database
-    .query<unknown, [string]>("DELETE FROM source_files WHERE source_path = ?")
-    .run(sourcePath);
-};
-
-const insertProjection = (database: Database, projection: FileProjection): void => {
-  database
-    .query<unknown, [string, number, number, string, string, string, string, string | null]>(
-      `INSERT INTO source_files (
-        source_path, size, mtime_ms, session_id, header_timestamp, header_cwd,
-        latest_timestamp, leaf_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      projection.file.sourcePath,
-      projection.file.size,
-      projection.file.mtimeMs,
-      projection.sessionId,
-      projection.headerTimestamp,
-      projection.headerCwd,
-      projection.latestTimestamp,
-      projection.leafId,
-    );
-
-  const insertEntry = database.query<
-    unknown,
-    [string, number, string, string, string | null, string, string, string, string, number]
-  >(
-    `INSERT INTO entries (
-      source_path, ordinal, session_id, entry_id, parent_id, timestamp, kind, role, text, active
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-
-  const insertSearch = database.query<unknown, [number | bigint, string]>(
-    "INSERT INTO entry_search(rowid, text) VALUES (?, ?)",
-  );
-
-  for (const entry of projection.entries) {
-    const inserted = insertEntry.run(
-      projection.file.sourcePath,
-      entry.ordinal,
-      projection.sessionId,
-      entry.entryId,
-      entry.parentId,
-      entry.timestamp,
-      entry.kind,
-      entry.role,
-      entry.text,
-      entry.active ? 1 : 0,
-    );
-
-    insertSearch.run(inserted.lastInsertRowid, entry.text);
-  }
-};
-
-const refreshDatabase = (profile: string, database: Database): RefreshResult => {
-  const discovered = discoverSessionFiles(profile);
-
-  const existingRows = database
-    .query<FileStateRow, []>("SELECT source_path, size, mtime_ms FROM source_files")
-    .all();
-
-  const existing = new Map(existingRows.map((row) => [row.source_path, row]));
-  const currentPaths = new Set(discovered.map((file) => file.sourcePath));
-  const deletedPaths = [...existing.keys()].filter((sourcePath) => !currentPaths.has(sourcePath));
-
-  const changedFiles = discovered.filter((file) => {
-    const previous = existing.get(file.sourcePath);
-
-    return (
-      previous === undefined || previous.size !== file.size || previous.mtime_ms !== file.mtimeMs
-    );
-  });
-
-  const projections = changedFiles.map(projectFile);
-
-  const replace = database.transaction(() => {
-    for (const sourcePath of deletedPaths) {
-      removeProjection(database, sourcePath);
-    }
-
-    for (const [index, file] of changedFiles.entries()) {
-      removeProjection(database, file.sourcePath);
-      const projection = projections[index];
-
-      if (projection !== undefined) {
-        insertProjection(database, projection);
-      }
-    }
-  });
-
-  replace.immediate();
-
-  return {
-    discoveredFiles: discovered.length,
-    changedFiles: changedFiles.length,
-    deletedFiles: deletedPaths.length,
-    indexedFiles: projections.filter(Predicate.isNotUndefined).length,
-  };
-};
-
-const withFreshIndex = <Result>(profile: string, use: (database: Database) => Result): Result => {
-  using database = openIndex(profile);
-  refreshDatabase(profile, database);
-
-  return use(database);
-};
-
-export const listProfileSessions = (
-  profile: string,
-  input: SessionListInput = {},
-): ReadonlyArray<SessionSummary> =>
-  withFreshIndex(profile, (database) => {
-    const limit = boundedInteger(input.limit, DEFAULT_LIMIT, MAX_LIMIT);
-
-    const bindings = {
-      since: input.since ?? null,
-      limit,
-    } satisfies Record<string, string | number | null>;
-
-    const rows = database
-      .query<SessionDatabaseRow, Record<string, string | number | null>>(
-        `SELECT
-          sf.session_id,
-          sf.source_path,
-          sf.header_timestamp,
-          sf.header_cwd,
-          sf.latest_timestamp,
-          sf.leaf_id,
-          sf.size,
-          sf.mtime_ms,
-          COUNT(e.rowid) AS searchable_entries,
-          COALESCE(SUM(e.active), 0) AS active_entries,
-          COALESCE(SUM(CASE WHEN e.kind = 'compaction' THEN 1 ELSE 0 END), 0) AS compactions,
-          COALESCE(SUM(CASE WHEN e.kind = 'branch_summary' THEN 1 ELSE 0 END), 0)
-            AS branch_summaries
-        FROM source_files sf
-        LEFT JOIN entries e ON e.source_path = sf.source_path
-        WHERE ($since IS NULL OR sf.latest_timestamp >= $since)
-        GROUP BY sf.source_path
-        ORDER BY sf.latest_timestamp DESC, sf.source_path ASC
-        LIMIT $limit`,
-      )
-      .all(bindings);
-
-    return rows.map((row) => ({
-      sessionId: row.session_id,
-      path: join(profile, row.source_path),
-      headerTimestamp: row.header_timestamp,
-      headerCwd: row.header_cwd,
-      latestTimestamp: row.latest_timestamp,
-      activeLeafId: row.leaf_id,
-      size: row.size,
-      searchableEntries: row.searchable_entries,
-      activeEntries: row.active_entries,
-      compactions: row.compactions,
-      branchSummaries: row.branch_summaries,
-    }));
-  });
-
-const sessionSelectorPath = (profile: string, selector: string): string =>
-  isAbsolute(selector) ? relative(profile, selector) : selector;
-
-export const describeProfileSession = (
-  profile: string,
-  selector: string,
-): SessionDescription | undefined =>
-  withFreshIndex(profile, (database) => {
-    const selectorPath = sessionSelectorPath(profile, selector);
-
-    const row = database
-      .query<SessionDatabaseRow, [string, string]>(
-        `SELECT
-          sf.session_id,
-          sf.source_path,
-          sf.header_timestamp,
-          sf.header_cwd,
-          sf.latest_timestamp,
-          sf.leaf_id,
-          sf.size,
-          sf.mtime_ms,
-          COUNT(e.rowid) AS searchable_entries,
-          COALESCE(SUM(e.active), 0) AS active_entries,
-          COALESCE(SUM(CASE WHEN e.kind = 'compaction' THEN 1 ELSE 0 END), 0) AS compactions,
-          COALESCE(SUM(CASE WHEN e.kind = 'branch_summary' THEN 1 ELSE 0 END), 0)
-            AS branch_summaries
-        FROM source_files sf
-        LEFT JOIN entries e ON e.source_path = sf.source_path
-        WHERE sf.session_id = ? OR sf.source_path = ?
-        GROUP BY sf.source_path
-        ORDER BY sf.latest_timestamp DESC
-        LIMIT 1`,
-      )
-      .get(selector, selectorPath);
-
-    if (row === null) {
-      return undefined;
-    }
-
-    const roles = database
-      .query<RoleCountRow, [string]>(
-        `SELECT role, COUNT(*) AS entries
-        FROM entries
-        WHERE source_path = ?
-        GROUP BY role
-        ORDER BY role`,
-      )
-      .all(row.source_path);
-
-    const activeBranch = database
-      .query<ActiveEntryRow, [string]>(
-        `SELECT entry_id, parent_id, kind, role, timestamp
-        FROM entries
-        WHERE source_path = ? AND active = 1
-        ORDER BY ordinal`,
-      )
-      .all(row.source_path);
-
-    return {
-      sessionId: row.session_id,
-      path: join(profile, row.source_path),
-      headerTimestamp: row.header_timestamp,
-      headerCwd: row.header_cwd,
-      latestTimestamp: row.latest_timestamp,
-      activeLeafId: row.leaf_id,
-      size: row.size,
-      searchableEntries: row.searchable_entries,
-      activeEntries: row.active_entries,
-      compactions: row.compactions,
-      branchSummaries: row.branch_summaries,
-      roles: roles.map((role) => ({ role: role.role, entries: role.entries })),
-      activeBranch: activeBranch.map((entry) => ({
-        entryId: entry.entry_id,
-        parentId: entry.parent_id,
-        kind: entry.kind,
-        role: entry.role,
-        timestamp: entry.timestamp,
-      })),
-    };
-  });
-
-const searchTerms = (query: string): ReadonlyArray<string> => {
-  const matches = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
-  const unique = new Map(matches.map((term) => [term.toLocaleLowerCase(), term]));
-
-  return [...unique.values()].map((term) => `"${term}"`);
-};
-
-const runSearch = (
-  profile: string,
-  database: Database,
-  input: SearchInput,
-): ReadonlyArray<SearchResult> => {
-  const terms = searchTerms(input.query);
-
-  if (terms.length === 0) {
-    return [];
-  }
-
-  const limit = boundedInteger(input.limit, DEFAULT_LIMIT, MAX_LIMIT);
-
-  const bindingsBase = {
-    session: input.session ?? null,
-    role: input.role ?? null,
-    since: input.since ?? null,
-    until: input.until ?? null,
-    active_only: input.activeOnly === true ? 1 : 0,
-    limit,
-  } satisfies Record<string, string | number | null>;
-
-  const statement = database.query<SearchDatabaseRow, Record<string, string | number | null>>(
-    `SELECT
-      e.rowid AS row_id,
-      e.session_id,
-      e.source_path,
-      e.entry_id,
-      e.parent_id,
-      e.timestamp,
-      e.kind,
-      e.role,
-      e.active,
-      snippet(entry_search, 0, '[', ']', ' … ', 32) AS snippet,
-      bm25(entry_search) AS rank
-    FROM entry_search
-    JOIN entries e ON e.rowid = entry_search.rowid
-    WHERE entry_search MATCH $match
-      AND ($session IS NULL OR e.session_id = $session)
-      AND ($role IS NULL OR e.role = $role)
-      AND ($since IS NULL OR e.timestamp >= $since)
-      AND ($until IS NULL OR e.timestamp <= $until)
-      AND ($active_only = 0 OR e.active = 1)
-    ORDER BY rank ASC, e.timestamp DESC, e.rowid ASC
-    LIMIT $limit`,
-  );
-
-  const selected = new Map<number, SearchResult>();
-
-  const collect = (match: "and" | "or", expression: string): void => {
-    const bindings = {
-      ...bindingsBase,
-      match: expression,
-    } satisfies Record<string, string | number | null>;
-
-    for (const row of statement.all(bindings)) {
-      if (!selected.has(row.row_id) && selected.size < limit) {
-        selected.set(row.row_id, {
-          sessionId: row.session_id,
-          path: join(profile, row.source_path),
-          entryId: row.entry_id,
-          parentId: row.parent_id,
-          timestamp: row.timestamp,
-          kind: row.kind,
-          role: row.role,
-          active: row.active === 1,
-          snippet: boundedText(row.snippet),
-          score: row.rank,
-          match,
-        });
-      }
-    }
-  };
-
-  collect("and", terms.join(" AND "));
-
-  if (selected.size < limit && terms.length > 1) {
-    collect("or", terms.join(" OR "));
-  }
-
-  return [...selected.values()];
-};
-
-export const searchProfileSessions = (
-  profile: string,
-  input: SearchInput,
-): ReadonlyArray<SearchResult> =>
-  withFreshIndex(profile, (database) => runSearch(profile, database, input));
-
-export const expandProfileQuery = (
-  profile: string,
-  input: ExpandInput,
-): ReadonlyArray<ExpandedMatch> =>
-  withFreshIndex(profile, (database) => {
-    const context = boundedInteger(input.context, 2, 10);
-
-    const matches = runSearch(profile, database, {
-      ...input,
-      limit: boundedInteger(input.limit, 5, 20),
-    });
-
-    const neighborStatement = database.query<
-      NeighborDatabaseRow,
-      [number, number, number, number, number]
-    >(
-      `SELECT entry_id, parent_id, timestamp, kind, role, active, text
-      FROM entries
-      WHERE source_path = (
-        SELECT source_path FROM entries WHERE rowid = ?
-      )
-        AND ordinal BETWEEN (
-          SELECT ordinal - ? FROM entries WHERE rowid = ?
-        ) AND (
-          SELECT ordinal + ? FROM entries WHERE rowid = ?
-        )
-      ORDER BY ordinal`,
-    );
-
-    const rowIdStatement = database.query<{ readonly row_id: number }, [string, string]>(
-      "SELECT rowid AS row_id FROM entries WHERE source_path = ? AND entry_id = ? LIMIT 1",
-    );
-
-    return matches.map((match) => {
-      const sourcePath = sessionSelectorPath(profile, match.path);
-      const rowId = rowIdStatement.get(sourcePath, match.entryId);
-
-      const evidence =
-        rowId === null
-          ? []
-          : neighborStatement
-              .all(rowId.row_id, context, rowId.row_id, context, rowId.row_id)
-              .map((entry) => ({
-                entryId: entry.entry_id,
-                parentId: entry.parent_id,
-                timestamp: entry.timestamp,
-                kind: entry.kind,
-                role: entry.role,
-                active: entry.active === 1,
-                text: boundedText(entry.text, 900),
-              }));
-
-      return { match, evidence };
-    });
-  });

@@ -1,23 +1,36 @@
 {
-  "name": "@ziggy/lossless-claw",
+  "name": "@ziggy/self-improvement",
   "version": "0.1.0",
   "private": true,
+  "description": "Bounded Profile learning observations and Curator-managed skill packages.",
+  "keywords": [
+    "pi-package"
+  ],
   "type": "module",
-  "description": "Lossless Claw recall tools for persisted Pi sessions.",
-  "keywords": ["pi-package"],
   "scripts": {
     "test": "bun test ./test",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "oxlint index.ts src test",
-    "fmt": "oxfmt index.ts src test"
-  },
-  "pi": {
-    "extensions": ["./index.ts"],
-    "skills": ["./skills"]
+    "fmt": "oxfmt index.ts src test skills"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "0.99.1",
-    "effect": "4.0.0-beta.99",
     "typebox": "1.3.27"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "ziggy": {
+    "automations": [
+      {
+        "id": "self-improvement-curator",
+        "path": "./automations/curator.md"
+      }
+    ]
   }
 }

@@ -154,6 +154,8 @@ src/
     types.ts              extensions.json schema, ids, errors
     selection.ts          read/resolve/add/remove (behind the file lock)
     loader.ts             Pi loader options + "skip broken, warn loudly"                         [Pi]
+    mcp.ts                Pi MCP, codemode, tool-search factories and refusing credential store       [Pi]
+    codemode/worker.ts    Pi's separately compiled codemode worker entrypoint                     [Pi]
     required.ts           bundled packages unpacked once per Ziggy version
     update.ts             stage, swap, recover
     tool.ts               the profile_extensions tool                                            [Pi]

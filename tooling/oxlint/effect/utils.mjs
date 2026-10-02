@@ -16,6 +16,8 @@ export const piFiles = new Set([
   "src/session/agent.ts",
   "src/session/tools.ts",
   "src/extensions/loader.ts",
+  "src/extensions/mcp.ts",
+  "src/extensions/codemode/worker.ts",
   "src/extensions/tool.ts",
   "src/agents/run.ts",
   "src/agents/tools.ts",

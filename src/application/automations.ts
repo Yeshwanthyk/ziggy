@@ -398,6 +398,7 @@ export const makeAutomations = (
             automation.specialist === undefined
               ? yield* Effect.acquireUseRelease(
                   agent.open({
+                    automation: true,
                     target,
                     context: { kind: "local" },
                     directory: join(target.path, "sessions", "automations", automation.id),

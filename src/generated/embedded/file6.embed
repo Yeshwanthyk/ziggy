@@ -1,3 +1,14 @@
-export { default } from "../index.ts";
-
-export { createCodeModeSession, executeCodeMode } from "../index.ts";
+{
+  "name": "@ziggy/coding-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  }
+}

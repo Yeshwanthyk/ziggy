@@ -33,7 +33,7 @@ back, and the integrator merges one stream at a time with `bun run check`.
 | `ui` | 1 (command cache), 8 | `src/application/ui-gateway.ts`, `management.ts`, the UI server and web UI | now |
 | `chat` | 1 (Slack health), 7 | Slack and Discord gateways, `domain/*-health.ts` | now |
 | `auto` | 1 (fingerprint), 6 | automations application and domain code | now |
-| `ext` | 2, 5 (authoring), 11b | `extensions/codemode`, preloaded skills, `pi_docs` | now |
+| `ext` | 2, 5 (authoring), 11b | Pi MCP/codemode, preloaded skills, `pi_docs` | now |
 | `adapter` | 4, 5 (diagnostics), 9, 11a | the rest of `src/adapters/pi/`, the runtime interface, resident service | after `tui` |
 | `cli` | 3, 10 | domain setup, `src/faces/cli`, the CLI parts of `main.ts` | after `tui` |
 | `webui` | 13 | `clients/web`, `packages/ui-sdk`, `src/application/ui-gateway*`, `src/adapters/bun/ui-server.ts` | now |
@@ -80,14 +80,12 @@ through the resident. We accept that.
 - Resolves the TUI picker bug, the TUI-versus-resident lease race, and the TUI bypassing the
   resident.
 
-## 2. Codemode setup
+## 2. Pi MCP and codemode
 
-Status: done (review/ext).
+Status: superseded by [plugins Step 1](plugins/README.md#step-1--pi-mcp--codemode-done).
 
-- M1: codemode is unusable until `codemode.json` exists, and there's no schema hint or skill.
-- M2: the interpreter's rejection of loops and `try/catch` isn't described in the tool.
-- M3: MCP `isError` content collapses to a generic message.
-- The README omits Ziggy's selection flow.
+Pi owns the MCP client and codemode runtime. Ziggy supplies configuration, a credential store that refuses
+writes until G3, and runtime paths; no separate package setup is required.
 
 ## 3. Domain
 

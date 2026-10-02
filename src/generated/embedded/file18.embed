@@ -1,64 +1,113 @@
-# Third-party licenses
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
-## OpenCode Code Mode
+export interface ComputerUseConfig {
+	browser_use: boolean;
+	headless: boolean;
+	cursor_overlay: boolean;
+	managed_browser: "helium" | "chrome";
+}
 
-MIT License
+export interface ComputerUseConfigSource {
+	path: string;
+	exists: boolean;
+	values?: Partial<ComputerUseConfig>;
+	error?: string;
+}
 
-Copyright (c) 2025 opencode
+export interface LoadedComputerUseConfig {
+	config: ComputerUseConfig;
+	sources: ComputerUseConfigSource[];
+	env: Partial<ComputerUseConfig>;
+}
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
-associated documentation files (the "Software"), to deal in the Software without restriction,
-including without limitation the rights to use, copy, modify, merge, publish, distribute,
-sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+const DEFAULT_CONFIG: ComputerUseConfig = {
+	browser_use: true,
+	headless: false,
+	cursor_overlay: true,
+	managed_browser: "chrome",
+};
 
-The above copyright notice and this permission notice shall be included in all copies or
-substantial portions of the Software.
+let activeConfig: ComputerUseConfig = { ...DEFAULT_CONFIG };
+let activeLoadedConfig: LoadedComputerUseConfig = { config: activeConfig, sources: [], env: {} };
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
-NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
-OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+function parseBoolean(value: unknown): boolean | undefined {
+	if (typeof value === "boolean") return value;
+	if (typeof value === "number") return value === 1 ? true : value === 0 ? false : undefined;
+	if (typeof value !== "string") return undefined;
+	const normalized = value.trim().toLowerCase();
+	if (["1", "true", "yes", "on", "enabled"].includes(normalized)) return true;
+	if (["0", "false", "no", "off", "disabled"].includes(normalized)) return false;
+	return undefined;
+}
 
-## Effect
+function normalizePartial(raw: unknown): Partial<ComputerUseConfig> {
+	if (!raw || typeof raw !== "object") return {};
+	const source = (raw as any).computer_use && typeof (raw as any).computer_use === "object" ? (raw as any).computer_use : raw;
+	const out: Partial<ComputerUseConfig> = {};
+	const browserUse = parseBoolean((source as any).browser_use);
+	const headless = parseBoolean((source as any).headless);
+	const cursorOverlay = parseBoolean((source as any).cursor_overlay);
+	if (browserUse !== undefined) out.browser_use = browserUse;
+	if (headless !== undefined) out.headless = headless;
+	if (cursorOverlay !== undefined) out.cursor_overlay = cursorOverlay;
+	const managedBrowser = (source as any).managed_browser;
+	if (managedBrowser === "helium" || managedBrowser === "chrome") out.managed_browser = managedBrowser;
+	return out;
+}
 
-MIT License
+function readConfigFile(filePath: string): ComputerUseConfigSource {
+	if (!existsSync(filePath)) return { path: filePath, exists: false };
+	try {
+		const parsed = JSON.parse(readFileSync(filePath, "utf-8"));
+		return { path: filePath, exists: true, values: normalizePartial(parsed) };
+	} catch (error) {
+		return { path: filePath, exists: true, error: error instanceof Error ? error.message : String(error) };
+	}
+}
 
-Copyright (c) 2019-present Effectful Technologies
+function readEnv(): Partial<ComputerUseConfig> {
+	const out: Partial<ComputerUseConfig> = {};
+	const browserUse = parseBoolean(process.env.PI_COMPUTER_USE_BROWSER_USE);
+	const headless = parseBoolean(process.env.PI_COMPUTER_USE_HEADLESS);
+	const cursorOverlay = parseBoolean(process.env.PI_COMPUTER_USE_CURSOR_OVERLAY);
+	if (browserUse !== undefined) out.browser_use = browserUse;
+	if (headless !== undefined) out.headless = headless;
+	if (cursorOverlay !== undefined) out.cursor_overlay = cursorOverlay;
+	const managedBrowser = process.env.PI_COMPUTER_USE_MANAGED_BROWSER;
+	if (managedBrowser === "helium" || managedBrowser === "chrome") out.managed_browser = managedBrowser;
+	return out;
+}
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
-associated documentation files (the "Software"), to deal in the Software without restriction,
-including without limitation the rights to use, copy, modify, merge, publish, distribute,
-sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+export function loadComputerUseConfig(cwd: string): LoadedComputerUseConfig {
+	const sources = [
+		readConfigFile(path.join(getAgentDir(), "extensions", "pi-computer-use.json")),
+		readConfigFile(path.join(cwd, ".pi", "computer-use.json")),
+	];
+	const env = readEnv();
+	const config = { ...DEFAULT_CONFIG };
+	for (const source of sources) {
+		if (source.values) Object.assign(config, source.values);
+	}
+	Object.assign(config, env);
+	activeConfig = config;
+	activeLoadedConfig = { config, sources, env };
+	return activeLoadedConfig;
+}
 
-The above copyright notice and this permission notice shall be included in all copies or
-substantial portions of the Software.
+export function getComputerUseConfig(): ComputerUseConfig {
+	return activeConfig;
+}
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
-NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
-OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+export function getLoadedComputerUseConfig(): LoadedComputerUseConfig {
+	return activeLoadedConfig;
+}
 
-## Acorn
+export function isHeadlessMode(): boolean {
+	return activeConfig.headless;
+}
 
-MIT License
-
-Copyright (C) 2012-2025 by various contributors (see Acorn AUTHORS)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
-associated documentation files (the "Software"), to deal in the Software without restriction,
-including without limitation the rights to use, copy, modify, merge, publish, distribute,
-sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or
-substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
-NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
-OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+export function isBrowserUseEnabled(): boolean {
+	return activeConfig.browser_use;
+}

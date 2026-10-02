@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { startChatServer } from "../harness/chat";
 import { ziggy, ziggyWith } from "../harness/cli";
 import { scratchProfile, sessionFiles, type ScratchProfile } from "../harness/profile";
-import { gate, held, type ModelServer, startModelServer, text } from "../harness/provider";
+import { gate, held, type ModelServer, startModelServer, text, tools } from "../harness/provider";
 import { eventually } from "../harness/eventually";
 import { startResident, stopResidents } from "../harness/resident";
 import { onlyTranscript, readTranscript, sessionId } from "../harness/transcript";
@@ -216,3 +216,52 @@ test("wake delivers to a Slack thread, a Discord thread and a Telegram chat, chu
     chat.stop();
   }
 });
+
+test.each(["codemode", "direct", "deferred"] as const)(
+  "untagged automation denies runtime-registered MCP and discovery (%s)",
+  async (exposure) => {
+    const target = await conversation();
+    await writeAutomation(target.id);
+    const extension = join(profile.path, "extensions", "mcp-fixture");
+    await mkdir(extension, { recursive: true });
+    await writeFile(
+      join(extension, "package.json"),
+      JSON.stringify({
+        name: "mcp-fixture",
+        description: "Local MCP fixture",
+        version: "1.0.0",
+        type: "module",
+        keywords: ["pi-package"],
+        pi: { extensions: ["./index.ts"] },
+      }),
+    );
+    const fixture = join(import.meta.dir, "../extensions/fixtures/mcp-server.ts");
+    await writeFile(
+      join(extension, "index.ts"),
+      `export default function(pi) { pi.registerMcpServer("fixture", ${JSON.stringify({ command: process.execPath, args: [fixture], exposure })}); }`,
+    );
+    await writeFile(
+      join(profile.path, "extensions.json"),
+      JSON.stringify({ extensions: ["mcp-fixture"] }),
+    );
+    server.push(
+      tools(
+        {
+          name: "codemode",
+          arguments: { code: 'text(await tools.mcp__fixture__echo({value:"forbidden"}));' },
+        },
+        { name: "mcp__fixture__echo", arguments: { value: "forbidden" } },
+        { name: "tool_search", arguments: { query: "fixture" } },
+      ),
+    );
+    const result = await ziggy(profile, "wake", profile.path, "digest");
+    expect(result.exitCode).toBe(0);
+    const names = server.request(1).tools?.map((tool) => tool.function.name) ?? [];
+    expect(names).not.toContain("codemode");
+    expect(names).not.toContain("tool_search");
+    expect(names.some((name) => name.startsWith("mcp__"))).toBe(false);
+    expect(server.toolResults(2)).toContain("not found");
+    expect(await Bun.file(join(profile.path, ".runtime", "mcp-calls")).exists()).toBe(false);
+  },
+  15000,
+);

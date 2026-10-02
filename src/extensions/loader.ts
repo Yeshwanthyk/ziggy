@@ -11,6 +11,7 @@ import {
 import { Effect, Predicate } from "effect";
 import type { ProfileExtensionInvalid } from "../domain/profile";
 import type { ProfileFileSystemError } from "../profile";
+import { mcpExtensions, type ProfileMcpOptions } from "./mcp";
 import { resolveResources, type PiResources } from "./resources";
 import {
   ExtensionLoadFailed,
@@ -215,6 +216,8 @@ export interface LoadRequest {
   readonly systemPrompt: string;
   readonly resources: PiResources;
   readonly inline: ReadonlyArray<InlineExtension>;
+  /** Load Pi's MCP stack with these servers; a session without it can never gain MCP tools. */
+  readonly mcp?: ProfileMcpOptions | undefined;
   /** Refuse, rather than skip, these optional packages when Pi cannot load them. */
   readonly rejectIds?: ReadonlyArray<string>;
 }
@@ -225,11 +228,16 @@ export interface LoadRequest {
  * `ExtensionLoadFailed`. Pi calls this from its runtime factory, so it is a Promise.
  */
 export const loadServices = async (request: LoadRequest): Promise<LoadedServices> => {
+  const inline =
+    request.mcp === undefined
+      ? request.inline
+      : [...request.inline, ...mcpExtensions(request.profilePath, request.mcp)];
+
   const build = (resources: PiResources) =>
     createAgentSessionServices({
       cwd: request.cwd,
       agentDir: request.agentDir,
-      resourceLoaderOptions: loaderOptions(request.systemPrompt, resources, request.inline),
+      resourceLoaderOptions: loaderOptions(request.systemPrompt, resources, inline),
     });
 
   const services = await build(request.resources);

@@ -35,6 +35,7 @@ export const decodeStandaloneBuildReport = Schema.decodeUnknownSync(
 export const compileArguments = () => [
   "build",
   "src/main.ts",
+  "src/extensions/codemode/worker.ts",
   "--compile",
   `--target=${STANDALONE_TARGET}`,
   "--root=.",

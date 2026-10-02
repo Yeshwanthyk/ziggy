@@ -4,6 +4,8 @@ import { setBedrockProviderModule } from "@earendil-works/pi-ai/compat";
 import type { ObjectEncodingOptions, PathOrFileDescriptor } from "node:fs";
 import { Effect, Layer, Predicate } from "effect";
 import photonWasmFile from "../../../node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm" with { type: "file" };
+import quickjsWasmFile from "../../../node_modules/quickjs-wasi/quickjs.wasm" with { type: "file" };
+import { setEmbeddedQuickJSWasmPath } from "../../../node_modules/@earendil-works/pi-coding-agent/dist/config.js";
 
 const piBuiltinPhotonWasmPath: string = `${photonWasmFile}`;
 
@@ -68,6 +70,7 @@ export const installCompiledPhotonWasmFallback = (
 
 /** Mirror the static provider registrations used by Pi's pinned Bun executable entrypoint. */
 export const registerPiStandaloneRuntime = (): void => {
+  setEmbeddedQuickJSWasmPath(`${quickjsWasmFile}`);
   installCompiledPhotonWasmFallback();
   registerBunOAuthFlows();
   setBedrockProviderModule(bedrockProviderModule);

@@ -132,6 +132,8 @@ export interface OpenSession {
   readonly model?: ChatModelOverride;
   /** Transcript name, set on the first prompt if the transcript has none. */
   readonly name?: string | undefined;
+  /** An automation without a Profile agent: it runs without the MCP stack (A5). */
+  readonly automation?: boolean | undefined;
 }
 
 /** A Profile agent as the core session sees it: instructions and the only tools it may use. */

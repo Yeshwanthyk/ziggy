@@ -1,455 +1,699 @@
-/* oxlint-disable ziggy-effect/no-native-promise-ownership -- Pi tool execution is this package's async boundary. */
-/* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- A segment must fail closed at the tool boundary. */
-/* oxlint-disable ziggy/no-runtime-typeof, ziggy/no-unsafe-typescript-syntax, ziggy/require-safety-comment-for-type-assertion -- Exported upstream tool results are unknown at this isolated package boundary and are checked before use. */
-/* oxlint-disable ziggy/no-unsafe-dictionary-type, ziggy/no-known-value-widening -- Pi's executor contract requires open serialized parameter objects at the upstream bridge boundary. */
-/* oxlint-disable ziggy/no-conditional-empty-object-spread -- The optional root is intentionally omitted from the upstream observe call. */
-import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
+/* oxlint-disable ziggy/require-readable-spacing -- Declarative schemas are intentionally compact. */
+import { Type, type Static } from "typebox";
 
-export const SEGMENT_MAX_STEPS = 20;
+const Id = Type.String({ pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$", minLength: 1, maxLength: 80 });
 
-const SEGMENT_MAX_ACTIONS = 100;
+const Text = Type.String({ minLength: 1, maxLength: 1_024 });
 
-const PRIMARY_MODIFIERS = new Set(["CMD", "COMMAND", "CTRL", "CONTROL", "META"]);
+const ShortText = Type.String({ minLength: 1, maxLength: 256 });
 
-const SECONDARY_MODIFIERS = new Set(["SHIFT", "ALT", "OPTION"]);
+const Timestamp = Type.String({ format: "date-time" });
 
-const CONTROL_KEYS = new Set([
-  "ENTER",
-  "RETURN",
-  "ESC",
-  "ESCAPE",
-  "TAB",
-  "BACKSPACE",
-  "DELETE",
-  "FORWARDDELETE",
-  "ARROWUP",
-  "ARROWDOWN",
-  "ARROWLEFT",
-  "ARROWRIGHT",
-  "UP",
-  "DOWN",
-  "LEFT",
-  "RIGHT",
-  "HOME",
-  "END",
-  "PAGEUP",
-  "PAGEDOWN",
-  ...Array.from({ length: 24 }, (_, index) => `F${index + 1}`),
-]);
+const Button = Type.Union([Type.Literal("left"), Type.Literal("right"), Type.Literal("middle")]);
 
-const isSafeControlKeypress = (keys: readonly string[]): boolean => {
-  const normalized = keys.map((key) => key.trim().toUpperCase());
+const PrimaryModifierKey = Type.String({ pattern: "^(?:CMD|COMMAND|CTRL|CONTROL|META)$" });
 
-  if (normalized.some((key) => key.length === 0)) return false;
+const SecondaryModifierKey = Type.String({ pattern: "^(?:SHIFT|ALT|OPTION)$" });
 
-  const modifiers = normalized.filter(
-    (key) => PRIMARY_MODIFIERS.has(key) || SECONDARY_MODIFIERS.has(key),
-  );
-
-  const baseKeys = normalized.filter(
-    (key) => !PRIMARY_MODIFIERS.has(key) && !SECONDARY_MODIFIERS.has(key),
-  );
-
-  if (baseKeys.length !== 1 || modifiers.length !== normalized.length - 1) return false;
-  const base = baseKeys[0];
-
-  if (base === undefined || normalized.length > 4) return false;
-
-  if (CONTROL_KEYS.has(base)) return true;
-
-  return /^[A-Z0-9]$/.test(base) && modifiers.some((key) => PRIMARY_MODIFIERS.has(key));
-};
-
-interface SemanticTarget {
-  readonly text?: string;
-  readonly role?: string;
-  readonly capability?: string;
-}
-
-type RootKind = "window" | "menu" | "sheet" | "popover" | "dialog" | "browser_page";
-
-interface RootQuery {
-  readonly text?: string;
-  readonly app?: string;
-  readonly bundleId?: string;
-  readonly kind?: RootKind;
-}
-
-interface SegmentCondition {
-  readonly text?: string;
-  readonly role?: string;
-  readonly until: "present" | "absent";
-  readonly timeoutMs?: number;
-}
-
-type SegmentAction =
-  | {
-      readonly action: "click";
-      readonly button?: "left" | "right" | "middle";
-      readonly clickCount?: number;
-    }
-  | { readonly action: "keypress"; readonly keys: readonly string[] }
-  | { readonly action: "scroll"; readonly scrollX?: number; readonly scrollY?: number };
-
-interface SegmentActionStep {
-  readonly target: SemanticTarget;
-  readonly actions: readonly SegmentAction[];
-  readonly expect: SegmentCondition;
-}
-
-interface SegmentAssertionStep {
-  readonly assert: SegmentCondition;
-}
-
-type SegmentStep = SegmentActionStep | SegmentAssertionStep;
-
-export interface SegmentParameters {
-  readonly root?: string;
-  readonly rootQuery?: RootQuery;
-  readonly steps: readonly SegmentStep[];
-}
-
-interface ToolDetails {
-  readonly kind?: "browser_page";
-  readonly capture?: { readonly stateId?: string };
-  readonly stateId?: string;
-  readonly totalMatches?: number;
-  readonly matches?: readonly { readonly ref?: string }[];
-  readonly windows?: readonly { readonly windowRef?: string }[];
-  readonly found?: boolean;
-  readonly timedOut?: boolean;
-  readonly status?: string;
-  readonly execution?: {
-    readonly outcome?: "worked" | "didnt" | "unknown";
-    readonly error?: unknown;
-  };
-}
-
-type ToolExecutor = (
-  toolCallId: string,
-  parameters: Record<string, unknown>,
-  signal: AbortSignal | undefined,
-  onUpdate: undefined,
-  ctx: ExtensionContext,
-) => Promise<AgentToolResult<unknown>>;
-
-export interface SegmentBridge {
-  readonly find: ToolExecutor;
-  readonly observe: ToolExecutor;
-  readonly search: ToolExecutor;
-  readonly act: ToolExecutor;
-  readonly wait: ToolExecutor;
-}
-
-const fail = (step: number, message: string): never => {
-  throw new Error(`Segment stopped at step ${step}: ${message}`);
-};
-
-const assertRootQuery = (query: RootQuery): void => {
-  const values = [query.text, query.app, query.bundleId];
-
-  if (
-    query.kind === undefined &&
-    !values.some((value) => typeof value === "string" && value.trim().length > 0)
-  ) {
-    throw new Error("Segment rootQuery must include text, app, bundleId, or kind.");
-  }
-};
-
-const throwIfAborted = (signal: AbortSignal | undefined, step: number): void => {
-  if (signal?.aborted) fail(step, "execution was cancelled.");
-};
-
-const detailsOf = (result: AgentToolResult<unknown>, step: number, tool: string): ToolDetails => {
-  const details = result.details;
-
-  if (details === null || typeof details !== "object") {
-    fail(step, `${tool} returned unknown state.`);
-  }
-
-  return details as ToolDetails;
-};
-
-const stateIdOf = (details: ToolDetails, step: number, tool: string): string => {
-  const stateId = details.capture?.stateId ?? details.stateId;
-
-  if (typeof stateId !== "string" || stateId.length === 0) {
-    throw new Error(`Segment stopped at step ${step}: ${tool} returned no successor state.`);
-  }
-
-  return stateId;
-};
-
-const assertTarget = (target: SemanticTarget, step: number): void => {
-  const values = [target.text, target.role, target.capability];
-
-  if (!values.some((value) => typeof value === "string" && value.trim().length > 0)) {
-    fail(step, "semantic target is empty.");
-  }
-};
-
-const assertCondition = (condition: SegmentCondition, step: number): void => {
-  if (!condition || (condition.until !== "present" && condition.until !== "absent")) {
-    fail(step, "a present/absent condition is required.");
-  }
-
-  if (
-    ![condition.text, condition.role].some((value) => typeof value === "string" && value.trim())
-  ) {
-    fail(step, "condition must include text or role.");
-  }
-};
-
-const assertSafeAction = (action: SegmentAction, step: number): void => {
-  if (action.action === "keypress") {
-    if (!isSafeControlKeypress(action.keys)) {
-      fail(
-        step,
-        "keypress must be one navigation/control key or an explicit modifier chord; text-producing keys are forbidden.",
-      );
-    }
-
-    return;
-  }
-
-  if (action.action === "scroll") {
-    if ((action.scrollX ?? 0) === 0 && (action.scrollY ?? 0) === 0) {
-      fail(step, "scroll must have a non-zero delta.");
-    }
-
-    return;
-  }
-
-  if (action.action !== "click") fail(step, "action is not in the reversible semantic allowlist.");
-};
-
-export const validateSegment = (parameters: SegmentParameters): void => {
-  if (parameters.root !== undefined && parameters.rootQuery !== undefined) {
-    throw new Error("Segment must use either root or rootQuery, not both.");
-  }
-
-  if (parameters.rootQuery !== undefined) assertRootQuery(parameters.rootQuery);
-
-  if (!Array.isArray(parameters.steps) || parameters.steps.length === 0) {
-    throw new Error("Segment must contain at least one step.");
-  }
-
-  if (parameters.steps.length > SEGMENT_MAX_STEPS) {
-    throw new Error(`Segment supports at most ${SEGMENT_MAX_STEPS} steps.`);
-  }
-
-  let actions = 0;
-
-  for (const [index, step] of parameters.steps.entries()) {
-    const stepNumber = index + 1;
-
-    if ("assert" in step) {
-      assertCondition(step.assert, stepNumber);
-      continue;
-    }
-
-    assertTarget(step.target, stepNumber);
-    assertCondition(step.expect, stepNumber);
-
-    if (!Array.isArray(step.actions) || step.actions.length === 0 || step.actions.length > 20) {
-      fail(stepNumber, "actions must contain 1-20 entries.");
-    }
-
-    actions += step.actions.length;
-
-    for (const action of step.actions) assertSafeAction(action, stepNumber);
-  }
-
-  if (actions > SEGMENT_MAX_ACTIONS) {
-    throw new Error(`Segment supports at most ${SEGMENT_MAX_ACTIONS} actions.`);
-  }
-};
-
-const actionWithRef = (action: SegmentAction, ref: string): Record<string, unknown> => ({
-  ...action,
-  ref,
+const ControlKey = Type.String({
+  pattern:
+    "^(?:ENTER|RETURN|ESC|ESCAPE|TAB|BACKSPACE|DELETE|FORWARDDELETE|ARROWUP|ARROWDOWN|ARROWLEFT|ARROWRIGHT|UP|DOWN|LEFT|RIGHT|HOME|END|PAGEUP|PAGEDOWN|F(?:[1-9]|1[0-9]|2[0-4]))$",
 });
 
-const assertActionWorked = (details: ToolDetails, step: number): void => {
-  if (details.status !== "ok" && details.kind !== "browser_page") {
-    fail(step, `act_ui returned non-success status '${details.status ?? "unknown"}'.`);
-  }
+const ChordKey = Type.Union([ControlKey, Type.String({ pattern: "^[A-Z0-9]$" })]);
 
-  if (details.execution?.error !== undefined) fail(step, "act_ui reported a driver error.");
+export const SafeKeypressKeysSchema = Type.Array(
+  Type.Union([PrimaryModifierKey, SecondaryModifierKey, ChordKey]),
+  { minItems: 1, maxItems: 4 },
+);
 
-  if (details.execution?.outcome === "didnt" || details.execution?.outcome === "unknown") {
-    fail(step, `act_ui outcome was '${details.execution.outcome}'.`);
-  }
+const SemanticTargetSchema = Type.Object(
+  {
+    text: Type.Optional(ShortText),
+    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    capability: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    app: Type.Optional(ShortText),
+  },
+  { additionalProperties: false },
+);
+
+const CheckpointSchema = Type.Object(
+  {
+    text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+    role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    until: Type.Union([Type.Literal("present"), Type.Literal("absent")]),
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60_000 })),
+  },
+  { additionalProperties: false },
+);
+
+const VariableSchema = Type.Object(
+  {
+    id: Id,
+    description: Text,
+    secret: Type.Boolean(),
+    source: Type.Union([Type.Literal("user"), Type.Literal("agent")]),
+  },
+  { additionalProperties: false },
+);
+
+const VariableReferenceSchema = Type.Object({ variable: Id }, { additionalProperties: false });
+
+const StepMetadata = {
+  checkpoint: Type.Optional(CheckpointSchema),
 };
 
-export const executeSegment = async (
-  toolCallId: string,
-  parameters: SegmentParameters,
-  signal: AbortSignal | undefined,
-  ctx: ExtensionContext,
-  bridge: SegmentBridge,
-): Promise<AgentToolResult<unknown>> => {
-  validateSegment(parameters);
+const WorkflowStepSchema = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal("find_roots"),
+      text: Type.Optional(ShortText),
+      app: Type.Optional(ShortText),
+      bundleId: Type.Optional(ShortText),
+      rootKind: Type.Optional(
+        Type.Union([
+          Type.Literal("window"),
+          Type.Literal("menu"),
+          Type.Literal("sheet"),
+          Type.Literal("popover"),
+          Type.Literal("dialog"),
+          Type.Literal("browser_page"),
+        ]),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("observe"),
+      mode: Type.Optional(
+        Type.Union([Type.Literal("semantic"), Type.Literal("visual"), Type.Literal("fused")]),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("click"),
+      target: SemanticTargetSchema,
+      button: Type.Optional(Button),
+      clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
+      ...StepMetadata,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("type"),
+      target: Type.Optional(SemanticTargetSchema),
+      value: VariableReferenceSchema,
+      ...StepMetadata,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("keypress"),
+      target: Type.Optional(SemanticTargetSchema),
+      keys: SafeKeypressKeysSchema,
+      ...StepMetadata,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("scroll"),
+      target: Type.Optional(SemanticTargetSchema),
+      scrollX: Type.Optional(Type.Number({ minimum: -20_000, maximum: 20_000 })),
+      scrollY: Type.Optional(Type.Number({ minimum: -20_000, maximum: 20_000 })),
+      ...StepMetadata,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("wait"),
+      condition: CheckpointSchema,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Union([Type.Literal("launch_browser"), Type.Literal("navigate_browser")]),
+      url: VariableReferenceSchema,
+      ...StepMetadata,
+    },
+    { additionalProperties: false },
+  ),
+]);
 
-  const completed: Array<
-    | { step: number; stateId: string; ref: string; actionCount: number }
-    | { step: number; stateId: string; kind: "assert"; actionCount: 0 }
-  > = [];
+export const WorkflowDefinitionSchema = Type.Object(
+  {
+    version: Type.Literal(1),
+    id: Id,
+    name: Text,
+    description: Type.Optional(Type.String({ maxLength: 2_000 })),
+    variables: Type.Array(VariableSchema, { maxItems: 50 }),
+    steps: Type.Array(WorkflowStepSchema, { minItems: 1, maxItems: 200 }),
+  },
+  { additionalProperties: false },
+);
 
-  for (const [index, step] of parameters.steps.entries()) {
-    const stepNumber = index + 1;
-    throwIfAborted(signal, stepNumber);
-    let root = parameters.root;
+export const PublishedWorkflowSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-computer-workflow"),
+    formatVersion: Type.Literal(1),
+    revision: Id,
+    publishedAt: Timestamp,
+    sourceDraftId: Id,
+    workflow: WorkflowDefinitionSchema,
+  },
+  { additionalProperties: false },
+);
 
-    if (parameters.rootQuery !== undefined) {
-      const found = await bridge.find(
-        `${toolCallId}:find:${stepNumber}`,
-        { ...parameters.rootQuery },
-        signal,
-        undefined,
-        ctx,
-      );
+const RecordedInputSchema = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal("find_roots"),
+      text: Type.Optional(ShortText),
+      app: Type.Optional(ShortText),
+      bundleId: Type.Optional(ShortText),
+      rootKind: Type.Optional(
+        Type.Union([
+          Type.Literal("window"),
+          Type.Literal("menu"),
+          Type.Literal("sheet"),
+          Type.Literal("popover"),
+          Type.Literal("dialog"),
+          Type.Literal("browser_page"),
+        ]),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("observe_ui"),
+      mode: Type.Optional(
+        Type.Union([Type.Literal("semantic"), Type.Literal("visual"), Type.Literal("fused")]),
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("search_ui"),
+      text: Type.Optional(ShortText),
+      role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+      capability: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("safe_actions"),
+      expect: Type.Optional(CheckpointSchema),
+      actions: Type.Array(
+        Type.Union([
+          Type.Object(
+            {
+              action: Type.Literal("keypress"),
+              keys: SafeKeypressKeysSchema,
+              target: Type.Union([Type.Literal("focused"), Type.Literal("requires-review")]),
+            },
+            { additionalProperties: false },
+          ),
+          Type.Object(
+            {
+              action: Type.Literal("scroll"),
+              scrollX: Type.Optional(Type.Number()),
+              scrollY: Type.Optional(Type.Number()),
+              target: Type.Union([Type.Literal("root"), Type.Literal("requires-review")]),
+            },
+            { additionalProperties: false },
+          ),
+          Type.Object(
+            {
+              action: Type.Literal("variable-input"),
+              variable: Id,
+              target: Type.Union([Type.Literal("focused"), Type.Literal("requires-review")]),
+            },
+            { additionalProperties: false },
+          ),
+          Type.Object(
+            {
+              action: Type.Literal("requires-review"),
+              reason: Type.Union([
+                Type.Literal("transient-target"),
+                Type.Literal("coordinate-action"),
+                Type.Literal("unsupported-action"),
+              ]),
+            },
+            { additionalProperties: false },
+          ),
+        ]),
+        { minItems: 1, maxItems: 20 },
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("semantic_segment"),
+      rootQuery: Type.Optional(
+        Type.Object(
+          {
+            text: Type.Optional(ShortText),
+            app: Type.Optional(ShortText),
+            bundleId: Type.Optional(ShortText),
+            kind: Type.Optional(
+              Type.Union([
+                Type.Literal("window"),
+                Type.Literal("menu"),
+                Type.Literal("sheet"),
+                Type.Literal("popover"),
+                Type.Literal("dialog"),
+                Type.Literal("browser_page"),
+              ]),
+            ),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+      steps: Type.Array(
+        Type.Union([
+          Type.Object({ assert: CheckpointSchema }, { additionalProperties: false }),
+          Type.Object(
+            {
+              target: SemanticTargetSchema,
+              actions: Type.Array(
+                Type.Union([
+                  Type.Object(
+                    {
+                      action: Type.Literal("click"),
+                      button: Type.Optional(Button),
+                      clickCount: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
+                    },
+                    { additionalProperties: false },
+                  ),
+                  Type.Object(
+                    { action: Type.Literal("keypress"), keys: SafeKeypressKeysSchema },
+                    { additionalProperties: false },
+                  ),
+                  Type.Object(
+                    {
+                      action: Type.Literal("scroll"),
+                      scrollX: Type.Optional(Type.Number()),
+                      scrollY: Type.Optional(Type.Number()),
+                    },
+                    { additionalProperties: false },
+                  ),
+                ]),
+                { minItems: 1, maxItems: 20 },
+              ),
+              expect: CheckpointSchema,
+            },
+            { additionalProperties: false },
+          ),
+        ]),
+        { minItems: 1, maxItems: 20 },
+      ),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("wait_for"),
+      text: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+      role: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+      until: Type.Optional(Type.Union([Type.Literal("present"), Type.Literal("absent")])),
+      timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 60_000 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Union([Type.Literal("launch_browser"), Type.Literal("navigate_browser")]),
+      urlVariable: Id,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("withheld"),
+      reason: Type.Union([
+        Type.Literal("transient-reference"),
+        Type.Literal("arbitrary-code"),
+        Type.Literal("unsupported-input"),
+      ]),
+    },
+    { additionalProperties: false },
+  ),
+]);
 
-      const findDetails = detailsOf(found, stepNumber, "find_roots");
-      const windows = findDetails.windows ?? [];
+const RecordedCallSchema = Type.Object(
+  {
+    sequence: Type.Integer({ minimum: 1 }),
+    toolCallId: Type.String({ minLength: 1, maxLength: 256 }),
+    toolName: Type.String({ minLength: 1, maxLength: 128 }),
+    startedAt: Timestamp,
+    completedAt: Timestamp,
+    outcome: Type.Union([Type.Literal("success"), Type.Literal("error")]),
+    input: RecordedInputSchema,
+    issues: Type.Array(Text, { maxItems: 40 }),
+  },
+  { additionalProperties: false },
+);
 
-      if (findDetails.totalMatches !== 1 || windows.length !== 1) {
-        fail(
-          stepNumber,
-          findDetails.totalMatches === 0
-            ? "root query did not find a current window."
-            : `root query is ambiguous (${String(findDetails.totalMatches ?? "unknown")} matches).`,
-        );
-      }
+export const WorkflowDraftSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-computer-workflow-draft"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    name: Text,
+    goal: Text,
+    sessionId: Type.String({ minLength: 1, maxLength: 256 }),
+    startedAt: Timestamp,
+    stoppedAt: Timestamp,
+    status: Type.Literal("review-required"),
+    calls: Type.Array(RecordedCallSchema, { maxItems: 1_000 }),
+    issues: Type.Array(Text, { maxItems: 1_000 }),
+  },
+  { additionalProperties: false },
+);
 
-      const currentRoot = windows[0]?.windowRef;
+export const RunRecordSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-computer-workflow-run"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    workflowId: Id,
+    revision: Id,
+    sessionId: Type.String({ minLength: 1, maxLength: 256 }),
+    preparedAt: Timestamp,
+    status: Type.Literal("planned"),
+    plannedSegmentCount: Type.Integer({ minimum: 0, maximum: 200 }),
+    manualStepCount: Type.Integer({ minimum: 0, maximum: 200 }),
+  },
+  { additionalProperties: false },
+);
 
-      if (typeof currentRoot !== "string" || !/^@r[0-9]+$/u.test(currentRoot)) {
-        fail(stepNumber, "root query returned no unique current @r window ref.");
-      }
-
-      root = currentRoot;
-      throwIfAborted(signal, stepNumber);
-    }
-
-    const observed = await bridge.observe(
-      `${toolCallId}:observe:${stepNumber}`,
-      { ...(root ? { root } : {}), mode: "semantic" },
-      signal,
-      undefined,
-      ctx,
-    );
-
-    const observedStateId = stateIdOf(
-      detailsOf(observed, stepNumber, "observe_ui"),
-      stepNumber,
-      "observe_ui",
-    );
-
-    throwIfAborted(signal, stepNumber);
-
-    if ("assert" in step) {
-      const verified = await bridge.wait(
-        `${toolCallId}:assert:${stepNumber}`,
-        { stateId: observedStateId, ...step.assert },
-        signal,
-        undefined,
-        ctx,
-      );
-
-      const verification = detailsOf(verified, stepNumber, "wait_for");
-
-      if (verification.found !== true || verification.timedOut === true) {
-        fail(stepNumber, "assertion was not satisfied.");
-      }
-
-      completed.push({
-        step: stepNumber,
-        stateId: stateIdOf(verification, stepNumber, "wait_for"),
-        kind: "assert",
-        actionCount: 0,
-      });
-      continue;
-    }
-
-    const searched = await bridge.search(
-      `${toolCallId}:search:${stepNumber}`,
-      { stateId: observedStateId, ...step.target },
-      signal,
-      undefined,
-      ctx,
-    );
-
-    const searchDetails = detailsOf(searched, stepNumber, "search_ui");
-    const matches = searchDetails.matches ?? [];
-
-    if (searchDetails.totalMatches !== 1 || matches.length !== 1) {
-      fail(
-        stepNumber,
-        searchDetails.totalMatches === 0
-          ? "semantic target was not found."
-          : `semantic target is ambiguous (${String(searchDetails.totalMatches ?? "unknown")} matches).`,
-      );
-    }
-
-    const ref = matches[0]?.ref;
-
-    if (typeof ref !== "string" || !ref.startsWith("@e")) {
-      throw new Error(
-        `Segment stopped at step ${stepNumber}: resolved target has no current semantic ref.`,
-      );
-    }
-
-    throwIfAborted(signal, stepNumber);
-
-    const acted = await bridge.act(
-      `${toolCallId}:act:${stepNumber}`,
+export const WorkflowSaveCandidateSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-workflow-save-candidate"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    candidateHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    sourceHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    verificationBindingsHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    sourceDraftId: Id,
+    baseRevision: Type.Union([Id, Type.Null()]),
+    createdAt: Timestamp,
+    workflow: WorkflowDefinitionSchema,
+    optimization: Type.Object(
       {
-        stateId: observedStateId,
-        actions: step.actions.map((action) => actionWithRef(action, ref)),
-        expect: step.expect,
+        removedRedundantObservations: Type.Integer({ minimum: 0, maximum: 200 }),
+        removedRedundantRootLookups: Type.Integer({ minimum: 0, maximum: 200 }),
+        segmentCount: Type.Integer({ minimum: 0, maximum: 200 }),
       },
-      signal,
-      undefined,
-      ctx,
-    );
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
 
-    const actionDetails = detailsOf(acted, stepNumber, "act_ui");
-    assertActionWorked(actionDetails, stepNumber);
-    const successorStateId = stateIdOf(actionDetails, stepNumber, "act_ui");
-    throwIfAborted(signal, stepNumber);
+export const WorkflowSaveProofSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-workflow-save-proof"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    candidateId: Id,
+    candidateHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    runSummaryId: Id,
+    verifiedAt: Timestamp,
+    outcome: Type.Literal("passed"),
+  },
+  { additionalProperties: false },
+);
 
-    const verified = await bridge.wait(
-      `${toolCallId}:verify:${stepNumber}`,
-      { stateId: successorStateId, ...step.expect },
-      signal,
-      undefined,
-      ctx,
-    );
+const TaskInputSchema = Type.Object(
+  {
+    id: Id,
+    description: Text,
+    default: Type.Optional(Type.String({ minLength: 1, maxLength: 8_192 })),
+  },
+  { additionalProperties: false },
+);
 
-    const verification = detailsOf(verified, stepNumber, "wait_for");
+const TaskCriterionSchema = Type.Object(
+  {
+    id: Id,
+    description: Text,
+    evidence: Type.Union([
+      Type.Literal("tool-result"),
+      Type.Literal("artifact"),
+      Type.Literal("agent-assessment"),
+    ]),
+  },
+  { additionalProperties: false },
+);
 
-    if (verification.found !== true || verification.timedOut === true) {
-      fail(stepNumber, "postcondition was not satisfied.");
-    }
-
-    completed.push({
-      step: stepNumber,
-      stateId: stateIdOf(verification, stepNumber, "wait_for"),
-      ref,
-      actionCount: step.actions.length,
-    });
-  }
-
-  const details = { tool: "run_ui_segment", status: "completed", completed };
-
-  return {
-    content: [
+export const GeneralTaskDefinitionSchema = Type.Object(
+  {
+    version: Type.Literal(1),
+    id: Id,
+    name: Text,
+    goal: Text,
+    inputs: Type.Array(TaskInputSchema, { maxItems: 50 }),
+    startContext: Type.Object(
       {
-        type: "text",
-        text: `Completed ${completed.length} semantic segment step${completed.length === 1 ? "" : "s"}; every postcondition was verified.`,
+        kind: Type.Union([Type.Literal("browser"), Type.Literal("desktop")]),
+        browserProfile: Type.Optional(ShortText),
+        urlInput: Type.Optional(Id),
+        app: Type.Optional(ShortText),
       },
-    ],
-    details,
-  };
-};
+      { additionalProperties: false },
+    ),
+    procedure: Type.Array(Text, { minItems: 1, maxItems: 100 }),
+    output: Type.Object(
+      {
+        format: Type.Union([
+          Type.Literal("text"),
+          Type.Literal("json"),
+          Type.Literal("artifact"),
+          Type.Literal("artifacts"),
+        ]),
+        description: Text,
+      },
+      { additionalProperties: false },
+    ),
+    completionCriteria: Type.Array(TaskCriterionSchema, {
+      minItems: 1,
+      maxItems: 50,
+    }),
+  },
+  { additionalProperties: false },
+);
+
+export const GeneralTaskCandidateSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-general-task-candidate"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    candidateHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    sourceDraftId: Id,
+    baseRevision: Type.Union([Id, Type.Null()]),
+    createdAt: Timestamp,
+    task: GeneralTaskDefinitionSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const PublishedGeneralTaskSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-general-task"),
+    formatVersion: Type.Literal(1),
+    revision: Id,
+    savedAt: Timestamp,
+    sourceDraftId: Id,
+    task: GeneralTaskDefinitionSchema,
+  },
+  { additionalProperties: false },
+);
+
+const TaskObservedCallSchema = Type.Object(
+  {
+    sequence: Type.Integer({ minimum: 1 }),
+    toolCallId: Type.String({ minLength: 1, maxLength: 256 }),
+    toolName: Type.String({ minLength: 1, maxLength: 128 }),
+    startedAt: Timestamp,
+    completedAt: Type.Optional(Timestamp),
+    status: Type.Union([
+      Type.Literal("pending"),
+      Type.Literal("succeeded"),
+      Type.Literal("failed"),
+      Type.Literal("unknown"),
+    ]),
+    resultDigest: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })),
+    input: RecordedInputSchema,
+    issues: Type.Array(Text, { maxItems: 40 }),
+    reconciliation: Type.Optional(
+      Type.Object(
+        {
+          assessment: Text,
+          evidenceToolCallIds: Type.Array(Type.String({ minLength: 1, maxLength: 256 }), {
+            minItems: 1,
+            maxItems: 20,
+          }),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+const TaskCriterionEvidenceSchema = Type.Object(
+  {
+    criterionId: Id,
+    outcome: Type.Union([Type.Literal("passed"), Type.Literal("failed")]),
+    toolCallIds: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, maxLength: 256 }), { maxItems: 100 }),
+    ),
+    artifactPaths: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, maxLength: 8_192 }), { maxItems: 100 }),
+    ),
+    artifacts: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            path: Type.String({ minLength: 1, maxLength: 8_192 }),
+            size: Type.Integer({ minimum: 0 }),
+            sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+            modifiedAt: Timestamp,
+          },
+          { additionalProperties: false },
+        ),
+        { maxItems: 100 },
+      ),
+    ),
+    assessment: Type.Optional(Text),
+    evidenceLabel: Type.Union([
+      Type.Literal("observed-tool-result"),
+      Type.Literal("verified-artifact"),
+      Type.Literal("agent-assessed"),
+    ]),
+  },
+  { additionalProperties: false },
+);
+
+export const GeneralTaskRunSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-general-task-run"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    taskId: Id,
+    candidateId: Type.Optional(Id),
+    revision: Id,
+    mode: Type.Union([Type.Literal("verification"), Type.Literal("run")]),
+    sessionId: Type.String({ minLength: 1, maxLength: 256 }),
+    inputsHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+    startedAt: Timestamp,
+    updatedAt: Timestamp,
+    state: Type.Union([
+      Type.Literal("active"),
+      Type.Literal("cancelled"),
+      Type.Literal("passed"),
+      Type.Literal("failed"),
+      Type.Literal("incomplete"),
+    ]),
+    calls: Type.Array(TaskObservedCallSchema, { maxItems: 1_000 }),
+    criteria: Type.Array(TaskCriterionEvidenceSchema, { maxItems: 50 }),
+  },
+  { additionalProperties: false },
+);
+
+const RunCheckSchema = Type.Object(
+  {
+    sourceStep: Type.Integer({ minimum: 1, maximum: 200 }),
+    expected: CheckpointSchema,
+    outcome: Type.Union([Type.Literal("passed"), Type.Literal("failed"), Type.Literal("not-run")]),
+  },
+  { additionalProperties: false },
+);
+
+export const RunSummarySchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-computer-workflow-run-summary"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    workflowId: Id,
+    revision: Id,
+    sessionId: Type.String({ minLength: 1, maxLength: 256 }),
+    preparedAt: Timestamp,
+    finishedAt: Timestamp,
+    overall: Type.Union([
+      Type.Literal("passed"),
+      Type.Literal("failed"),
+      Type.Literal("incomplete"),
+    ]),
+    checks: Type.Array(RunCheckSchema, { maxItems: 200 }),
+    segments: Type.Object(
+      {
+        planned: Type.Integer({ minimum: 0, maximum: 200 }),
+        matched: Type.Integer({ minimum: 0, maximum: 200 }),
+        passed: Type.Integer({ minimum: 0, maximum: 200 }),
+        failed: Type.Integer({ minimum: 0, maximum: 200 }),
+      },
+      { additionalProperties: false },
+    ),
+    stopReason: Type.Union([
+      Type.Literal("completed"),
+      Type.Literal("manual-steps"),
+      Type.Literal("tool-error"),
+      Type.Literal("invalid-result"),
+      Type.Literal("input-mismatch"),
+      Type.Literal("unfinished-segments"),
+    ]),
+  },
+  { additionalProperties: false },
+);
+
+export const PublishApprovalSchema = Type.Object(
+  {
+    format: Type.Literal("ziggy-computer-workflow-publish-approval"),
+    formatVersion: Type.Literal(1),
+    id: Id,
+    sourceDraftId: Id,
+    sessionId: Type.String({ minLength: 1, maxLength: 256 }),
+    cwd: Type.String({ minLength: 1, maxLength: 8_192 }),
+    preparedAtUserInput: Type.Integer({ minimum: 0 }),
+    preparedAt: Timestamp,
+    workflow: WorkflowDefinitionSchema,
+  },
+  { additionalProperties: false },
+);
+
+export type WorkflowDefinition = Static<typeof WorkflowDefinitionSchema>;
+
+export type PublishedWorkflow = Static<typeof PublishedWorkflowSchema>;
+
+export type WorkflowDraft = Static<typeof WorkflowDraftSchema>;
+export type WorkflowSaveCandidate = Static<typeof WorkflowSaveCandidateSchema>;
+export type WorkflowSaveProof = Static<typeof WorkflowSaveProofSchema>;
+export type GeneralTaskDefinition = Static<typeof GeneralTaskDefinitionSchema>;
+export type GeneralTaskCandidate = Static<typeof GeneralTaskCandidateSchema>;
+export type PublishedGeneralTask = Static<typeof PublishedGeneralTaskSchema>;
+export type GeneralTaskRun = Static<typeof GeneralTaskRunSchema>;
+
+export type RecordedCall = Static<typeof RecordedCallSchema>;
+
+export type RecordedInput = Static<typeof RecordedInputSchema>;
+
+export type RunRecord = Static<typeof RunRecordSchema>;
+
+export type RunSummary = Static<typeof RunSummarySchema>;
+
+export type PublishApproval = Static<typeof PublishApprovalSchema>;
+
+export const WorkflowIdSchema = Id;

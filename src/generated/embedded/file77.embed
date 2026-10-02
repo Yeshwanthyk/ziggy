@@ -1,65 +1,293 @@
-# Linux support
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-Linux uses the same root/state/ref navigation architecture as macOS and Windows. Its per-user Rust helper uses AT-SPI2 semantics first. In an X11 session it can enrich those semantics with EWMH window state, X11 capture, and guarded XTEST physical input.
+use crate::atspi::{AccessibleRef, NodeSnapshot, RootSnapshot};
+use crate::{ErrorCode, ProtocolError};
 
-## Setup
+pub const MAX_LOOK_RECORDS: usize = 8;
 
-Run Pi as the same user and inside the same graphical session as the target applications. The session needs a working D-Bus and AT-SPI2 accessibility bus, and applications must export useful accessibility interfaces. A normal install places the helper at:
+#[derive(Debug, Clone)]
+pub struct LookRecord {
+    pub root: RootSnapshot,
+    pub nodes: HashMap<String, NodeSnapshot>,
+    pub image_width: u16,
+    pub image_height: u16,
+}
 
-```text
-~/.pi/agent/helpers/pi-computer-use/linux-bridge
-```
+#[derive(Debug, Default)]
+pub struct HelperState {
+    roots: HashMap<String, RootSnapshot>,
+    root_refs: HashMap<AccessibleRef, String>,
+    looks: HashMap<String, LookRecord>,
+    look_order: VecDeque<String>,
+    next_root: u64,
+    next_look: u64,
+}
 
-The upstream [AT-SPI development guide](https://gnome.pages.gitlab.gnome.org/at-spi2-core/devel-docs/index.html) describes the accessibility stack. Containers, system services, `sudo`, and unrelated SSH sessions do not automatically inherit the graphical user's bus.
+impl HelperState {
+    pub fn replace_roots(&mut self, roots: Vec<RootSnapshot>) -> Vec<(String, RootSnapshot)> {
+        let mut next = HashMap::new();
+        let mut result = Vec::with_capacity(roots.len());
+        for root in roots {
+            let reference = self
+                .root_refs
+                .get(&root.accessible)
+                .cloned()
+                .unwrap_or_else(|| {
+                    self.next_root += 1;
+                    format!("@w{}", self.next_root)
+                });
+            self.root_refs
+                .insert(root.accessible.clone(), reference.clone());
+            next.insert(reference.clone(), root.clone());
+            result.push((reference, root));
+        }
+        self.roots = next;
+        self.root_refs
+            .retain(|_, reference| self.roots.contains_key(reference));
+        result
+    }
 
-## Capability matrix
+    pub fn root(&self, reference: &str) -> Option<RootSnapshot> {
+        self.roots.get(reference).cloned()
+    }
 
-| Capability | X11 | Wayland | Delivery |
-| --- | --- | --- | --- |
-| Discover accessible roots | Yes; EWMH enriches geometry, stacking, focus, and minimized state | Yes, when exported | AT-SPI2, plus EWMH on X11 |
-| Press/click an actionable ref | Capability-gated | Capability-gated | AT-SPI `Action` |
-| Replace editable text | Capability-gated | Capability-gated | AT-SPI `EditableText` |
-| Read/wait on accessible text | Capability-gated | Capability-gated | AT-SPI `Text`/snapshots |
-| Screenshot/visual observation | Yes | No | XComposite PNG; `GetImage` fallback may be stale or obscured |
-| Coordinate pointer, keyboard, scroll, and drag | Non-headless only | No | XTEST after semantic delivery is unavailable/insufficient |
-| Force focus | Non-headless only | No | EWMH `_NET_ACTIVE_WINDOW` |
-| Managed Chromium pages | Yes | Yes | Loopback CDP |
-| Open a URL | Yes | Yes | `xdg-open` |
+    pub fn roots(&self) -> Vec<(String, RootSnapshot)> {
+        let mut roots = self
+            .roots
+            .iter()
+            .map(|(reference, root)| (reference.clone(), root.clone()))
+            .collect::<Vec<_>>();
+        roots.sort_by(|a, b| a.0.cmp(&b.0));
+        roots
+    }
 
-“Capability-gated” means the target must export the corresponding AT-SPI interface. X11 physical fallback reports an `unknown` outcome unless later observation or a postcondition verifies the result. Capture prefers XComposite so covered windows can still be read; the `GetImage` fallback explicitly warns that pixels may be stale or obscured.
+    pub fn insert_look(
+        &mut self,
+        root: RootSnapshot,
+        raw_nodes: Vec<NodeSnapshot>,
+        base: Option<&LookRecord>,
+    ) -> (String, Vec<NodeSnapshot>) {
+        self.next_look += 1;
+        let look_id = format!("look_{}", self.next_look);
+        let mut nodes = base.map(|record| record.nodes.clone()).unwrap_or_default();
+        let existing_refs = base
+            .map(|record| {
+                record
+                    .nodes
+                    .values()
+                    .map(|node| (node.accessible.clone(), node.reference.clone()))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+        let mut output = Vec::with_capacity(raw_nodes.len());
+        for (index, mut node) in raw_nodes.into_iter().enumerate() {
+            node.reference = existing_refs
+                .get(&node.accessible)
+                .cloned()
+                .unwrap_or_else(|| format!("linux:{look_id}:@e{}", index + 1));
+            nodes.insert(node.reference.clone(), node.clone());
+            output.push(node);
+        }
+        let (image_width, image_height) = base
+            .map(|record| (record.image_width, record.image_height))
+            .or_else(|| {
+                root.frame.as_ref().map(|frame| {
+                    (
+                        frame.width.max(1).min(i32::from(u16::MAX)) as u16,
+                        frame.height.max(1).min(i32::from(u16::MAX)) as u16,
+                    )
+                })
+            })
+            .unwrap_or((1, 1));
+        self.looks.insert(
+            look_id.clone(),
+            LookRecord {
+                root,
+                nodes,
+                image_width,
+                image_height,
+            },
+        );
+        self.look_order.push_back(look_id.clone());
+        while self.look_order.len() > MAX_LOOK_RECORDS {
+            if let Some(expired) = self.look_order.pop_front() {
+                self.looks.remove(&expired);
+            }
+        }
+        (look_id, output)
+    }
 
-## Background and headless guarantees
+    pub fn set_look_image_size(
+        &mut self,
+        look_id: &str,
+        width: u16,
+        height: u16,
+    ) -> Result<(), ProtocolError> {
+        let record = self.looks.get_mut(look_id).ok_or_else(|| {
+            ProtocolError::new("Owning look is no longer available", ErrorCode::StaleLook)
+        })?;
+        record.image_width = width.max(1);
+        record.image_height = height.max(1);
+        Ok(())
+    }
 
-Linux always attempts AT-SPI semantics first. Semantic delivery does not request compositor focus or inject global input; background delivery is not invisible execution, because an application may still update its visible window.
+    pub fn scope(
+        &self,
+        reference: &str,
+        base_look_id: Option<&str>,
+    ) -> Result<(LookRecord, NodeSnapshot), ProtocolError> {
+        if let Some(look_id) = base_look_id {
+            let record = self.look(look_id)?;
+            let node = record.nodes.get(reference).cloned().ok_or_else(|| {
+                ProtocolError::new("Scope ref is not owned by baseLookId", ErrorCode::StaleRef)
+            })?;
+            return Ok((record, node));
+        }
+        self.look_order
+            .iter()
+            .rev()
+            .filter_map(|look_id| self.looks.get(look_id))
+            .find_map(|record| {
+                record
+                    .nodes
+                    .get(reference)
+                    .cloned()
+                    .map(|node| (record.clone(), node))
+            })
+            .ok_or_else(|| ProtocolError::new("Scope ref is stale", ErrorCode::StaleRef))
+    }
 
-With `headless: true` or the `ax_only`/`background` delivery policy, the helper never invokes XTEST or EWMH focus. Unsupported semantic input fails closed. With non-headless `default` or `foreground` policy on X11, actions may fall back to global XTEST input and focus may use EWMH. Those operations can move the real pointer, type into the focused application, and interfere with the user's session. Native Wayland has no such physical fallback.
+    pub fn look(&self, look_id: &str) -> Result<LookRecord, ProtocolError> {
+        self.looks.get(look_id).cloned().ok_or_else(|| {
+            ProtocolError::new("Owning look is no longer available", ErrorCode::StaleLook)
+        })
+    }
 
-Managed CDP actions also avoid desktop focus, but `launch_browser` starts a normal visible browser; this project's `headless` option is an input-delivery policy, not Chromium's `--headless` switch.
+    pub fn element(&self, look_id: &str, reference: &str) -> Result<NodeSnapshot, ProtocolError> {
+        self.look(look_id)?
+            .nodes
+            .get(reference)
+            .cloned()
+            .ok_or_else(|| ProtocolError::new("Element reference is stale", ErrorCode::StaleRef))
+    }
+}
 
-## Wayland portal boundary
+pub fn fresh_state_id() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    format!("w-{}", NEXT.fetch_add(1, Ordering::Relaxed))
+}
 
-The standardized [ScreenCast portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html) can expose user-selected streams through PipeWire. The [RemoteDesktop portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html) can negotiate input devices and may return restore tokens when the desktop grants persistence. Starting a session normally invokes compositor-owned selection/consent, and backend support varies.
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-On Wayland, diagnostics performs only a read-only property probe and reports the RemoteDesktop and ScreenCast interface versions plus advertised device, source, and cursor-mode bitmasks. It does not create a portal request or session and cannot display a chooser.
+    fn accessible(n: usize) -> AccessibleRef {
+        AccessibleRef {
+            destination: format!(":1.{n}"),
+            path: format!("/node/{n}"),
+        }
+    }
 
-There is no portal session, PipeWire frame, input dispatch, or restore-token implementation. Installing a portal backend therefore does not enable Wayland capture or input.
+    fn root(n: usize) -> RootSnapshot {
+        RootSnapshot {
+            accessible: accessible(n),
+            pid: n as u64,
+            name: format!("root {n}"),
+            app_name: format!("app {n}"),
+            role: "frame".into(),
+            frame: None,
+            x11_window: None,
+            is_focused: false,
+            is_minimized: false,
+            z_order: None,
+        }
+    }
 
-## Security boundaries
+    #[test]
+    fn root_refs_are_stable_and_dead_roots_are_removed() {
+        let mut state = HelperState::default();
+        let first = state.replace_roots(vec![root(1), root(2)]);
+        let second = state.replace_roots(vec![root(2)]);
+        assert_eq!(first[1].0, second[0].0);
+        assert!(state.root(&first[0].0).is_none());
+    }
 
-- The helper is a local stdin/stdout child process and opens no helper network listener.
-- It can inspect applications exposed on the current user's AT-SPI bus; run only trusted agents and extensions in that session.
-- Password-role values are omitted and explicit reads are rejected, though application mislabeling remains possible.
-- On X11, capture can read window pixels and non-headless physical fallback can control the global pointer/keyboard and request focus. These are broad desktop capabilities; strict headless/background policy blocks XTEST and focus, but does not make AT-SPI or requested X11 observation private.
-- On Wayland, portal diagnostics are read-only; capture and input are not implemented.
-- CDP is separate and gives local processes that can reach its loopback port powerful page access. `launch_browser` uses a fresh non-default temporary profile, matching modern Chrome's [remote-debugging security policy](https://developer.chrome.com/blog/remote-debugging-port), rather than the user's normal profile.
+    #[test]
+    fn look_history_is_bounded_and_refs_are_look_scoped() {
+        let mut state = HelperState::default();
+        let mut first = String::new();
+        for n in 0..=MAX_LOOK_RECORDS {
+            let node = NodeSnapshot::minimal(accessible(n));
+            let (look, nodes) = state.insert_look(root(n), vec![node], None);
+            if n == 0 {
+                first = look.clone();
+            }
+            assert!(nodes[0].reference.starts_with(&format!("linux:{look}:")));
+        }
+        assert_eq!(state.look(&first).unwrap_err().code, ErrorCode::StaleLook);
+    }
 
-## Browser discovery
+    #[test]
+    fn scoped_look_requires_scope_ref_owned_by_base_look() {
+        let mut state = HelperState::default();
+        let (first, first_nodes) =
+            state.insert_look(root(1), vec![NodeSnapshot::minimal(accessible(10))], None);
+        let (second, _) =
+            state.insert_look(root(1), vec![NodeSnapshot::minimal(accessible(20))], None);
+        assert_eq!(
+            state
+                .scope(&first_nodes[0].reference, Some(&second))
+                .unwrap_err()
+                .code,
+            ErrorCode::StaleRef
+        );
+        assert_eq!(
+            state
+                .scope(&first_nodes[0].reference, Some(&first))
+                .unwrap()
+                .1
+                .accessible,
+            accessible(10)
+        );
+    }
 
-`launch_browser` searches common Chrome/Chromium or Helium locations and `PATH`. For an AppImage or custom install, set an authoritative executable override:
+    #[test]
+    fn scoped_look_carries_base_records_and_reuses_known_refs() {
+        let mut state = HelperState::default();
+        let mut parent = NodeSnapshot::minimal(accessible(10));
+        let mut child = NodeSnapshot::minimal(accessible(11));
+        child.parent = Some(parent.accessible.clone());
+        let (base_id, base_nodes) = state.insert_look(root(1), vec![parent.clone(), child], None);
+        let base = state.look(&base_id).unwrap();
+        parent.name = "updated".into();
+        let (scoped_id, scoped_nodes) = state.insert_look(root(1), vec![parent], Some(&base));
+        assert_eq!(scoped_nodes[0].reference, base_nodes[0].reference);
+        assert_eq!(
+            state
+                .element(&scoped_id, &base_nodes[1].reference)
+                .unwrap()
+                .accessible,
+            accessible(11)
+        );
+        assert_eq!(
+            state
+                .element(&scoped_id, &base_nodes[0].reference)
+                .unwrap()
+                .name,
+            "updated"
+        );
+    }
 
-```bash
-PI_COMPUTER_USE_CHROME_EXECUTABLE=/absolute/path/to/chrome
-PI_COMPUTER_USE_HELIUM_EXECUTABLE=/absolute/path/to/helium.AppImage
-```
-
-Manual CDP launches must use a non-default `--user-data-dir` together with `--remote-debugging-port`; set `PI_COMPUTER_USE_CDP_PORT` to that loopback port.
+    #[test]
+    fn scoped_look_preserves_base_image_size() {
+        let mut state = HelperState::default();
+        let node = NodeSnapshot::minimal(accessible(10));
+        let (base_id, _) = state.insert_look(root(1), vec![node.clone()], None);
+        state.set_look_image_size(&base_id, 1000, 500).unwrap();
+        let base = state.look(&base_id).unwrap();
+        let (scoped_id, _) = state.insert_look(root(1), vec![node], Some(&base));
+        let scoped = state.look(&scoped_id).unwrap();
+        assert_eq!((scoped.image_width, scoped.image_height), (1000, 500));
+    }
+}

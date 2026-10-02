@@ -1,104 +1,164 @@
-# Ziggy packaging notes
+/* oxlint-disable ziggy-effect/no-try-catch-or-throw, ziggy-effect/no-error-constructor -- Validation failures become Pi tool failures. */
+/* oxlint-disable ziggy/no-unknown-parameters -- This exported function is the schema decoder for tool input. */
+/* oxlint-disable ziggy/no-conditional-empty-object-spread -- Template resolution preserves exact optional schema fields. */
+/* oxlint-disable ziggy/require-readable-spacing -- Validation and resolution predicates remain adjacent. */
+import { Parse } from "typebox/value";
+import {
+  WorkflowDefinitionSchema,
+  type PublishedWorkflow,
+  type WorkflowDefinition,
+} from "./schema.ts";
 
-This directory vendors the published npm artifact
-`@injaneity/pi-computer-use@0.5.0` (integrity
-`sha512-5uJ6TWnSkWBwRRGWGF1nMvyARlkJEDZsRkMmzTBOGQUNjulWMDztAv99OTdtWIGbSncRpYQQ15VGeFC/vq8hJQ==`,
-shasum `c203ae99ee6beac8a681848ec31f92ddf97aeddb`) so Ziggy can copy a complete,
-offline runtime package onto a Profile shelf.
+const transientPattern = /(?:@[ero][A-Za-z0-9._:-]*|stateId)/i;
 
-Upstream: <https://github.com/injaneity/pi-computer-use>
+const suspiciousVariablePattern = /(?:password|passwd|token|cookie|secret|otp|api[-_ ]?key)/i;
+const templatePattern = /\{\{([a-z0-9]+(?:-[a-z0-9]+)*)\}\}/g;
+const primaryModifierPattern = /^(?:CMD|COMMAND|CTRL|CONTROL|META)$/;
+const secondaryModifierPattern = /^(?:SHIFT|ALT|OPTION)$/;
+const controlKeyPattern =
+  /^(?:ENTER|RETURN|ESC|ESCAPE|TAB|BACKSPACE|DELETE|FORWARDDELETE|ARROWUP|ARROWDOWN|ARROWLEFT|ARROWRIGHT|UP|DOWN|LEFT|RIGHT|HOME|END|PAGEUP|PAGEDOWN|F(?:[1-9]|1[0-9]|2[0-4]))$/;
+const chordKeyPattern =
+  /^(?:[A-Z0-9]|ENTER|RETURN|ESC|ESCAPE|TAB|BACKSPACE|DELETE|FORWARDDELETE|ARROWUP|ARROWDOWN|ARROWLEFT|ARROWRIGHT|UP|DOWN|LEFT|RIGHT|HOME|END|PAGEUP|PAGEDOWN|F(?:[1-9]|1[0-9]|2[0-4]))$/;
 
-Ziggy retains the upstream runtime and applies the integration changes below, plus the
-managed-browser lifecycle patch described later in this document:
+const isSafeKeypressChord = (keys: readonly string[]): boolean => {
+  if (keys.length === 1) return controlKeyPattern.test(keys[0] ?? "");
+  if (keys.length === 2 && secondaryModifierPattern.test(keys[0] ?? "")) {
+    return controlKeyPattern.test(keys[1] ?? "");
+  }
+  if (!primaryModifierPattern.test(keys[0] ?? "") || !chordKeyPattern.test(keys.at(-1) ?? "")) {
+    return false;
+  }
 
-- the package name is `@ziggy/computer-use`;
-- Pi's extension path names a small Ziggy-owned `./index.ts` adapter. The adapter dynamically
-  loads the concrete `./dist/extensions/computer-use.mjs` runtime so Ziggy's root compiler does
-  not substitute adjacent upstream `.mts` sources and apply repository-only compiler policy;
-- peer versions are pinned to Ziggy's Pi and TypeBox versions;
-- package-local checks replace upstream development scripts that are not part
-  of the published npm artifact.
+  return keys.slice(1, -1).every((key) => secondaryModifierPattern.test(key));
+};
 
-Upstream TypeScript is retained as `.mts` under `dist/` and emitted as adjacent
-`.mjs` files. This keeps the Profile runtime dependency-free while isolating upstream's
-compiler policy from Ziggy-owned TypeScript's stricter optional-property rules.
-The three platform helpers and the setup script resolve the package root across
-that added `dist/` boundary; their runtime behavior is otherwise unchanged.
-The setup script also restores the macOS helper executable bit before signature
-verification because Ziggy's embedded-file materializer does not retain source
-file modes. Linux and Windows already restore the destination mode through
-upstream's `copyIfChanged` path.
+export const validateWorkflowDefinition = (value: unknown): WorkflowDefinition => {
+  const workflow = Parse(WorkflowDefinitionSchema, value);
+  const variableIds = new Set<string>();
 
-The upstream `LICENSE` is retained unchanged. Runtime source, compiled modules,
-native source fallbacks, setup scripts, and published prebuilt helpers are retained because
-helper setup resolves those resources relative to this package. In particular,
-the signed universal macOS helper must not be rebuilt or modified during Ziggy
-packaging.
+  for (const variable of workflow.variables) {
+    if (variableIds.has(variable.id)) throw new Error(`Duplicate variable '${variable.id}'.`);
+    variableIds.add(variable.id);
 
-## Workflow execution boundary
+    if (suspiciousVariablePattern.test(variable.id) && !variable.secret) {
+      throw new Error(`Variable '${variable.id}' looks sensitive and must set secret=true.`);
+    }
+  }
 
-This package retains upstream's eleven public Pi tool names and adds one Ziggy-owned
-`run_ui_segment` tool at the same driver boundary. The segment tool calls the pinned runtime's
-exported bridge executors inside this package; it does not invoke another Pi extension.
+  for (const [index, step] of workflow.steps.entries()) {
+    if (transientPattern.test(JSON.stringify(step))) {
+      throw new Error(`Step ${index + 1} contains a transient computer-use reference.`);
+    }
 
-`run_ui_segment` resolves fresh semantic state before every target, requires exactly one match,
-and requires a verified postcondition for every action group. It stops on ambiguity, cancellation,
-unknown or stale state, driver failure, and uncertain outcomes. Its allowlist is intentionally
-limited to semantic click, keypress, and scroll actions. It accepts no coordinates, arbitrary
-JavaScript, text-entry values, or secrets.
+    if ("target" in step && step.target !== undefined && Object.keys(step.target).length === 0) {
+      throw new Error(`Step ${index + 1} has an empty semantic target.`);
+    }
 
-Durable workflows should use `rootQuery` with one or more safe semantic fields: `text`, `app`,
-`bundleId`, or `kind`. The driver runs `find_roots` again before every step and proceeds only when
-the query returns exactly one current `@r` window ref. The optional exact `root` remains available
-for ad hoc, same-session calls; saved workflows must not persist its transient value.
+    if (
+      step.kind === "wait" &&
+      step.condition.text === undefined &&
+      step.condition.role === undefined
+    ) {
+      throw new Error(`Step ${index + 1} has an empty checkpoint condition.`);
+    }
 
-Read-only `{ assert: Condition }` steps support acceptance preconditions and checks without a
-target search or action. They freshly resolve and observe the root, then require `wait_for` to
-prove the condition. This is useful for browser authentication checks before any mutation.
+    if ("checkpoint" in step && step.checkpoint !== undefined) {
+      if (step.checkpoint.text === undefined && step.checkpoint.role === undefined) {
+        throw new Error(`Step ${index + 1} has an empty checkpoint.`);
+      }
+    }
 
-An already-running native browser window can preserve the user's existing logged-in profile and
-should be selected with `rootQuery`. `launch_browser` without a profile retains upstream's
-temporary-profile behavior. The named-profile extension below provides dedicated persistent
-browser data; it never imports the user's ordinary browser profile.
+    if (step.kind === "type" && !variableIds.has(step.value.variable)) {
+      throw new Error(`Step ${index + 1} references unknown variable '${step.value.variable}'.`);
+    }
 
-This is a pinned Ziggy integration contract over `@injaneity/pi-computer-use@0.5.0`, not an
-upstream public API. An upstream-supported segment contract would reduce future upgrade work.
+    if (step.kind === "keypress" && !isSafeKeypressChord(step.keys)) {
+      throw new Error(`Step ${index + 1} has an unsupported keypress chord.`);
+    }
 
-## Named browser profiles
+    if (
+      (step.kind === "launch_browser" || step.kind === "navigate_browser") &&
+      !variableIds.has(step.url.variable)
+    ) {
+      throw new Error(`Step ${index + 1} references unknown variable '${step.url.variable}'.`);
+    }
+  }
 
-The first browser lifecycle slice extends the existing launcher and CDP engine rather than
-introducing another driver. `launch_browser` accepts an optional safe `profile` name and
-`mode: "headed" | "background"`. `background` launches Chromium with `--headless=new`; it is
-separate from upstream's `headless` setting, which controls native input policy.
+  for (const match of JSON.stringify(workflow.steps).matchAll(templatePattern)) {
+    const variable = workflow.variables.find(({ id }) => id === match[1]);
+    if (variable === undefined)
+      throw new Error(`Template references unknown variable '${match[1]}'.`);
+    if (variable.secret)
+      throw new Error(`Secret variable '${variable.id}' cannot appear in semantic templates.`);
+  }
 
-Named browser data belongs to the Pi context's Profile directory:
-`.runtime/computer-use/browsers/<name>`. A named browser is owned exclusively across processes.
-The runtime still owns only one active managed browser at a time. `close_browser` waits for its
-process to exit before releasing ownership, preserving browser data for the next launch.
-An unclean crash can leave an ownership lock. The fork refuses to steal that lock; recovery
-requires confirming that the browser using that profile has stopped before removing the stale
-lock. Browser lock files inside Chromium's data directory must not be removed by the launcher.
+  return workflow;
+};
 
-The intended flow is:
+const resolveText = (text: string | undefined, bindings: Readonly<Record<string, string>>) =>
+  text?.replace(templatePattern, (_template, id: string) => {
+    const value = bindings[id];
+    if (value === undefined || value.length === 0)
+      throw new Error(`Missing nonsecret binding '${id}'.`);
+    return value;
+  });
 
-1. Launch `work` headed at the login page and let the user sign in.
-2. Close the managed browser, then launch `work` in background mode at the desired page.
-3. Verify authentication using the existing observation/check tools before proceeding.
-4. If authentication expires, close and reopen headed for the user to sign in again.
+export const resolveWorkflowTemplates = (
+  workflow: WorkflowDefinition,
+  bindings: Readonly<Record<string, string>>,
+): WorkflowDefinition => {
+  const steps = workflow.steps.map((step) => {
+    if (step.kind === "find_roots")
+      return {
+        ...step,
+        ...(step.text === undefined ? {} : { text: resolveText(step.text, bindings) }),
+      };
+    if (step.kind === "wait")
+      return {
+        ...step,
+        condition: {
+          ...step.condition,
+          ...(step.condition.text === undefined
+            ? {}
+            : { text: resolveText(step.condition.text, bindings) }),
+        },
+      };
+    if ("target" in step && step.target !== undefined) {
+      const target = {
+        ...step.target,
+        ...(step.target.text === undefined
+          ? {}
+          : { text: resolveText(step.target.text, bindings) }),
+      };
+      return {
+        ...step,
+        target,
+        ...("checkpoint" in step && step.checkpoint !== undefined
+          ? {
+              checkpoint: {
+                ...step.checkpoint,
+                ...(step.checkpoint.text === undefined
+                  ? {}
+                  : { text: resolveText(step.checkpoint.text, bindings) }),
+              },
+            }
+          : {}),
+      };
+    }
+    return step;
+  });
+  return validateWorkflowDefinition({ ...workflow, steps });
+};
 
-A relaunch creates new page handles and observations; resolve fresh state afterward. Merely
-launching a browser does not establish that it is authenticated. Cookies and local storage stay
-in the browser directory and are not copied into workflow definitions.
-
-The companion `computer-workflows` package owns saved recipes and job history. This package owns
-the browser and grants an exclusive lease for each background workflow run. A run refuses to
-replace an open managed browser, and interactive browser calls cannot interfere with its lease.
-The packages communicate through Pi's shared event bus so both use the same driver instance.
-
-This package preserves the signed native helper and upstream license. Modified vendored
-TypeScript sources and their adjacent runtime JavaScript must be kept in sync.
-
-Browser-only CDP launches, explicit browser-root discovery/observation, and operations on browser
-states do not initialize the native desktop helper. Native-app operations still use upstream's
-permission checks. A browser search with no matches stays on the CDP path rather than attempting
-desktop OCR.
+export const makePublishedWorkflow = (
+  definition: WorkflowDefinition,
+  sourceDraftId: string,
+  now = new Date(),
+): PublishedWorkflow => ({
+  format: "ziggy-computer-workflow",
+  formatVersion: 1,
+  revision: crypto.randomUUID(),
+  publishedAt: now.toISOString(),
+  sourceDraftId,
+  workflow: definition,
+});

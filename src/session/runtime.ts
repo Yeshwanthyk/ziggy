@@ -23,10 +23,12 @@ import type { SpecialistVoiceHub } from "../adapters/pi/prompt-turn";
 import { piPromise, providerError } from "../adapters/pi/provider-failure";
 import type { ChatModelOverride, ZiggyAgentError } from "../domain/agent";
 import {
+  isMcpToolName,
   loadServices,
   profileResources,
   type ExtensionLoadFailed,
   type PiResources,
+  type ProfileMcpOptions,
   type SkippedPackage,
 } from "../extensions";
 import { runCallback } from "../platform/callback";
@@ -57,7 +59,20 @@ export interface ProfileRuntimeOptions {
   readonly beforeServices?: (manager: SessionManager) => void;
   /** Run as this Profile agent: its body replaces SOUL.md and only its tools are active. */
   readonly persona?: SessionPersona | undefined;
+  /** An automation without a Profile agent: it runs without the MCP stack (A5). */
+  readonly automation?: boolean | undefined;
+  /** MCP servers for sessions that load the MCP stack. */
+  readonly mcp?: ProfileMcpOptions | undefined;
 }
+
+/**
+ * Main sessions load Pi's MCP stack. A persona session loads it only when its allowlist names
+ * `codemode` or an `mcp__` tool; an untagged automation never does (A5).
+ */
+const loadsMcp = (options: ProfileRuntimeOptions): boolean =>
+  options.persona === undefined
+    ? options.automation !== true
+    : options.persona.tools.some((name) => name === "codemode" || isMcpToolName(name));
 
 const notInitialized = (profilePath: string) =>
   new ProfileNotInitialized({
@@ -185,6 +200,7 @@ export const createProfileRuntime = (
               systemPrompt,
               resources: acceptedResources,
               inline: inlineExtensions,
+              mcp: loadsMcp(options) ? (options.mcp ?? {}) : undefined,
             });
 
             const services = loaded.services;
