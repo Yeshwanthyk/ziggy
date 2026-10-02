@@ -55,6 +55,7 @@ import type {
   ZiggyExtensionListResult,
   ZiggyExtensionMutationResult,
   ZiggyExtensionValidationResult,
+  ZiggyPluginSecretSetResult,
 } from "./protocol/extensions";
 import type { ZiggyMemoryListResult, ZiggyMemoryShowResult } from "./protocol/memory";
 import type { ZiggyMemoryPath } from "./protocol/memory";
@@ -277,6 +278,12 @@ export interface ZiggyGatewayClient {
     commandId?: string,
   ): Promise<ZiggyExtensionMutationResult>;
   validateExtensions(profileId: ZiggyProfileId): Promise<ZiggyExtensionValidationResult>;
+  /** Store a plugin `${NAME}` in the resident's Keychain; the value is never returned. */
+  setPluginSecret(
+    profileId: ZiggyProfileId,
+    name: string,
+    value: string,
+  ): Promise<ZiggyPluginSecretSetResult>;
   listPins(profileId: ZiggyProfileId): Promise<ZiggyPinListResult>;
   setPin(
     profileId: ZiggyProfileId,
@@ -499,6 +506,8 @@ export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient =
       return connection.request("extension.remove", { profileId, id, commandId });
     },
     validateExtensions: (profileId) => connection.request("extension.validate", { profileId }),
+    setPluginSecret: (profileId, name, value) =>
+      connection.request("plugin.secret.set", { profileId, name, value }),
     listPins: (profileId) => connection.request("pin.list", { profileId }),
     setPin: (profileId, pin, expectedRevision, commandId) => {
       const params: MutablePinSetParams = { profileId, pin, expectedRevision, commandId };

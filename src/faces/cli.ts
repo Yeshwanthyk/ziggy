@@ -360,6 +360,20 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
     return invalid(renderZiggyHelp("extensions"));
   }
 
+  if (word === "plugin") {
+    if (
+      rest.length === 4 &&
+      rest[0] === "secret" &&
+      rest[1] === "set" &&
+      required(rest[2]) &&
+      required(rest[3])
+    ) {
+      return { _tag: "PluginSecretSet", target: rest[2], name: rest[3] };
+    }
+
+    return invalid(renderZiggyHelp("plugin"));
+  }
+
   if (word === "auth") {
     if (rest.length === 1 && required(rest[0])) return { _tag: "AuthStatus", target: rest[0] };
 

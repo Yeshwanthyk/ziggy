@@ -21,7 +21,11 @@ import type { ProfileAgentsApi } from "ziggy/agents/index";
 import { makeUiGateway } from "ziggy/application/ui-gateway";
 import type { UiGroupStore } from "ziggy/adapters/fs/ui-state";
 import { stableProfileId } from "ziggy/application/profile-directory";
-import { ExtensionLoadFailed, type ExtensionsApi } from "ziggy/extensions/index";
+import {
+  ExtensionLoadFailed,
+  type ExtensionsApi,
+  type PluginSecretsApi,
+} from "ziggy/extensions/index";
 import { ProfileFileSystemError } from "ziggy/profile/index";
 import { SessionNotFound, SessionReadFailed, type SessionsApi } from "ziggy/session/index";
 import { ProfileAgentEditConflict } from "ziggy/domain/profile";
@@ -133,6 +137,7 @@ interface TestConfigExtras {
   readonly sessions?: SessionsApi;
   readonly profileAgents?: ProfileAgentsApi;
   readonly auth?: AuthApi;
+  readonly pluginSecrets?: Pick<PluginSecretsApi, "set">;
 }
 
 const makeConfig = (
@@ -1430,6 +1435,58 @@ test("UI gateway routes all management operations through decoded explicit Profi
   expect(responses[0]).toMatchObject({ ok: true, result: { profileId } });
   expect(responses[1]).toMatchObject({ ok: true, result: { profileId, id: "weather" } });
   expect(JSON.stringify(responses)).not.toContain("profilePath");
+});
+
+test("plugin.secret.set stores the value and never returns it, even when refused", async () => {
+  const responses: Array<typeof UiResponseFrame.Type> = [];
+  const stored: Array<[string, string]> = [];
+  const value = "lin_api_SENTINEL_1234";
+
+  const pluginSecrets: Pick<PluginSecretsApi, "set"> = {
+    set: (name, secret) => Effect.sync(() => void stored.push([name, secret])),
+  };
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const live = yield* makeLiveSessions();
+
+        const connection = (yield* makeUiGateway(
+          makeConfig(
+            live,
+            makeAgent(makeChatHandle({ prompt: () => Effect.never })),
+            makeProfileExtensions(),
+            { pluginSecrets },
+          ),
+        )).connect((frame) => responses.push(decodeResponse(frame)));
+
+        yield* connection.request({
+          id: "1",
+          method: "plugin.secret.set",
+          params: { profileId, name: "LINEAR_API_KEY", value },
+        });
+        yield* connection.request({
+          id: "2",
+          method: "plugin.secret.set",
+          params: { profileId, name: "bad-name", value },
+        });
+        yield* connection.request({
+          id: "3",
+          method: "plugin.secret.set",
+          params: { profileId, name: "LINEAR_API_KEY", value: `${value}\nX-Injected: 1` },
+        });
+      }),
+    ),
+  );
+
+  expect(stored).toEqual([["LINEAR_API_KEY", value]]);
+  expect(responses.map((response) => response.ok)).toEqual([true, false, false]);
+  expect(responses[0]).toMatchObject({
+    ok: true,
+    result: { profileId, name: "LINEAR_API_KEY", stored: true },
+  });
+  expect(responses[1]).toMatchObject({ ok: false, error: { code: "bad_params" } });
+  expect(JSON.stringify(responses)).not.toContain(value);
 });
 
 const sessionAt = (

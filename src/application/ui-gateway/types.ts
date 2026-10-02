@@ -1,5 +1,5 @@
 import type { UiGroupStore, UiPinStore } from "../../adapters/fs/ui-state";
-import type { ExtensionsApi } from "../../extensions";
+import type { ExtensionsApi, PluginSecretsApi } from "../../extensions";
 import type { ProfileId } from "../../domain/profile-directory";
 import type { ResidentProfileBranch } from "../profile-runtime-directory";
 import type { ProfileAgentsApi } from "../../agents";
@@ -39,6 +39,8 @@ export interface UiGatewayDependencies {
   readonly automationScheduler?: AutomationSchedulerApi;
   readonly automations?: AutomationsApi;
   readonly memory?: MemoryApi;
+  /** Writes plugin `${NAME}` values; the gateway never returns or logs them. */
+  readonly pluginSecrets?: Pick<PluginSecretsApi, "set">;
   readonly pins?: UiPinStore;
   readonly groups?: UiGroupStore;
 }

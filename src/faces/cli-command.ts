@@ -33,6 +33,7 @@ export type CliCommand =
       readonly adopt: boolean;
       readonly restart: boolean;
     }
+  | { readonly _tag: "PluginSecretSet"; readonly target: string; readonly name: string }
   | { readonly _tag: "AuthStatus"; readonly target: string }
   | {
       readonly _tag: "AuthLogin";

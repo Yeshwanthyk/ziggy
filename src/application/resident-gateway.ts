@@ -44,7 +44,12 @@ import {
 } from "./discord-gateway";
 import { Gateway, type GatewayApi, loadGatewayConfig } from "./gateway";
 import { loadSlackGatewayConfig, SlackGateway, type SlackGatewayApi } from "./slack-gateway";
-import { Extensions, type ExtensionsApi } from "../extensions";
+import {
+  Extensions,
+  PluginSecrets,
+  type ExtensionsApi,
+  type PluginSecretsApi,
+} from "../extensions";
 import { Sessions, type SessionsApi } from "../session";
 import { ZiggyPaths } from "../platform/paths";
 import {
@@ -143,6 +148,7 @@ const makeLiveUiRuntime = (
     readonly automationScheduler: AutomationSchedulerApi;
     readonly automations: AutomationsApi;
     readonly memory: MemoryApi;
+    readonly pluginSecrets: Pick<PluginSecretsApi, "set">;
   },
   profileRegistryPath?: string,
   profilesDirectory?: string,
@@ -367,6 +373,7 @@ export const ResidentGatewayLive = Layer.effect(
           automationScheduler: yield* AutomationScheduler,
           automations: yield* Automations,
           memory: yield* Memory,
+          pluginSecrets: yield* PluginSecrets,
         },
         paths.profilesRegistry,
         paths.profilesDirectory,

@@ -25,7 +25,7 @@ import type { ChatContext, ChatHandle, OpenSessionRequest, RunOnceOptions } from
 /** What composition plugs into every session this agent opens. */
 export type SessionDependencies = Pick<
   ProfileRuntimeOptions,
-  "tools" | "prompts" | "runtimeFactory" | "mcp"
+  "tools" | "prompts" | "runtimeFactory" | "mcp" | "secrets"
 > & { readonly prepare?: SessionPrepare };
 
 export const localMainSessionDirectory = (profilePath: string): string =>

@@ -196,6 +196,7 @@ const partition = (
       extensionPaths: resources.extensionPaths.filter(retained),
       skillPaths: resources.skillPaths.filter(retained),
       optional: resources.optional.filter((item) => !byPackage.has(item.id)),
+      plugins: resources.plugins.filter((item) => !byPackage.has(item.id)),
     },
     skipped,
     fatal,
@@ -228,16 +229,24 @@ export interface LoadRequest {
  * `ExtensionLoadFailed`. Pi calls this from its runtime factory, so it is a Promise.
  */
 export const loadServices = async (request: LoadRequest): Promise<LoadedServices> => {
-  const inline =
+  // Rebuilt per resource set, so a plugin Pi skipped never contributes MCP servers.
+  const inline = (resources: PiResources) =>
     request.mcp === undefined
       ? request.inline
-      : [...request.inline, ...mcpExtensions(request.profilePath, request.mcp)];
+      : [
+          ...request.inline,
+          ...mcpExtensions(
+            request.profilePath,
+            request.mcp,
+            resources.plugins.map((plugin) => plugin.id),
+          ),
+        ];
 
   const build = (resources: PiResources) =>
     createAgentSessionServices({
       cwd: request.cwd,
       agentDir: request.agentDir,
-      resourceLoaderOptions: loaderOptions(request.systemPrompt, resources, inline),
+      resourceLoaderOptions: loaderOptions(request.systemPrompt, resources, inline(resources)),
     });
 
   const services = await build(request.resources);

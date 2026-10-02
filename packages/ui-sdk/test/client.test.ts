@@ -576,6 +576,11 @@ const methodFixtures = (): ReadonlyArray<{
       },
     },
     {
+      method: "plugin.secret.set",
+      params: { profileId: PROFILE_A, name: "LINEAR_API_KEY", value: "lin_api_example" },
+      result: { profileId: PROFILE_A, name: "LINEAR_API_KEY", stored: true },
+    },
+    {
       method: "pin.list",
       params: profileScopedParams(PROFILE_A),
       result: { profileId: PROFILE_A, pins: [pin], revision: 1 },

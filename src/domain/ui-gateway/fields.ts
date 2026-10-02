@@ -250,6 +250,13 @@ export const UiExtensionRemoveParams = UiExtensionAddParams;
 
 export const UiExtensionValidateParams = UiProfileScopedParams;
 
+/** Mirrors `PluginSecretName`/`PluginSecretValue` in `extensions/secrets.ts`. */
+export const UiPluginSecretSetParams = Schema.Struct({
+  profileId: ProfileId,
+  name: Schema.String.check(Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/u), Schema.isMaxLength(128)),
+  value: Schema.String.check(Schema.isPattern(/^[\x20-\x7e]+$/u), Schema.isMaxLength(1024)),
+});
+
 export const UiAgentListParams = UiProfileScopedParams;
 
 export const UiAgentShowParams = Schema.Struct({

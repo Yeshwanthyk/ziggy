@@ -37,6 +37,7 @@ import {
   UiAutomationValidateResult,
   UiExtensionListForProfileResult,
   UiExtensionMutationResult,
+  UiPluginSecretSetResult,
   UiExtensionValidationResult,
   UiGroupListResult,
   UiPinListResult,
@@ -78,6 +79,7 @@ export const UiGatewayResult = Schema.Union([
   UiExtensionListForProfileResult,
   UiExtensionMutationResult,
   UiExtensionValidationResult,
+  UiPluginSecretSetResult,
   UiPinListResult,
   UiGroupListResult,
   // This shape is a subset of automation documents; decode richer documents first.

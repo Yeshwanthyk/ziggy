@@ -23,6 +23,7 @@ import { dispatchAgents } from "./ui-gateway/management-agents";
 import type { ProfileDirectoryApi } from "./profile-directory";
 import { dispatchAutomation } from "./ui-gateway/management-automations";
 import { dispatchExtensions } from "./ui-gateway/management-extensions";
+import { dispatchPluginSecret } from "./ui-gateway/management-plugins";
 import { dispatchMemory } from "./ui-gateway/management-memory";
 import { dispatchPins } from "./ui-gateway/management-pins";
 import { dispatchSettings } from "./ui-gateway/management-settings";
@@ -320,6 +321,8 @@ export const makeUiGateway = (
         case "extension.remove":
         case "extension.validate":
           return dispatchExtensions(request, route, config);
+        case "plugin.secret.set":
+          return dispatchPluginSecret(request, route, config);
         case "pin.list":
         case "pin.set":
         case "pin.remove":

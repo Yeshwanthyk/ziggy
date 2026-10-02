@@ -62,6 +62,9 @@ import {
   isExtensionListResult,
   isExtensionMutationResult,
   isExtensionValidationResult,
+  isPluginSecretName,
+  isPluginSecretSetResult,
+  isPluginSecretValue,
 } from "./extensions";
 import { isMemoryListResult, isMemoryPath, isMemoryShowResult } from "./memory";
 import { isGroupListResult } from "./groups";
@@ -199,6 +202,13 @@ export const isMethodResult = <Method extends ZiggyMethod>(
       return isExtensionMutationResult(value) && profileMatches(value.profileId, params);
     case "extension.validate":
       return isExtensionValidationResult(value) && profileMatches(value.profileId, params);
+    case "plugin.secret.set":
+      return (
+        isPluginSecretSetResult(value) &&
+        profileMatches(value.profileId, params) &&
+        isRecord(params) &&
+        value.name === params.name
+      );
     case "pin.list":
       return isPinListResult(value) && profileMatches(value.profileId, params);
     case "pin.set":
@@ -446,6 +456,13 @@ export const isMethodParams = <Method extends ZiggyMethod>(
         hasProfileString(value, "id", isExtensionIdValue) &&
         Object.keys(value).every((key) => ["profileId", "id", "commandId"].includes(key)) &&
         (value.commandId === undefined || isCommandId(value.commandId))
+      );
+    case "plugin.secret.set":
+      return (
+        hasOnlyKeys(value, ["profileId", "name", "value"]) &&
+        isProfileId(value.profileId) &&
+        isPluginSecretName(value.name) &&
+        isPluginSecretValue(value.value)
       );
     case "pin.set":
       return (

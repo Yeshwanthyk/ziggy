@@ -25,8 +25,10 @@ import type { ChatModelOverride, ZiggyAgentError } from "../domain/agent";
 import {
   isMcpToolName,
   loadServices,
+  pluginMcp,
   profileResources,
   type ExtensionLoadFailed,
+  type PluginSecretsApi,
   type PiResources,
   type ProfileMcpOptions,
   type SkippedPackage,
@@ -63,7 +65,39 @@ export interface ProfileRuntimeOptions {
   readonly automation?: boolean | undefined;
   /** MCP servers for sessions that load the MCP stack. */
   readonly mcp?: ProfileMcpOptions | undefined;
+  /** Where plugin `${NAME}` values come from before the environment; none means environment only. */
+  readonly secrets?: Pick<PluginSecretsApi, "get"> | undefined;
 }
+
+const environmentOnly: Pick<PluginSecretsApi, "get"> = { get: () => Effect.succeed(undefined) };
+
+/**
+ * The MCP options a session loads, or none (A5). Selected plugins' servers are resolved here,
+ * once per runtime; a newly stored secret reaches the next session.
+ */
+const sessionMcp = (
+  profilePath: string,
+  resources: PiResources,
+  options: ProfileRuntimeOptions,
+): Effect.Effect<ProfileMcpOptions | undefined> =>
+  Effect.gen(function* () {
+    if (!loadsMcp(options)) return undefined;
+
+    const mcp = options.mcp ?? {};
+
+    if (resources.plugins.length === 0) return mcp;
+
+    const plugins = yield* pluginMcp(
+      profilePath,
+      resources.plugins,
+      options.secrets ?? environmentOnly,
+      (mcp.servers ?? []).map((server) => server.name),
+    );
+
+    yield* Effect.forEach(plugins.errors, (error) => Effect.logWarning(error), { discard: true });
+
+    return { ...mcp, plugins };
+  });
 
 /**
  * Main sessions load Pi's MCP stack. A persona session loads it only when its allowlist names
@@ -144,6 +178,7 @@ export const createProfileRuntime = (
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(profilePath);
     const resources = yield* profileResources(profilePath);
+    const mcp = yield* sessionMcp(profilePath, resources, options);
     const persona = options.persona;
 
     const systemPrompt =
@@ -200,7 +235,7 @@ export const createProfileRuntime = (
               systemPrompt,
               resources: acceptedResources,
               inline: inlineExtensions,
-              mcp: loadsMcp(options) ? (options.mcp ?? {}) : undefined,
+              mcp,
             });
 
             const services = loaded.services;

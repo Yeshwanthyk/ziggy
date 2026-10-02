@@ -41,7 +41,7 @@ import { SlackGateway, type SlackGatewayApi } from "ziggy/application/slack-gate
 import { ZiggyAgent, type ZiggyAgentApi } from "ziggy/session/index";
 import { stableProfileId } from "ziggy/application/profile-directory";
 import { UiResponseFrame } from "ziggy/domain/ui-gateway";
-import { Extensions, type ExtensionsApi } from "ziggy/extensions/index";
+import { Extensions, PluginSecrets, type ExtensionsApi } from "ziggy/extensions/index";
 import { type ProfileTarget, Auth, Models } from "ziggy/profile/index";
 
 const paths: Array<string> = [];
@@ -474,6 +474,7 @@ describe("resident gateway supervision", () => {
       Layer.mock(Memory, {}),
       Layer.mock(Models, {}),
       Layer.mock(ProfileAgents, {}),
+      Layer.mock(PluginSecrets, {}),
     );
 
     await runScoped(

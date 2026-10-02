@@ -5,7 +5,8 @@ import type { ProfileFileSystemError } from "../profile";
 /** A package id: the folder name under `extensions/`, in lowercase kebab-case. */
 export const ExtensionId = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/));
 
-export type ExtensionKind = "skill" | "code" | "skill+code";
+/** `plugin` is an Agent Plugin folder under `plugins/`; the others are Pi packages. */
+export type ExtensionKind = "skill" | "code" | "skill+code" | "plugin";
 
 /** Where a package comes from: compiled into Ziggy, or only on this Profile's shelf. */
 export type ExtensionSource = "bundled" | "profile";

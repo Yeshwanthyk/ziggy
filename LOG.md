@@ -1582,3 +1582,79 @@ Automation delivery to a channel goes through one seam, `Deliver = (profile, tar
   - Existing Effect diagnostic warnings remain non-fatal.
   - No real Profile or cache was touched, `extensions/executor` is unchanged, and nothing was committed. G7 stays deferred to Step 4.
 - Review round 3 (Claude Opus 5.5, read-only) approved with doc-only findings, now fixed: the plan's decisions match stock Pi (refusing credential store, log in the user cache, no patch), a specialist needs `codemode` and each `mcp__` tool named, `!command` secrets are not redacted, and the redactor runs after earlier extensions' `tool_result` handlers, which therefore see unredacted MCP output. Pi's `/mcp` status text still points at `<agentDir>/mcp.json` and `.pi/mcp.json`, which Ziggy ignores.
+
+## Plugins Step 2: plugin folders and secrets
+
+- `src/extensions/plugin.ts` reads `<profile>/plugins/<id>/` when it holds `plugin.json`:
+  - `plugin.json` and `mcp.json` decode with Effect Schema (agent-plugins 1.0.0). A schema violation rejects the plugin. Unknown `plugin.json` fields are warnings.
+  - The folder, manifest, `skills/` and each `SKILL.md` are realpath-checked to stay inside the plugin. Symlinked roots and non-regular files are refused.
+  - Each `skills/<name>/SKILL.md` with valid frontmatter joins the skill paths. A bad skill is a warning.
+- `pluginMcp` turns the selected plugins' `mcpServers` into Step 1 `McpServerEntry` values. It runs only inside `session/runtime.ts` `sessionMcp`, after the A5 `loadsMcp` gate, so plugin servers reach only main sessions and personas whose allowlist names `codemode` or an `mcp__` tool.
+  - Names are `<id>` for a single server and `<id>_<key>` otherwise. A name already in use (Step 1 servers or an earlier plugin) is a diagnostic.
+  - `cwd` must be `./`, `${PLUGIN_ROOT}` or `${PLUGIN_DATA}`. `env` may not set `PLUGIN_ROOT`/`PLUGIN_DATA`. Both are added to the server env.
+  - `command` is a bare name (PATH lookup) or a `./` path that stays inside the plugin; `${PLUGIN_ROOT}`/`${PLUGIN_DATA}` expand in `args`.
+  - `${NAME}` expands in `env`, `headers` and `url` from the Keychain (`security find-generic-password -s ziggy-plugin -a NAME -w`), then process env.
+  - Secrets never expand in `command`, `args` or `cwd`, so they never reach argv. `${PLUGIN_*}` stays literal in headers and url.
+  - Resolved values are escaped (`$`→`$$`, leading `!`→`$!`) so Pi's `resolveConfigValue` passes them through unchanged.
+  - Any unresolved variable, bad cwd, reserved env, path command, SSE server (Pi has no SSE transport), or non-https url (http only on loopback) skips that server. The diagnostic names the server and the variable, never a value.
+  - `<profile>/plugin-data/<id>/` is created when a session that loads MCP opens and the plugin's `mcp.json` lists at least one server, before the servers are checked. The plugin folder is never written (R4).
+  - The resolved values go to the Step 1 redactor through `ProfileMcpOptions.plugins`, which covers raw, Bearer/Basic token, JSON and URI forms.
+- `resources.ts` partitions packages into extensions and plugins. An extension owns its id (see review round 1). `extensions.json` selection, `profile_extensions` add/remove and `listForProfile`/`show` accept plugin ids (`kind: "plugin"`). Add, remove, enable and disable are each one call.
+- `src/extensions/secrets.ts` `PluginSecrets` wraps `security`:
+  - `set` runs `security -i` with the value hex-encoded on stdin, never in argv, then reads it back.
+  - `get` treats exit 44 as unset.
+  - Names match `[A-Za-z_][A-Za-z0-9_]*` (at most 128 characters); values are 1-1024 printable ASCII characters.
+- Setting secrets:
+  - `ziggy plugin secret set <name|path> <NAME>` (`src/faces/commands/plugins.ts`, `src/adapters/terminal/secret-input.ts`) uses a masked clack prompt on a TTY and otherwise reads stdin less one trailing newline. It requires a Profile at the target and prints only the name.
+  - The resident method `plugin.secret.set` (`src/application/ui-gateway/management-plugins.ts`; UI SDK `setPluginSecret`) returns `{profileId, name, stored: true}`. A decode failure carries no cause, so a rejected value never reaches an error frame.
+  - Secrets are Keychain-global, not per Profile, and apply to sessions opened afterwards.
+- Example: `docs/plans/plugins/examples/linear/` (`plugin.json`, `mcp.json` streamable-http `https://mcp.linear.app/mcp/readonly` with `Authorization: Bearer ${LINEAR_API_KEY}`, and a read-only skill). It was not run against Linear.
+- Tests in `test/extensions/plugin.test.ts` use a fake Keychain, a scratch Profile, the stdio fixture and `XDG_CACHE_HOME` in temp. They cover:
+  - add of a plugin id through `profile_extensions`;
+  - a main session calling the plugin server through codemode with its Keychain secret redacted from the tool result and the session messages;
+  - the plugin skill in the prompt and `${PLUGIN_DATA}` as cwd;
+  - an unchanged plugin tree hash after loading and after remove;
+  - a `["read"]` specialist that sees no MCP tools and creates no `plugin-data`;
+  - `pluginMcp` naming, path resolution, header expansion, and the value-free skip and collision diagnostics.
+
+  `test/application/ui-gateway.test.ts` checks that `plugin.secret.set` stores the value and never returns it, including when refused. The UI SDK parity fixture covers the new method.
+- Deviations and limits:
+  - `${NAME}` expands in url and headers (the spec allows paths only; G1 needs it).
+  - MCP diagnostics are logged session warnings, not doctor output.
+  - Off macOS the Keychain reads nothing and writes fail.
+  - There is no web UI form yet.
+  - The live web/Slack Linear demo is the user's to run.
+- Verification: `bun run check` passes (fmt, lint, typecheck, knip, UI SDK, web, regenerated web-assets, catalog, Pi-docs). `bun test test` passed (681) before review round 1. No real Profile, `~/.ziggy` or Keychain was touched, `extensions/executor` is unchanged, and nothing was committed.
+- Review round 1 (Claude Opus 5.5, read-only) asked for changes; all are fixed:
+  - Major: a `plugins/<id>` whose id matched a selected extension made `profileResources` fail, so no session on the Profile could open.
+    - An extension now owns its id when `extensions/<id>` exists or `<id>` is bundled (`plugin.ts` `pluginShadowed`). Session open loads the extension and logs that `plugins/<id>` is ignored.
+    - `scanPlugins` leaves shadowed plugins out, so `listForProfile` and `show` name the same winner.
+    - `add` still refuses the id.
+  - Unselected plugins are lenient, selected ones strict. `scanPlugins` logs and skips a plugin that cannot be read, so one malformed folder no longer breaks list, show or health. Selected plugins are still read strictly at session open.
+  - Redaction now scans plugin configs like Step 1 configs: literal header and env values and Bearer/Basic tokens. The added `PLUGIN_ROOT`/`PLUGIN_DATA` paths are excluded.
+  - Skills: `readSkill` applies Pi's `validateName`/`validateDescription` rules (`core/skills.js`: at most 64 characters, `[a-z0-9-]`, no leading, trailing or double hyphen, non-empty description of at most 1024 characters). A failing skill is skipped with a warning instead of Pi dropping the whole plugin and its MCP.
+  - `plugin.json` is read through `regularFileText`; a non-regular file is invalid.
+  - `${NAME}` values substituted into a url are URI-encoded. A url they would break is skipped with a message saying so. Both raw and encoded forms go to the redactor.
+  - `security` runs from `/usr/bin/security`, and an interrupted call kills the child.
+  - Accepted limit, documented and not changed: Keychain items created by `security` trust that tool, so any process running as the user can read them with `security find-generic-password -s ziggy-plugin -a NAME -w` without a prompt.
+  - Docs: commands may be `./` paths inside the plugin; `plugin-data/<id>/` is created when a session that loads MCP opens and `mcp.json` lists at least one server.
+  - Tests in `test/extensions/plugin.test.ts`:
+    - the main-session test adds a second plugin with a literal `Bearer` env value, whose value and token are redacted, plus a `Bad_Skill` skill that is skipped while the plugin's MCP and other skill still load;
+    - the `pluginMcp` test adds `tok$en$$x` and `!echo pwned` secrets, which Pi's own `resolveConfigValue` returns unchanged, a URI-encoded query secret, and a hostile host secret that is skipped without the value in the diagnostic;
+    - a new test covers a selected bundled extension next to `plugins/<same id>`, `plugins/<unselected bundled id>`, a malformed plugin and a valid one: the session resources load, list and show agree, the broken plugin is left out, and `add` of a shadowed id is refused.
+
+    Mutation check: scanning only the Step 1 configs fails the main-session test.
+  - Verification: `bun run check` passes. `bun test test`: 682 pass, 0 fail, 94 files. Nothing was committed.
+- Review round 2 (Claude Opus 5.5, read-only) approved with two minors and a nit; all are fixed:
+  - `apply` refused every id in the next selection whose `plugins/<id>` an extension shadows, so once that happened every add or remove failed. `shelfPackage` now refuses the clash only for ids being added. Ids already selected follow `pluginShadowed`: the extension loads and a warning is logged.
+  - Plugin redaction no longer treats every env value of 8+ characters as a secret. It covers:
+    - header values, plus Bearer/Basic tokens;
+    - env values whose name matches `/TOKEN|KEY|SECRET|PASS|AUTH|CREDENTIAL/i`, skipping values that contain the PLUGIN_ROOT or PLUGIN_DATA path;
+    - every `${NAME}` value, as before.
+  - A selected id that is shadowed by a bundled extension and has no `extensions/<id>` now fails with an error saying `plugins/<id>` is shadowed.
+  - Tests:
+    - the main-session test checks that a `MODE=production-mode` plugin env value is not redacted;
+    - the ownership test adds and removes `valid` after `apple-notes` is selected with a `plugins/apple-notes` folder present.
+
+    Mutation check: refusing the clash for every id fails the ownership test.
+  - Verification: `bun run check` passes. `bun test test`: 682 pass, 0 fail, 94 files. Nothing was committed.

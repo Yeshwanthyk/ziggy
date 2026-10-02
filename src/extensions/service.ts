@@ -19,6 +19,14 @@ import type { ProfileFileSystemError, ProfileTarget } from "../profile";
 import { requiredPackages, unpackBundled } from "./bundled";
 import { checkSelection } from "./loader";
 import { fsError, invalid, packageExists, readExtensionPackage, scanShelf } from "./package";
+import {
+  pluginExists,
+  pluginPath,
+  pluginShadowed,
+  readPluginPackage,
+  scanPlugins,
+  shadowedWarning,
+} from "./plugin";
 import { recoverInterruptedUpdate } from "./resources";
 import {
   readSelection,
@@ -127,12 +135,37 @@ const profileListing = (item: ExtensionPackage): ExtensionListing => ({
   extensionPaths: item.extensionPaths,
 });
 
-/** The package on the Profile shelf; a bundled one missing there is unpacked first. */
-const shelfPackage = (profilePath: string, id: string): Effect.Effect<ExtensionPackage, Invalid> =>
+/**
+ * The package on the Profile shelf; a bundled one missing there is unpacked first. Adding an id
+ * that names both an extension and a plugin is refused; an id already selected keeps the
+ * extension, as session open does (`pluginShadowed`).
+ */
+const shelfPackage = (
+  profilePath: string,
+  id: string,
+  adding: boolean,
+): Effect.Effect<ExtensionPackage, Invalid> =>
   Effect.gen(function* () {
     yield* recoverInterruptedUpdate(profilePath, id);
 
-    if (yield* packageExists(profilePath, id)) return yield* readExtensionPackage(profilePath, id);
+    const extension = yield* packageExists(profilePath, id);
+
+    if (yield* pluginExists(profilePath, id)) {
+      if (yield* pluginShadowed(profilePath, id)) {
+        if (adding) {
+          return yield* invalid(
+            pluginPath(profilePath, id),
+            `'${id}' names both an extension and a plugin; rename plugins/${id}`,
+          );
+        }
+
+        yield* Effect.logWarning(shadowedWarning(id));
+      } else {
+        return (yield* readPluginPackage(profilePath, id)).package;
+      }
+    }
+
+    if (extension) return yield* readExtensionPackage(profilePath, id);
 
     if (bundledPackageMetadata(id) === undefined) {
       return yield* invalid(
@@ -309,7 +342,11 @@ const apply = (profilePath: string, next: ReadonlyArray<string>) =>
     const snapshot = yield* snapshotSelection(profilePath);
     const current = new Set(snapshot.selected);
     const wanted = new Set(next);
-    const nextPackages = yield* Effect.forEach(next, (id) => shelfPackage(profilePath, id));
+
+    const nextPackages = yield* Effect.forEach(next, (id) =>
+      shelfPackage(profilePath, id, !current.has(id)),
+    );
+
     yield* checkOwnership([...nextPackages, ...(yield* requiredPackages)]);
 
     const added = nextPackages.filter((item) => !current.has(item.id));
@@ -383,7 +420,7 @@ const listForProfile = (profilePath: string): Effect.Effect<ExtensionSelection, 
     yield* verifyInitialized(profilePath);
 
     // Writers replace `extensions.json` and shelf folders by rename, so reads need no lock.
-    const shelf = yield* scanShelf(profilePath);
+    const shelf = [...(yield* scanShelf(profilePath)), ...(yield* scanPlugins(profilePath))];
     const selected = yield* readSelection(profilePath);
 
     const available = new Map<string, ExtensionChoice>();
@@ -506,7 +543,9 @@ const show = (
     if (profilePath !== undefined) {
       yield* verifyInitialized(profilePath);
 
-      const local = (yield* scanShelf(profilePath)).find((item) => item.id === id);
+      const local = [...(yield* scanShelf(profilePath)), ...(yield* scanPlugins(profilePath))].find(
+        (item) => item.id === id,
+      );
 
       if (local !== undefined) return profileListing(local);
     }

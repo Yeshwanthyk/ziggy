@@ -5,6 +5,13 @@ import type { ProfileExtensionInvalid } from "../domain/profile";
 import type { ProfileFileSystemError } from "../profile";
 import { requiredPackages } from "./bundled";
 import { fsError, invalid, packageExists, readExtensionPackage } from "./package";
+import {
+  pluginExists,
+  pluginShadowed,
+  readPluginPackage,
+  shadowedWarning,
+  type PluginRef,
+} from "./plugin";
 import { readSelection, withSelectionLock } from "./selection";
 
 /** The files Pi loads for one Profile, plus which optional package owns which folder. */
@@ -12,6 +19,8 @@ export interface PiResources {
   readonly extensionPaths: ReadonlyArray<string>;
   readonly skillPaths: ReadonlyArray<string>;
   readonly optional: ReadonlyArray<{ readonly id: string; readonly packagePath: string }>;
+  /** Selected Agent Plugins; their MCP servers are resolved when a session opens. */
+  readonly plugins: ReadonlyArray<PluginRef>;
 }
 
 const interrupted = (profilePath: string, id: string) =>
@@ -45,14 +54,36 @@ export const recoverInterruptedUpdate = (profilePath: string, id: string) =>
 /** Read-only: a selected package must be on the shelf; an interrupted update is only reported. */
 const readSelected = (profilePath: string, id: string) =>
   Effect.gen(function* () {
-    if (!(yield* packageExists(profilePath, id))) {
+    const [extension, plugin] = yield* Effect.all([
+      packageExists(profilePath, id),
+      pluginExists(profilePath, id),
+    ]);
+
+    // The extension owns a shared id; the plugin folder is ignored, never a reason to fail.
+    const shadowed = plugin && (yield* pluginShadowed(profilePath, id));
+
+    if (shadowed) yield* Effect.logWarning(shadowedWarning(id));
+
+    if (plugin && !shadowed) {
+      const read = yield* readPluginPackage(profilePath, id);
+
+      yield* Effect.forEach(read.warnings, (warning) => Effect.logWarning(warning), {
+        discard: true,
+      });
+
+      return read.package;
+    }
+
+    if (!extension) {
       const packagePath = path.join(profilePath, "extensions", id);
 
       return yield* invalid(
         packagePath,
         (yield* interrupted(profilePath, id))
           ? `selected extension '${id}' was left at ${packagePath}.old by an interrupted update; the next session open restores it`
-          : `selected extension '${id}' is not installed at ${packagePath}`,
+          : shadowed
+            ? `selected extension '${id}' is not installed at ${packagePath}; plugins/${id} is shadowed by the bundled extension '${id}', so rename the plugin folder or add the extension again`
+            : `selected extension '${id}' is not installed at ${packagePath}`,
       );
     }
 
@@ -98,6 +129,9 @@ export const resolveResources = (
         ...required.flatMap((item) => item.skillPaths),
       ],
       optional: packages.map((item) => ({ id: item.id, packagePath: item.packagePath })),
+      plugins: packages.flatMap((item) =>
+        item.kind === "plugin" ? [{ id: item.id, root: item.packagePath }] : [],
+      ),
     };
   });
 

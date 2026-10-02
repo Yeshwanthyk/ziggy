@@ -208,11 +208,12 @@ export const extensionTools =
         name: "profile_extensions",
         label: "profile_extensions",
         description:
-          "List, add, remove, or validate Profile extensions in-process. Add and remove accept only existing shelf or catalog IDs; do not pass paths or GitHub URLs.",
+          "List, add, remove, or validate Profile extensions and Agent Plugins in-process. Add and remove accept only existing shelf, plugin (plugins/<id>/) or catalog IDs; do not pass paths or GitHub URLs.",
         promptSnippet: "profile_extensions(action, id) — manage Profile extensions in-process",
         promptGuidelines: [
           "Use profile_extensions for extension lifecycle changes instead of Bash, Ziggy commands, or direct extensions.json edits.",
-          "For add and remove, use an existing lowercase shelf or catalog ID; GitHub URLs are not supported by this tool.",
+          "For add and remove, use an existing lowercase shelf, plugin or catalog ID; GitHub URLs are not supported by this tool.",
+          "A plugin's MCP servers and skills reach sessions opened after the change; never ask for or handle secret values, the user sets them with `ziggy plugin secret set`.",
           "Treat success as true only when the structured tool result has ok=true.",
         ],
         executionMode: "sequential",

@@ -13,12 +13,15 @@ import {
   type ToolResultEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { Predicate, Schema } from "effect";
+import type { PluginMcp, PluginServer } from "./plugin";
 // Pi 0.99.1 requires this concrete class but does not export it from the package root.
 import { McpOAuthCredentialStore } from "../../node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/oauth.js";
 
 export interface ProfileMcpOptions {
-  /** The servers this session connects; Ziggy never reads mcp.json files. */
+  /** The servers this session connects; Ziggy never reads Pi's mcp.json files. */
   readonly servers?: ReadonlyArray<McpServerEntry>;
+  /** Servers from the Profile's selected Agent Plugins, already resolved by `pluginMcp`. */
+  readonly plugins?: PluginMcp;
 }
 
 /** Names of tools the MCP extension creates for server tools. */
@@ -85,6 +88,17 @@ const resolvedValue = (value: string): string | undefined =>
           literal ?? process.env[braced ?? bare ?? ""] ?? "",
       );
 
+/** A secret as it may appear in output: raw, JSON-escaped and URI-encoded, plus a header's token. */
+const secretForms = (value: string): ReadonlyArray<string> => {
+  const token = /^(?:Bearer|Basic) (.+)$/iu.exec(value)?.[1];
+
+  return [value, ...(token === undefined ? [] : [token])].flatMap((secret) =>
+    secret.length < MIN_SECRET_LENGTH
+      ? []
+      : [secret, JSON.stringify(secret).slice(1, -1), encodeURIComponent(secret)],
+  );
+};
+
 /** Header, env and OAuth client secret values, plus the token of a Bearer or Basic header. */
 const configSecrets = (config: McpServerConfig): ReadonlyArray<string> => {
   const values =
@@ -97,13 +111,7 @@ const configSecrets = (config: McpServerConfig): ReadonlyArray<string> => {
 
     if (value === undefined) return [];
 
-    const token = /^(?:Bearer|Basic) (.+)$/iu.exec(value)?.[1];
-
-    return [value, ...(token === undefined ? [] : [token])].flatMap((secret) =>
-      secret.length < MIN_SECRET_LENGTH
-        ? []
-        : [secret, JSON.stringify(secret).slice(1, -1), encodeURIComponent(secret)],
-    );
+    return secretForms(value);
   });
 };
 
@@ -159,16 +167,21 @@ const redactResult = (
  * and keeps the original result, so a failure withholds the result instead.
  */
 const redactExtension =
-  (servers: ReadonlyArray<McpServerEntry>): ExtensionFactory =>
+  (servers: ReadonlyArray<McpServerEntry>, known: ReadonlyArray<string>): ExtensionFactory =>
   (pi) => {
+    const pluginSecrets = known.flatMap(secretForms);
+
     pi.on("tool_result", (event: ToolResultEvent): ToolResultEventResult | undefined => {
       if (!carriesMcpOutput(event.toolName)) return undefined;
 
       try {
         const secrets = [
-          ...new Set(
-            [...servers, ...pi.getMcpServers()].flatMap((server) => configSecrets(server.config)),
-          ),
+          ...new Set([
+            ...pluginSecrets,
+            ...[...servers, ...pi.getMcpServers()].flatMap((server) =>
+              configSecrets(server.config),
+            ),
+          ]),
         ].sort((left, right) => right.length - left.length);
 
         return secrets.length === 0 ? undefined : redactResult(event, secrets);
@@ -182,18 +195,77 @@ const redactExtension =
     });
   };
 
-/** Pi's MCP stack for a session that may use MCP tools, with Ziggy-owned config, log and store. */
+const pluginEntry = ({ name, plugin, config }: PluginServer): McpServerEntry => ({
+  name,
+  source: `plugin:${plugin}`,
+  scope: "extension",
+  config:
+    "url" in config
+      ? { type: "http", url: config.url, headers: { ...config.headers } }
+      : {
+          command: config.command,
+          args: [...config.args],
+          env: { ...config.env },
+          cwd: config.cwd,
+        },
+});
+
+// Plugin env names that carry credentials; other env values (NODE_ENV, paths) are left alone.
+const SECRET_ENV_NAME = /TOKEN|KEY|SECRET|PASS|AUTH|CREDENTIAL/iu;
+
+/**
+ * What the redactor scans in a plugin server: every header value, and env values whose name
+ * marks a credential, less values built from PLUGIN_ROOT or PLUGIN_DATA. Every `${NAME}` value
+ * is redacted separately, whatever field it went into.
+ */
+const scannedPluginEntry = (server: PluginServer): McpServerEntry => {
+  const entry = pluginEntry(server);
+
+  if ("url" in entry.config) return entry;
+
+  const { PLUGIN_ROOT: root, PLUGIN_DATA: data, ...env } = entry.config.env ?? {};
+
+  const folders = [root, data].flatMap((folder) =>
+    folder === undefined || folder === "" ? [] : [folder],
+  );
+
+  return {
+    ...entry,
+    config: {
+      ...entry.config,
+      env: Object.fromEntries(
+        Object.entries(env).filter(
+          ([name, value]) =>
+            SECRET_ENV_NAME.test(name) && !folders.some((folder) => value.includes(folder)),
+        ),
+      ),
+    },
+  };
+};
+
+/**
+ * Pi's MCP stack for a session that may use MCP tools, with Ziggy-owned config, log and store.
+ * Plugin servers join only when their plugin is in `loadedPlugins` (Pi did not skip it).
+ */
 export const mcpExtensions = (
   profilePath: string,
   options: ProfileMcpOptions,
+  loadedPlugins: ReadonlyArray<string>,
 ): ReadonlyArray<InlineExtension> => {
-  const servers = options.servers ?? [];
+  const plugins = (options.plugins?.servers ?? []).filter((server) =>
+    loadedPlugins.includes(server.plugin),
+  );
+
+  const servers = [...(options.servers ?? []), ...plugins.map(pluginEntry)];
+  // Plugin configs are scanned for header values (and their Bearer/Basic tokens) and credential
+  // env values; see `scannedPluginEntry`.
+  const scanned = [...(options.servers ?? []), ...plugins.map(scannedPluginEntry)];
 
   return [
     {
       name: "mcp",
       factory: createMcpExtension({
-        loadConfig: () => ({ servers: [...servers], errors: [] }),
+        loadConfig: () => ({ servers: [...servers], errors: [...(options.plugins?.errors ?? [])] }),
         credentials: new McpOAuthCredentialStore(refusingBackend),
         logPath: mcpLogPath(profilePath),
         startupWaitMs: 3000,
@@ -206,6 +278,9 @@ export const mcpExtensions = (
     },
     { name: "codemode", factory: createCodemodeExtension() },
     { name: "tool-search", factory: createToolSearchExtension() },
-    { name: "mcp-redact", factory: redactExtension(servers) },
+    {
+      name: "mcp-redact",
+      factory: redactExtension(scanned, options.plugins?.secrets ?? []),
+    },
   ];
 };

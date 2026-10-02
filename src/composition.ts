@@ -17,7 +17,7 @@ import { ResidentServiceLive } from "./application/resident-service";
 import { SelfUpdateLive } from "./application/self-update";
 import { SetupLive } from "./application/setup";
 import { SlackGatewayLive } from "./application/slack-gateway";
-import { Extensions, extensionTools } from "./extensions";
+import { Extensions, extensionTools, PluginSecrets } from "./extensions";
 import { Memory, memoryPrompt, memoryTools } from "./memory";
 import { TerminalStyle } from "./faces/terminal-ui";
 import { Auth, Models, Profiles } from "./profile";
@@ -29,13 +29,17 @@ import { Sessions } from "./session";
 /** The agent every face and gateway talks to, backed by the Pi SDK adapter. */
 const ZiggyAgentLayer = Layer.effect(
   ZiggyAgent,
-  Effect.map(Extensions, (extensions) =>
-    makeZiggyAgent({
+  Effect.gen(function* () {
+    const extensions = yield* Extensions;
+    const secrets = yield* PluginSecrets;
+
+    return makeZiggyAgent({
       tools: [memoryTools, extensionTools(extensions)],
       prompts: [memoryPrompt],
-    }),
-  ),
-).pipe(Layer.provide(Extensions.layer));
+      secrets,
+    });
+  }),
+).pipe(Layer.provide(Layer.merge(Extensions.layer, PluginSecrets.layer)));
 
 const DoctorLayer = DoctorLive.pipe(
   Layer.provide(Layer.mergeAll(Auth.layer, Models.layer, Extensions.layer, DoctorChecksLive)),
@@ -74,6 +78,7 @@ const ResidentGatewayLayer = ResidentGatewayLive.pipe(
       Auth.layer,
       DoctorLayer,
       MemoryLayer,
+      PluginSecrets.layer,
       ZiggyPathsLive,
     ),
   ),
@@ -108,6 +113,9 @@ export const ExtensionsCommandsLayer = Layer.mergeAll(
   ZiggyPathsLive,
   TerminalStyle.layer,
 ).pipe(Layer.provide(PiStandaloneRuntimeLive));
+
+/** `ziggy plugin secret set`: the Keychain store for plugin `${NAME}` values. */
+export const PluginCommandsLayer = Layer.merge(PluginSecrets.layer, ZiggyPathsLive);
 
 /** `ziggy agents ...`: a Profile's agent files and one-off agent runs. */
 export const AgentsCommandsLayer = Layer.merge(ProfileAgentsLayer, ZiggyPathsLive).pipe(

@@ -242,6 +242,7 @@ export const ZIGGY_METHODS: ReadonlyArray<ZiggyMethod> = [
   "extension.add",
   "extension.remove",
   "extension.validate",
+  "plugin.secret.set",
   "pin.list",
   "pin.set",
   "pin.remove",

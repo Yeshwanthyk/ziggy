@@ -5,6 +5,7 @@ export const ziggyHelpTopics = [
   "init",
   "profiles",
   "extensions",
+  "plugin",
   "auth",
   "models",
   "agents",
@@ -48,6 +49,7 @@ const generalHelp = `Usage:
   ziggy agents create|list|show|validate|run ... [--json on list/show]
   ziggy doctor <name|path>
   ziggy extensions manage|list|show|add|remove|update ... [--json on list/show]
+  ziggy plugin secret set <name|path> <NAME>  # value from stdin, never echoed
   ziggy automations create|list|pause|resume|validate|status|runs ... [--json on list/status/runs]
   ziggy wake <name|path> <automation-id>
   ziggy sessions list|show ... [--json]
@@ -74,6 +76,8 @@ const topicHelp = {
   profiles: "usage: ziggy profiles [--json]",
   extensions:
     "usage:\n  ziggy extensions [manage [<name|path>]]\n  ziggy extensions list [<name|path>] [--json]\n  ziggy extensions show [<name|path>] <id> [--json]\n  ziggy extensions add <name|path> <id>\n  ziggy extensions remove <name|path> <id>\n  ziggy extensions update <name|path> <id> [--adopt] [--restart]",
+  plugin:
+    "usage: ziggy plugin secret set <name|path> <NAME>\n  Reads the value from stdin (masked on a terminal) and stores it in the Keychain\n  (service ziggy-plugin) for ${NAME} in plugin mcp.json files.",
   auth: "usage: ziggy auth <name|path> [provider] [--type api_key|oauth]",
   models:
     "usage:\n  ziggy models status <name|path>\n  ziggy models list <name|path> [--provider <id>]\n  ziggy models set <name|path> <provider>/<model> [--thinking <level>]",

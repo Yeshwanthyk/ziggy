@@ -68,7 +68,7 @@ export const ExtensionCatalogListingJson = Schema.Struct({
   id: Schema.String,
   version: Schema.String,
   description: Schema.String,
-  kind: Schema.Literals(["skill", "code", "skill+code"]),
+  kind: Schema.Literals(["skill", "code", "skill+code", "plugin"]),
   required: Schema.Boolean,
   source: Schema.Literals(["bundled", "profile"]),
   packagePath: Schema.optional(Schema.String),
@@ -92,7 +92,7 @@ export const ProfileExtensionsJson = Schema.Struct({
     Schema.Struct({
       id: Schema.String,
       description: Schema.String,
-      kind: Schema.Literals(["skill", "code", "skill+code"]),
+      kind: Schema.Literals(["skill", "code", "skill+code", "plugin"]),
       source: Schema.Literals(["bundled", "profile"]),
     }),
   ),

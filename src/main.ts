@@ -7,6 +7,7 @@ import {
   ExtensionsCommandsLayer,
   MemoryCommandsLayer,
   ModelsCommandsLayer,
+  PluginCommandsLayer,
   ProfileCommandsLayer,
   ResidentCommandsLayer,
   RunCommandsLayer,
@@ -22,6 +23,7 @@ import { type AutomationsCommand, runAutomationsCommand } from "./faces/commands
 import { type ExtensionsCommand, runExtensionsCommand } from "./faces/commands/extensions";
 import { type MemoryCommand, runMemoryCommand } from "./faces/commands/memory";
 import { type ModelsCommand, runModelsCommand } from "./faces/commands/models";
+import { type PluginsCommand, runPluginsCommand } from "./faces/commands/plugins";
 import { type ProfileCommand, runProfileCommand } from "./faces/commands/profile";
 import { type ResidentCommand, runResidentCommand } from "./faces/commands/resident";
 import { type RunCommand, runRunCommand } from "./faces/commands/run";
@@ -39,6 +41,9 @@ const updateArea = (command: UpdateCommand) =>
 
 const extensionsArea = (command: ExtensionsCommand) =>
   runExtensionsCommand(command).pipe(Effect.provide(ExtensionsCommandsLayer));
+
+const pluginsArea = (command: PluginsCommand) =>
+  runPluginsCommand(command).pipe(Effect.provide(PluginCommandsLayer));
 
 const agentsArea = (command: AgentsCommand) =>
   runAgentsCommand(command).pipe(Effect.provide(AgentsCommandsLayer));
@@ -81,6 +86,7 @@ const dispatch = (command: CliCommand) =>
     ExtensionsAdd: extensionsArea,
     ExtensionsRemove: extensionsArea,
     ExtensionsUpdate: extensionsArea,
+    PluginSecretSet: pluginsArea,
     AuthStatus: profileArea,
     AuthLogin: profileArea,
     Doctor: profileArea,

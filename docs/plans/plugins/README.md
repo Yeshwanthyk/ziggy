@@ -89,19 +89,44 @@ embed QuickJS wasm and the separately addressed Pi worker; the checkout-denied b
 call through codemode. G7 is verified: app-only tools are listed by Pi codemode; the fix stays in step 4.
 Source evidence is in `LOG.md`.
 
-### Step 2 — Plugin folders + secrets
+### Step 2 — Plugin folders + secrets (done)
 
-- `src/extensions/plugin.ts`: decode `plugin.json` and `mcp.json` (Effect Schema, agent-plugins 1.0.0:
+- [x] `src/extensions/plugin.ts`: decode `plugin.json` and `mcp.json` (Effect Schema, agent-plugins 1.0.0:
   stdio / streamable-http / sse; `cwd` limited to `./`, `${PLUGIN_ROOT}`, `${PLUGIN_DATA}`; `env` may not
-  define PLUGIN_ROOT/PLUGIN_DATA), expand variables, resolve secrets.
-- `resources.ts` resolves `<profile>/plugins/<id>/` when it contains `plugin.json`; its `skills/`
+  define PLUGIN_ROOT/PLUGIN_DATA), expand variables, resolve secrets (Keychain service `ziggy-plugin`,
+  then process env). An unresolved `${NAME}` skips that server with a diagnostic naming the variable.
+- [x] `resources.ts` resolves `<profile>/plugins/<id>/` when it contains `plugin.json`; its `skills/`
   join the skill paths. Selection stays in `extensions.json`; `profile_extensions` accepts plugin ids.
-- Server names are `<plugin-id>` for a single server, `<plugin-id>_<name>` otherwise; collisions are
+  An extension owns its id: `plugins/<id>` is ignored (with a warning) when `extensions/<id>` exists or
+  `<id>` is bundled, in session open, listing and `show` alike, and `add` refuses to select it (an id already selected keeps the extension, so other changes still apply). An
+  unselected plugin that cannot be read is left out of listings with a warning; selected ones stay strict.
+- [x] Server names are `<plugin-id>` for a single server, `<plugin-id>_<name>` otherwise; collisions are
   diagnostics.
-- A `ziggy plugin secret set <profile> <NAME>` CLI (reads value from stdin) and a resident method the
-  web UI calls; neither echoes values.
-- **Demo**: `plugins/linear` (streamable-http `https://mcp.linear.app/mcp/readonly`, bearer
-  `${LINEAR_API_KEY}`) enabled via `profile_extensions`; "what's assigned to me" works in web and Slack.
+- [x] `ziggy plugin secret set <profile> <NAME>` (masked prompt on a TTY, otherwise stdin) and the resident
+  method `plugin.secret.set` (UI SDK `setPluginSecret`); neither echoes values.
+- [x] **Demo**: `examples/linear` (streamable-http `https://mcp.linear.app/mcp/readonly`, bearer
+  `${LINEAR_API_KEY}`) as the shape to copy into `<profile>/plugins/linear/`. `test/extensions/plugin.test.ts`
+  proves the path with a local stdio fixture plugin, a fake Keychain and a scratch Profile. The live
+  web/Slack "what's assigned to me" run is left to the user (no real Linear in tests).
+
+Notes. Resolved servers feed Step 1's `loadConfig`. The redactor covers plugin header values (and their
+Bearer/Basic tokens), env values whose name matches TOKEN, KEY, SECRET, PASS, AUTH or CREDENTIAL (unless
+built from PLUGIN_ROOT/PLUGIN_DATA), and every substituted `${NAME}` value. Secrets never go into argv: `${NAME}` expands only in `env`,
+`headers` and `url` (a deviation from the spec, which expands only paths; G1 needs it), `${PLUGIN_*}`
+stays literal there, and values substituted into a url are URI-encoded, so they cannot supply a scheme,
+host or port. Resolved values are escaped for Pi's own `$`/`!` resolution. A stdio `command` is a bare
+name looked up on PATH or a `./` path inside the plugin; `cwd` is `./…`, `${PLUGIN_ROOT}[/…]` or
+`${PLUGIN_DATA}[/…]`. `${PLUGIN_DATA}` is `<profile>/plugin-data/<id>/`, created when a session that loads
+MCP opens and the plugin's `mcp.json` lists at least one server (even if every server is then skipped);
+the plugin folder is never written (R4). A plugin skill that fails Pi's name or description rules is
+skipped on its own with a warning. A5 is unchanged: plugin servers ride the Step 1 MCP stack, so only main
+sessions and allowlisted personas resolve them. Limits: SSE is skipped (Pi has no SSE transport); http
+needs https except on loopback; secrets are user-global in the Keychain (the CLI Profile argument only
+validates the target) and apply to new sessions; the items are created by `/usr/bin/security`, whose
+access list lets any process running as the user read them with `security find-generic-password -s
+ziggy-plugin -a NAME -w` without a prompt (accepted; the access list is not changed); off macOS the
+Keychain reads nothing and writes fail; MCP diagnostics are session warnings, not doctor output; no web
+UI form yet.
 
 ### Step 4 — UI host
 
@@ -164,5 +189,5 @@ rules. A click in the plugin UI counts as user intent.
   subagents (Codex rejects `gpt-6.1-sol` on the ChatGPT account). Commit each step only after the
   reviewer approves.
 - **State**: branch `plugins`; Step 1 committed after review round 3 approved (history in
-  `step1-review.md`).
-- **First next action**: build Step 2.
+  `step1-review.md`); Step 2 committed after review round 2 approved (minor fixes applied).
+- **First next action**: build Step 4 (UI host).

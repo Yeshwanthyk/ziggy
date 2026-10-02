@@ -73,6 +73,7 @@ export const UI_METHODS = [
   "extension.add",
   "extension.remove",
   "extension.validate",
+  "plugin.secret.set",
   "pin.list",
   "pin.set",
   "pin.remove",

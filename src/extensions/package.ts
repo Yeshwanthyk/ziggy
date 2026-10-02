@@ -77,7 +77,7 @@ const frontmatterScalar = (value: string | undefined): string | undefined => {
     : trimmed;
 };
 
-const parseFrontmatter = (text: string): Skill | undefined => {
+export const parseFrontmatter = (text: string): Skill | undefined => {
   const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
 
   if (match === null) return undefined;
