@@ -19,3 +19,12 @@ export {
 export { Extensions, type ExtensionsApi } from "./service";
 
 export { extensionTools } from "./tool";
+
+export {
+  makeMcpApps,
+  MCP_APP_MIME_TYPE,
+  McpAppArguments,
+  McpAppRefused,
+  type McpApps,
+  McpToolApp,
+} from "./mcp-apps";

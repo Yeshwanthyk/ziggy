@@ -908,3 +908,39 @@ test("history preserves image-only user messages and counts image blocks", async
     { kind: "user", timestamp, text: "Look", imageCount: 1 },
   ]);
 });
+
+test("history keeps a tool result's view record only when it decodes and the call succeeded", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ziggy-app-history-"));
+  temporaryPaths.push(root);
+  const timestamp = "2026-01-01T00:00:00.000Z";
+  const app = { server: "fixture", tool: "view", resourceUri: "ui://fixture/view.html" };
+
+  const result = (id: string, details: Schema.Json, isError = false) => ({
+    type: "message",
+    parentId: null,
+    id,
+    timestamp,
+    message: {
+      role: "toolResult",
+      toolCallId: id,
+      toolName: "mcp__fixture__view",
+      isError,
+      content: [],
+      details,
+    },
+  });
+
+  await writeTranscript(root, [
+    { type: "session", id: "apps", timestamp, cwd: root },
+    result("valid", { app: { ...app, input: { value: "a" } } }),
+    result("malformed", { app: { ...app, resourceUri: 7 } }),
+    result("failed", { app }, true),
+  ]);
+  const tool = { kind: "tool", timestamp, phase: "end", toolName: "mcp__fixture__view" } as const;
+
+  expect((await Effect.runPromise(sessionHistory(root, "apps"))).entries).toEqual([
+    { ...tool, failed: false, app: { ...app, input: { value: "a" } } },
+    { ...tool, failed: false },
+    { ...tool, failed: true },
+  ]);
+});

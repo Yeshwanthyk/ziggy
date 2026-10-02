@@ -23,6 +23,7 @@ import type { UiGroupStore } from "ziggy/adapters/fs/ui-state";
 import { stableProfileId } from "ziggy/application/profile-directory";
 import {
   ExtensionLoadFailed,
+  McpAppRefused,
   type ExtensionsApi,
   type PluginSecretsApi,
 } from "ziggy/extensions/index";
@@ -30,6 +31,7 @@ import { ProfileFileSystemError } from "ziggy/profile/index";
 import { SessionNotFound, SessionReadFailed, type SessionsApi } from "ziggy/session/index";
 import { ProfileAgentEditConflict } from "ziggy/domain/profile";
 import {
+  UiAppContentResult,
   UiEventFrame,
   UiResponseFrame,
   UiSessionSummaryResult,
@@ -49,6 +51,8 @@ const decodeEventResult = Schema.decodeUnknownResult(Schema.fromJsonString(UiEve
 const decodeSummaryResult = Schema.decodeUnknownSync(UiSessionSummaryResult);
 
 const decodeEmptyGroupState = Schema.decodeUnknownSync(UiGroupState);
+
+const decodeAppContentResult = Schema.decodeUnknownSync(UiAppContentResult);
 
 /** The retained live events after `afterSeq`, read through a throwaway subscription. */
 const retainedEvents = (live: LiveSessionsApi, key: string, afterSeq?: number) =>
@@ -2361,4 +2365,226 @@ test("steer and follow-up resolve attachments for the same connection owner", as
     { id: "session.follow-up-foreign", ok: false, error: { code: "bad_params" } },
     { id: "session.follow-up", ok: true },
   ]);
+});
+
+test("view calls reach only live web-UI sessions and their results wait once for the asking owner", async () => {
+  const calls: Array<{ server: string; resourceUri: string; tool: string }> = [];
+  const responses: Array<typeof UiResponseFrame.Type> = [];
+  const resourceUri = "ui://fixture/view.html";
+
+  const handle = makeChatHandle({
+    prompt: () => Effect.succeed("ok"),
+    callAppTool: (server, uri, tool) =>
+      tool === "app_only"
+        ? Effect.sync(() => {
+            calls.push({ server, resourceUri: uri, tool });
+
+            return { content: [{ type: "text", text: "done" }] };
+          })
+        : Effect.fail(new McpAppRefused({ server, reason: "not-app-tool", message: "refused" })),
+  });
+
+  const contentIds = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const live = yield* makeLiveSessions();
+        const gateway = yield* makeUiGateway(makeConfig(live, makeAgent(handle)));
+
+        const connection = gateway.connect(
+          (frame) => responses.push(decodeResponse(frame)),
+          "alice",
+        );
+
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+        const ref = { profileId, kind: "live", key: "local/main" } as const;
+        yield* connection.request({
+          id: "call",
+          method: "app.callTool",
+          params: { ref, server: "fixture", resourceUri, tool: "app_only", arguments: { a: 1 } },
+        });
+        yield* connection.request({
+          id: "model-only",
+          method: "app.callTool",
+          params: { ref, server: "fixture", resourceUri, tool: "model_only" },
+        });
+        yield* connection.request({
+          id: "stored",
+          method: "app.callTool",
+          params: {
+            ref: { profileId, kind: "stored", id: "old" },
+            server: "fixture",
+            resourceUri,
+            tool: "app_only",
+          },
+        });
+        yield* live.acquire("slack/user-1", "slack", Effect.succeed(handle));
+        yield* connection.request({
+          id: "slack",
+          method: "app.callTool",
+          params: {
+            ref: { profileId, kind: "live", key: "slack/user-1" },
+            server: "fixture",
+            resourceUri,
+            tool: "app_only",
+          },
+        });
+
+        const result = responses.find((response) => response.id === "call");
+
+        const id =
+          result?.ok === true ? decodeAppContentResult(result.result).contentId : "missing";
+
+        return {
+          foreign: gateway.appContent.take("bob", id),
+          own: gateway.appContent.take("alice", id),
+          again: gateway.appContent.take("alice", id),
+        };
+      }),
+    ),
+  );
+
+  expect(calls).toEqual([{ server: "fixture", resourceUri, tool: "app_only" }]);
+  expect(contentIds).toEqual({
+    foreign: undefined,
+    own: JSON.stringify({ content: [{ type: "text", text: "done" }] }),
+    again: undefined,
+  });
+  expect(responses).toMatchObject([
+    { id: "open", ok: true },
+    { id: "call", ok: true, result: { profileId } },
+    { id: "model-only", ok: false, error: { code: "ownership" } },
+    { id: "stored", ok: false, error: { code: "watch_only" } },
+    { id: "slack", ok: false, error: { code: "watch_only" } },
+  ]);
+});
+
+test("view context joins only the next prompt, labelled as the server's, and never a steer", async () => {
+  const contexts: Array<string | undefined> = [];
+  const responses: Array<typeof UiResponseFrame.Type> = [];
+
+  const handle = makeChatHandle({
+    prompt: (_text, options) =>
+      Effect.sync(() => {
+        contexts.push(options?.ephemeralContext);
+
+        return "ok";
+      }),
+  });
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const live = yield* makeLiveSessions();
+        const gateway = yield* makeUiGateway(makeConfig(live, makeAgent(handle)));
+
+        const connection = gateway.connect(
+          (frame) => responses.push(decodeResponse(frame)),
+          "alice",
+        );
+
+        yield* connection.request({
+          id: "open",
+          method: "session.open",
+          params: { profileId, context: { kind: "local" } },
+        });
+        const ref = { profileId, kind: "live", key: "local/main" } as const;
+        const context = [{ server: "fixture", text: "selected: row 3" }];
+        yield* connection.request({
+          id: "steer",
+          method: "session.steer",
+          params: { ref, text: "x", context },
+        });
+        yield* connection.request({
+          id: "submit",
+          method: "prompt.submit",
+          params: { ref, text: "x", context },
+        });
+        yield* Effect.yieldNow;
+      }),
+    ),
+  );
+
+  expect(contexts).toHaveLength(1);
+  expect(contexts[0]).toContain("[view: fixture]\nselected: row 3");
+  expect(contexts[0]).toContain("not the user");
+  expect(responses).toMatchObject([
+    { id: "open", ok: true },
+    { id: "steer", ok: false, error: { code: "bad_params" } },
+    { id: "submit", ok: true },
+  ]);
+});
+
+test("history keeps the newest views whole within the page budget and trims older ones", async () => {
+  const frames: string[] = [];
+
+  const view = (value: string, resourceUri = "ui://fixture/view.html") => ({
+    kind: "tool" as const,
+    timestamp: "2026-09-16T12:00:00Z",
+    phase: "end" as const,
+    toolName: "mcp__fixture__view",
+    failed: false,
+    app: { server: "fixture", tool: "view", resourceUri, result: value.repeat(9 * 1_024) },
+  });
+
+  // 20 KiB budget: the two newest 9 KiB views fit, the oldest is trimmed, a bad record dropped.
+  const entries = [view("a"), view("b", "https://not-a-view"), view("c"), view("d")];
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const live = yield* makeLiveSessions();
+
+        const sessions: SessionsApi = {
+          ...makeSessions(),
+          history: () =>
+            Effect.succeed({
+              entries,
+              terminalState: "completed",
+              truncated: false,
+              hasMore: false,
+            }),
+        };
+
+        const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
+
+        const gateway = yield* makeUiGateway(
+          makeConfig(live, makeAgent(handle), undefined, { sessions }),
+        );
+
+        const connection = gateway.connect((frame) => frames.push(frame));
+
+        yield* connection.request({
+          id: "history",
+          method: "session.history",
+          params: { ref: { profileId, kind: "stored", id: "old" } },
+        });
+      }),
+    ),
+  );
+
+  const { app: _dropped, ...dropped } = view("b");
+  expect(decodeResponse(frames.at(-1) ?? "null")).toEqual({
+    id: "history",
+    ok: true,
+    result: expect.objectContaining({
+      entries: [
+        {
+          ...view("a"),
+          app: {
+            server: "fixture",
+            tool: "view",
+            resourceUri: "ui://fixture/view.html",
+            truncated: true,
+          },
+        },
+        dropped,
+        view("c"),
+        view("d"),
+      ],
+    }),
+  });
 });

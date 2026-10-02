@@ -204,6 +204,42 @@ export const UiUploadId = Schema.String.check(
   Schema.isPattern(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u),
 );
 
+/** An MCP server or tool name as Pi registers it. */
+const UiMcpName = boundedString("MCP name", 256);
+
+/** A view's `ui://` resource, as its server's tools declare it. */
+export const UiAppResourceUri = Schema.String.check(
+  Schema.isPattern(/^ui:\/\/\S+$/u),
+  Schema.isMaxLength(2_048),
+);
+
+// Ziggy caps input at 8 KiB and the result at 24 KiB (`extensions/mcp-apps.ts`).
+const UI_TOOL_APP_MAX_BYTES = 40 * 1_024;
+
+/** A model-called MCP tool that has a view: what the web UI needs to render the call. */
+export const UiToolApp = Schema.Struct({
+  server: UiMcpName,
+  tool: UiMcpName,
+  resourceUri: UiAppResourceUri,
+  input: Schema.optionalKey(Schema.Json),
+  result: Schema.optionalKey(Schema.Json),
+  truncated: Schema.optionalKey(Schema.Literal(true)),
+}).check(
+  Schema.makeFilter((value) => utf8Length(JSON.stringify(value)) <= UI_TOOL_APP_MAX_BYTES, {
+    expected: `a tool view record of at most ${UI_TOOL_APP_MAX_BYTES} bytes`,
+  }),
+);
+
+export type UiToolApp = typeof UiToolApp.Type;
+
+/** What a view asked to add to the model's context for the next turn (`ui/update-model-context`). */
+export const UiAppContext = Schema.Struct({
+  server: UiMcpName,
+  text: boundedCodePointString("app context", 4_000),
+});
+
+export type UiAppContext = typeof UiAppContext.Type;
+
 export const UiSessionTextParams = Schema.Struct({
   ref: UiSessionRef,
   text: boundedCodePointString("prompt text", 60_000, 0),
@@ -211,8 +247,32 @@ export const UiSessionTextParams = Schema.Struct({
     Schema.Array(UiUploadId).check(Schema.isMinLength(1), Schema.isMaxLength(4)),
   ),
   recipient: Schema.optionalKey(UiRecipient),
+  /** Only on `prompt.submit`: context from the session's views, for this turn only. */
+  context: Schema.optionalKey(
+    Schema.Array(UiAppContext).check(Schema.isMinLength(1), Schema.isMaxLength(4)),
+  ),
   commandId: Schema.optionalKey(UiCommandId),
 });
+
+/** `app.callTool`: a view calls one of its own server's tools that allows the app. */
+export const UiAppCallToolParams = Schema.Struct({
+  ref: UiSessionRef,
+  server: UiMcpName,
+  resourceUri: UiAppResourceUri,
+  tool: UiMcpName,
+  arguments: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
+});
+
+export type UiAppCallToolParams = typeof UiAppCallToolParams.Type;
+
+/** `app.readResource`: a view resource that one of the server's tools declares. */
+export const UiAppReadResourceParams = Schema.Struct({
+  ref: UiSessionRef,
+  server: UiMcpName,
+  uri: UiAppResourceUri,
+});
+
+export type UiAppReadResourceParams = typeof UiAppReadResourceParams.Type;
 
 export type UiSessionTextParams = typeof UiSessionTextParams.Type;
 

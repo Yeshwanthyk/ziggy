@@ -6,6 +6,7 @@ export * from "./models";
 export * from "./automations";
 export * from "./memory";
 export * from "./extensions";
+export * from "./apps";
 export * from "./groups";
 export * from "./navigation";
 
@@ -66,6 +67,12 @@ import {
   isPluginSecretSetResult,
   isPluginSecretValue,
 } from "./extensions";
+import {
+  isAppCallToolParams,
+  isAppContentResult,
+  isAppContextList,
+  isAppReadResourceParams,
+} from "./apps";
 import { isMemoryListResult, isMemoryPath, isMemoryShowResult } from "./memory";
 import { isGroupListResult } from "./groups";
 import {
@@ -209,6 +216,9 @@ export const isMethodResult = <Method extends ZiggyMethod>(
         isRecord(params) &&
         value.name === params.name
       );
+    case "app.callTool":
+    case "app.readResource":
+      return isAppContentResult(value) && refProfileMatches(value.profileId, params);
     case "pin.list":
       return isPinListResult(value) && profileMatches(value.profileId, params);
     case "pin.set":
@@ -344,7 +354,15 @@ export const isMethodParams = <Method extends ZiggyMethod>(
     case "session.follow-up":
       return (
         hasRef(value) &&
-        hasOptionalCommandId(value, ["ref", "text", "recipient", "commandId", "images"]) &&
+        hasOptionalCommandId(value, [
+          "ref",
+          "text",
+          "recipient",
+          "commandId",
+          "images",
+          ...(method === "prompt.submit" ? ["context"] : []),
+        ]) &&
+        (value.context === undefined || isAppContextList(value.context)) &&
         (value.recipient === undefined || isRecipient(value.recipient)) &&
         (value.images === undefined ||
           (Array.isArray(value.images) &&
@@ -464,6 +482,10 @@ export const isMethodParams = <Method extends ZiggyMethod>(
         isPluginSecretName(value.name) &&
         isPluginSecretValue(value.value)
       );
+    case "app.callTool":
+      return isAppCallToolParams(value);
+    case "app.readResource":
+      return isAppReadResourceParams(value);
     case "pin.set":
       return (
         isProfileId(value.profileId) &&

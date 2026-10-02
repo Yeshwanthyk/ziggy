@@ -22,6 +22,7 @@ import {
   UiSessionModelResult,
   UiSessionOpenResult,
   UiSessionResumeResult,
+  UiAppContentResult,
   UiSessionShowResult,
   UiSessionSummaryResult,
   UiSystemCapabilitiesResult,
@@ -82,6 +83,7 @@ export const UiGatewayResult = Schema.Union([
   UiPluginSecretSetResult,
   UiPinListResult,
   UiGroupListResult,
+  UiAppContentResult,
   // This shape is a subset of automation documents; decode richer documents first.
   UiAgentDocumentResult,
 ]);

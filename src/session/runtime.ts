@@ -25,9 +25,11 @@ import type { ChatModelOverride, ZiggyAgentError } from "../domain/agent";
 import {
   isMcpToolName,
   loadServices,
+  makeMcpApps,
   pluginMcp,
   profileResources,
   type ExtensionLoadFailed,
+  type McpApps,
   type PluginSecretsApi,
   type PiResources,
   type ProfileMcpOptions,
@@ -50,6 +52,8 @@ export interface ProfileRuntime extends AgentSessionRuntime {
   readonly skippedPackages: ReadonlyArray<SkippedPackage>;
   readonly ephemeralPromptContext: EphemeralPromptContext;
   readonly voiceHub: SpecialistVoiceHub;
+  /** MCP Apps for this runtime's MCP connections; none when the session has no MCP stack. */
+  readonly apps: McpApps | undefined;
 }
 
 export interface ProfileRuntimeOptions {
@@ -178,7 +182,13 @@ export const createProfileRuntime = (
   Effect.gen(function* () {
     const soulPath = yield* requireSoul(profilePath);
     const resources = yield* profileResources(profilePath);
-    const mcp = yield* sessionMcp(profilePath, resources, options);
+    const sessionServers = yield* sessionMcp(profilePath, resources, options);
+    // One registry for the runtime, so a view keeps working across Pi's session switches.
+    const apps = sessionServers === undefined ? undefined : makeMcpApps();
+
+    const mcp: ProfileMcpOptions | undefined =
+      sessionServers === undefined || apps === undefined ? undefined : { ...sessionServers, apps };
+
     const persona = options.persona;
 
     const systemPrompt =
@@ -302,6 +312,7 @@ export const createProfileRuntime = (
       skippedPackages,
       ephemeralPromptContext,
       voiceHub,
+      apps,
     });
 
     current = profileRuntime;

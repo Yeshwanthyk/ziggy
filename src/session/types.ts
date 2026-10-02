@@ -13,6 +13,7 @@ import type {
   AutomationConversationDeliveryFailed,
   AutomationConversationResult,
 } from "../domain/automation";
+import type { McpAppArguments, McpAppRefused, McpToolApp } from "../extensions";
 import type { ProfileTarget } from "../profile";
 
 /** Who a conversation is with: the local owner, one person, or a group. */
@@ -44,6 +45,8 @@ export type ChatEvent =
       readonly toolName: string;
       readonly failed: boolean;
       readonly detail?: string;
+      /** The tool's MCP App view, on the end event of a model-called tool that has one. */
+      readonly app?: McpToolApp;
     }
   | {
       readonly kind: "voice";
@@ -117,6 +120,18 @@ export interface ChatHandle {
     images?: Array<ChatPromptImage>,
   ) => Effect.Effect<void, ZiggyAgentError | ChatNotStreaming>;
   readonly subscribe: (listener: (event: ChatEvent) => void) => () => void;
+  /** A tool call from an MCP App view of `server`, on this session's own MCP connection. */
+  readonly callAppTool: (
+    server: string,
+    resourceUri: string,
+    tool: string,
+    args: McpAppArguments,
+  ) => Effect.Effect<Schema.Json, McpAppRefused>;
+  /** A UI resource one of `server`'s tools declares. */
+  readonly readAppResource: (
+    server: string,
+    uri: string,
+  ) => Effect.Effect<Schema.Json, McpAppRefused>;
   readonly dispose: Effect.Effect<void, ZiggyAgentError>;
 }
 
@@ -274,6 +289,7 @@ export type SessionHistoryEntry =
       readonly phase: "start" | "end";
       readonly toolName: string;
       readonly failed: boolean;
+      readonly app?: McpToolApp;
     }
   | {
       readonly kind: "automation-result";

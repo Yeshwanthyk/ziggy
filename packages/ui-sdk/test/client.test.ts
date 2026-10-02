@@ -581,6 +581,30 @@ const methodFixtures = (): ReadonlyArray<{
       result: { profileId: PROFILE_A, name: "LINEAR_API_KEY", stored: true },
     },
     {
+      method: "app.callTool",
+      params: {
+        ref: MAIN_A,
+        server: "fixture",
+        resourceUri: "ui://fixture/view.html",
+        tool: "refresh",
+        arguments: { count: 1 },
+      },
+      result: {
+        profileId: PROFILE_A,
+        contentId: "0b6f5f0e-3c1a-4f5e-9a2b-1c2d3e4f5a6b",
+        bytes: 12,
+      },
+    },
+    {
+      method: "app.readResource",
+      params: { ref: MAIN_A, server: "fixture", uri: "ui://fixture/view.html" },
+      result: {
+        profileId: PROFILE_A,
+        contentId: "0b6f5f0e-3c1a-4f5e-9a2b-1c2d3e4f5a6b",
+        bytes: 12,
+      },
+    },
+    {
       method: "pin.list",
       params: profileScopedParams(PROFILE_A),
       result: { profileId: PROFILE_A, pins: [pin], revision: 1 },

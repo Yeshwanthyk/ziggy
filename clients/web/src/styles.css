@@ -1309,6 +1309,171 @@
   animation: pulse 1s ease-in-out infinite;
 }
 
+/* MCP Apps views. The frame box is restyled, never moved, when expanded. */
+.app-view {
+  height: calc(var(--app-height) + 33px);
+  margin-top: 8px;
+  max-width: 100%;
+}
+
+.app-view.is-failed {
+  align-items: center;
+  color: var(--muted-foreground);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  height: auto;
+  line-height: 16px;
+}
+
+.app-view-frame {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-view-header {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  height: 32px;
+  padding: 0 4px 0 12px;
+}
+
+.app-view-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-view-toggle {
+  align-items: center;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  display: inline-flex;
+  height: 24px;
+  justify-content: center;
+  width: 24px;
+}
+
+.app-view-toggle:hover {
+  background: var(--hover);
+}
+
+.app-view-iframe {
+  background: transparent;
+  border: 0;
+  color-scheme: normal;
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+.app-view-loading {
+  align-items: center;
+  color: var(--muted-foreground);
+  display: flex;
+  flex: 1 1 auto;
+  font-size: 12px;
+  justify-content: center;
+}
+
+.app-view-backdrop {
+  background: var(--overlay);
+  border: 0;
+  inset: 0;
+  position: fixed;
+  z-index: 60;
+}
+
+/* Expanded: a centered overlay. */
+.app-view.is-expanded .app-view-frame {
+  box-shadow: var(--shadow-lg);
+  height: min(86vh, 900px);
+  left: 50%;
+  position: fixed;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(92vw, 960px);
+  z-index: 61;
+}
+
+/* Wide screens: a side panel beside the conversation. */
+@media (min-width: 1200px) {
+  .app-view.is-expanded .app-view-frame {
+    border-radius: 0;
+    height: 100vh;
+    left: auto;
+    right: 0;
+    top: 0;
+    transform: none;
+    width: min(45vw, 640px);
+  }
+}
+
+/* Phones: a bottom sheet. */
+@media (max-width: 720px) {
+  .app-view.is-expanded .app-view-frame {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    bottom: 0;
+    height: 88vh;
+    left: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+    top: auto;
+    transform: none;
+    width: 100vw;
+  }
+}
+
+.app-context-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.app-context-chip {
+  align-items: center;
+  background: var(--muted);
+  border-radius: var(--radius-full);
+  color: var(--muted-foreground);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 4px;
+  line-height: 16px;
+  max-width: 100%;
+  padding: 2px 4px 2px 10px;
+}
+
+.app-context-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-context-chip > button {
+  align-items: center;
+  border-radius: var(--radius-full);
+  color: inherit;
+  display: inline-flex;
+  height: 18px;
+  justify-content: center;
+  width: 18px;
+}
+
+.app-context-chip > button:hover {
+  background: var(--hover);
+}
+
 .message.optimistic,
 .message.thinking,
 .message.streaming {

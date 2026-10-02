@@ -283,6 +283,8 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
     unwatchSession: vi.fn(async () => undefined),
     getSessionHistory: vi.fn(async (ref) => historyResult(ref)),
     uploadImage: vi.fn(async () => crypto.randomUUID()),
+    callAppTool: vi.fn(async () => ({ content: [] })),
+    readAppResource: vi.fn(async () => ({ contents: [] })),
     submitPrompt: vi.fn(async () => undefined),
     steerSession: vi.fn(async () => undefined),
     followUp: vi.fn(async () => undefined),
@@ -375,6 +377,58 @@ describe("useZiggyGateway", () => {
     );
     expect(hook.result.current.streamText).toBe("Already responding");
     expect(hook.result.current.busy).toBe(true);
+  });
+
+  it("refuses a view's calls and context once its conversation is not the selected one", async () => {
+    const { client } = makeClient();
+    const hook = await connectHook(client);
+    const other = { profileId: profile.profileId, kind: "stored" as const, id: "other" };
+    await expect(
+      hook.result.current.callAppTool(other, "fixture", "ui://fixture/view.html", "app_only", {}),
+    ).rejects.toThrow("no longer selected");
+    await expect(hook.result.current.readAppResource(other, "fixture", "ui://x")).rejects.toThrow(
+      "no longer selected",
+    );
+    act(() => hook.result.current.setAppContext(other, "fixture", "stale"));
+    expect(client.callAppTool).not.toHaveBeenCalled();
+    expect(client.readAppResource).not.toHaveBeenCalled();
+    expect(hook.result.current.appContext).toEqual([]);
+
+    await hook.result.current.callAppTool(
+      mainRef,
+      "fixture",
+      "ui://fixture/view.html",
+      "app_only",
+      {},
+    );
+    act(() => hook.result.current.setAppContext(mainRef, "fixture", "fresh"));
+    expect(client.callAppTool).toHaveBeenCalledWith(
+      mainRef,
+      "fixture",
+      "ui://fixture/view.html",
+      "app_only",
+      {},
+    );
+    expect(hook.result.current.appContext).toEqual([{ server: "fixture", text: "fresh" }]);
+  });
+
+  it("serves views only in live web UI conversations", async () => {
+    const { client } = makeClient();
+    const hook = await connectHook(client);
+    expect(hook.result.current.selectedServesViews).toBe(true);
+    const select = (ref: ZiggySessionRef) =>
+      act(() =>
+        hook.result.current.selectConversation({ ref, title: "x", subtitle: "", active: false }),
+      );
+    await select({ profileId: profile.profileId, kind: "live", key: "slack/C123" });
+    expect(hook.result.current.selectedServesViews).toBe(false);
+    await select({ profileId: profile.profileId, kind: "stored", id: "past" });
+    expect(hook.result.current.selectedServesViews).toBe(false);
+    // A live ref the resident has not listed as `ui` (an ended one, say) is not assumed to be.
+    await select({ profileId: profile.profileId, kind: "live", key: "ui/ended" });
+    expect(hook.result.current.selectedServesViews).toBe(false);
+    await select(specialistRef);
+    expect(hook.result.current.selectedServesViews).toBe(true);
   });
 
   it("preserves activity replayed before and delivered during history reconciliation", async () => {

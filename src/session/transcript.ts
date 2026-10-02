@@ -71,6 +71,7 @@ const Entry = Schema.Struct({
       toolCallId: Schema.optional(Schema.String),
       toolName: Schema.optional(Schema.String),
       isError: Schema.optional(Schema.Boolean),
+      details: Schema.optional(Schema.Unknown),
     }),
   ),
 });

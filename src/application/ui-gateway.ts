@@ -16,6 +16,8 @@ import { ProfileId as ProfileIdSchema, type ProfileId } from "../domain/profile-
 import { makeProfileRuntimeDirectory } from "./profile-runtime-directory";
 import { makeCommandCache, safeFingerprint } from "./ui-gateway/command-cache";
 import { makeUiUploadStore, type UiUploadStore } from "./ui-gateway/uploads";
+import { makeUiAppContentStore, type UiAppContentStore } from "./ui-gateway/app-content";
+import { makeAppDispatcher } from "./ui-gateway/apps";
 
 import { makeSessionDispatcher } from "./ui-gateway/sessions";
 import { dispatchGroups, makeEnsureGroup } from "./ui-gateway/groups";
@@ -30,6 +32,8 @@ import { dispatchSettings } from "./ui-gateway/management-settings";
 import type { UiGatewayBranch, UiGatewayDependencies } from "./ui-gateway/types";
 
 export { makeUiUploadStore, UI_IMAGE_MAX_BYTES, type UiUploadStore } from "./ui-gateway/uploads";
+
+export { makeUiAppContentStore, type UiAppContentStore } from "./ui-gateway/app-content";
 
 export type { UiGatewayDependencies } from "./ui-gateway/types";
 
@@ -61,6 +65,8 @@ export interface UiGatewayConnection {
 
 export interface UiGatewayApi {
   readonly uploads: UiUploadStore;
+  /** Results of `app.*` requests, fetched by the same owner over HTTP. */
+  readonly appContent: UiAppContentStore;
   readonly connect: (send: (frame: string) => void, uploadOwner?: string) => UiGatewayConnection;
 }
 
@@ -145,6 +151,8 @@ export const makeUiGateway = (
 
     const ensureGroup = makeEnsureGroup(groups);
     const uploads = makeUiUploadStore();
+    const appContent = makeUiAppContentStore();
+    const dispatchApps = makeAppDispatcher(branchFor, appContent);
 
     const dispatchSessions = makeSessionDispatcher(
       config,
@@ -288,6 +296,9 @@ export const makeUiGateway = (
         case "session.abort":
         case "prompt.submit":
           return dispatchSessions(request, send, subscriptions, isOpen, uploadOwner);
+        case "app.callTool":
+        case "app.readResource":
+          return dispatchApps(request, uploadOwner);
         case "agent.list":
         case "agent.show":
         case "agent.document":
@@ -375,6 +386,7 @@ export const makeUiGateway = (
 
     return {
       uploads,
+      appContent,
       connect: (send, uploadOwner = "local") => {
         const subscriptions = new Map<string, () => void>();
         let open = true;

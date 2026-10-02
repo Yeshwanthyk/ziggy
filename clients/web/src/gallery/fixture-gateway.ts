@@ -190,6 +190,12 @@ export const fixtureConnector =
       },
       unwatchSession: async () => undefined,
       uploadImage: async () => crypto.randomUUID(),
+      callAppTool: async () => {
+        throw new Error("The gallery has no MCP servers.");
+      },
+      readAppResource: async () => {
+        throw new Error("The gallery has no MCP servers.");
+      },
       submitPrompt: async (ref, text, _commandId, attachments) =>
         submit(ref, text, attachments?.images),
       steerSession: async (ref, text, _commandId, attachments) =>

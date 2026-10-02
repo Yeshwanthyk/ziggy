@@ -19,6 +19,8 @@ import {
   UiStoredSessionId,
   UiMethod,
   UiServerEpoch,
+  UiToolApp,
+  UiUploadId,
 } from "./fields";
 
 export const UI_METHODS = [
@@ -74,6 +76,8 @@ export const UI_METHODS = [
   "extension.remove",
   "extension.validate",
   "plugin.secret.set",
+  "app.callTool",
+  "app.readResource",
   "pin.list",
   "pin.set",
   "pin.remove",
@@ -294,6 +298,7 @@ export const UiSessionHistoryEntry = Schema.Union([
     phase: Schema.Literals(["start", "end"]),
     toolName: boundedCodePointString("session history tool name", 48),
     failed: Schema.Boolean,
+    app: Schema.optionalKey(UiToolApp),
   }),
   Schema.Struct({
     kind: Schema.Literal("automation-result"),
@@ -305,6 +310,18 @@ export const UiSessionHistoryEntry = Schema.Union([
 ]);
 
 export type UiSessionHistoryEntry = typeof UiSessionHistoryEntry.Type;
+
+/**
+ * `app.callTool` and `app.readResource`: the JSON result is too large for a frame (a view's HTML
+ * runs to hundreds of KiB), so it waits once, for this connection's owner, at `/app-content/<id>`.
+ */
+export const UiAppContentResult = Schema.Struct({
+  profileId: ProfileId,
+  contentId: UiUploadId,
+  bytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+
+export type UiAppContentResult = typeof UiAppContentResult.Type;
 
 export const UiSessionHistoryResult = Schema.Struct({
   profileId: ProfileId,

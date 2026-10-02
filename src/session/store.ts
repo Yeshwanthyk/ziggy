@@ -6,6 +6,7 @@ import { lstat } from "node:fs/promises";
 import * as path from "node:path";
 import { Context, Effect, Layer, Result, Schema } from "effect";
 import { AUTOMATION_RESULT_CUSTOM_TYPE, AutomationResultDetails } from "../domain/automation";
+import { McpToolApp } from "../extensions";
 import type { ProfileTarget } from "../profile";
 import { isSessionHeld } from "./lease";
 import {
@@ -506,6 +507,9 @@ const decodeCursor = (cursor: string) =>
     Effect.mapError((cause) => invalidCursor("invalid session history cursor", cause)),
   );
 
+/** The view record the `mcp-apps` hook stored in a tool result's details. */
+const decodeAppDetails = Schema.decodeUnknownResult(Schema.Struct({ app: McpToolApp }));
+
 const historyEntry = (entry: TranscriptEntry): SessionHistoryEntry | undefined => {
   const message = entry.message;
   const timestamp = entry.timestamp;
@@ -540,14 +544,21 @@ const historyEntry = (entry: TranscriptEntry): SessionHistoryEntry | undefined =
   }
 
   // Pi writes a tool call inside the assistant message; only its result is an entry.
-  if (message.role === "toolResult" && message.toolCallId !== undefined)
-    return {
+  if (message.role === "toolResult" && message.toolCallId !== undefined) {
+    const tool: SessionHistoryEntry = {
       kind: "tool",
       timestamp,
       phase: "end",
       toolName: bounded(message.toolName ?? "tool", 48),
       failed: message.isError ?? false,
     };
+
+    // A failed call has no view; the record comes from the `mcp-apps` result hook.
+    if (message.isError === true) return tool;
+    const app = decodeAppDetails(message.details);
+
+    return Result.isSuccess(app) ? { ...tool, app: app.success.app } : tool;
+  }
 
   return undefined;
 };

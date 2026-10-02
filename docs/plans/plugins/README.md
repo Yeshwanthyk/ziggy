@@ -128,21 +128,70 @@ ziggy-plugin -a NAME -w` without a prompt (accepted; the access list is not chan
 Keychain reads nothing and writes fail; MCP diagnostics are session warnings, not doctor output; no web
 UI form yet.
 
-### Step 4 — UI host
+### Step 4 — UI host (done)
 
-- `session/events.ts`: tool events gain `app?: {server, resourceUri, input, result}` (result capped);
-  history stores the same. `session/handle.ts` [Pi] gains `callAppTool` and `readAppResource`.
-- `packages/ui-sdk/src/protocol/apps.ts`: `app.callTool`, `app.readResource`, `prompt.submit` gains
-  optional model-context items.
-- `resident/` relays with the server/visibility checks above.
-- `clients/web/src/apps/`: app frame (AppBridge + PostMessageTransport from
-  `@modelcontextprotocol/ext-apps/app-bridge`), inline card with auto-size + cap, expanded view
-  (overlay / side panel / phone sheet) reusing the same iframe, context chips, host theme variables.
-- Faces without UI: tool `content` text plus "open in web UI" link.
-- `Bun.serve` Host-header check.
-- Developed against the official `ext-apps` example servers and one small hand-written fixture,
-  not a Ziggy template.
-- **Demo**: an `ext-apps` example plugin renders, calls its own tools, and posts to the composer.
+Gate: `step4-gate.md`. No Pi patch: one transport tap through `createMcpExtension({ createTransport })`.
+
+- [x] `src/extensions/mcp-apps.ts` [Pi]: the tap. It adds the `io.modelcontextprotocol/ui` capability
+  to `initialize`, records `_meta.ui` (resourceUri, visibility) per server, removes tools whose
+  visibility lacks `"model"` from `tools/list` (G7: hidden from direct, tool-search and codemode
+  exposure), and sends Ziggy's own `tools/call` / `resources/read` on the live transport.
+- [x] Tool events and history gain `app?: {server, tool, resourceUri, input, result, truncated?}`
+  (result capped). A `tool_result` hook writes it to `details.app`, which Pi persists, so live events
+  and history match. A codemode script carries the view of the last MCP call it made that has one,
+  because only the script's own result is kept and codemode is the default plugin exposure.
+- [x] `session/handle.ts` [Pi]: `callAppTool(server, resourceUri, tool, args)` and
+  `readAppResource(server, uri)`, refused (typed `McpAppRefused`) unless the resource belongs to that
+  server and the tool belongs to that resource's server and includes `"app"`. App results get the
+  same secret redaction as `mcp-redact`.
+- [x] `packages/ui-sdk/src/protocol/apps.ts`: `app.callTool`, `app.readResource`; `prompt.submit`
+  gains optional `context` items (view model context), joined to that prompt only as ephemeral
+  context marked as coming from a view, not the user. Steer and follow-up refuse `context`.
+- [x] Resident relay (`application/ui-gateway/apps.ts`): live web-UI (`ui`) sessions only; stored
+  sessions and Telegram, Discord and Slack live sessions are `watch_only`. The web client binds each
+  view to the conversation it mounted in and refuses its calls and context once another is selected.
+  Large results go through an owner-scoped, single-use, 60 s content store
+  (`GET /app-content/<id>`, bearer or cookie) instead of the socket frame.
+- [x] `clients/web/src/apps/`: AppBridge + PostMessageTransport, `srcdoc` iframe with
+  `sandbox="allow-scripts"` and a CSP meta tag built from the resource's `_meta.ui.csp`, inline card
+  with auto-size and cap, expanded overlay / side panel / phone sheet reusing the same iframe, context
+  chips, host theme variables. `ui/message` drafts into the composer and never sends; `ui/open-link`
+  opens http(s) only, after a recent user gesture or a confirm. Every postMessage payload is decoded
+  by the ext-apps schemas. The view code loads lazily.
+- [x] Faces without UI: the model sees the tool's text result, and Telegram, Discord, Slack, ACP, the
+  TUI, automations and specialists show only that (R0). No face adds a link to the web UI: those
+  sessions are watch-only there, so their views could never load. The web UI mounts a view only in a
+  live web UI conversation (a live session `session.list` reports as kind `ui`); every other session,
+  including ended web conversations, shows the note "Interactive view available only in live web UI
+  conversations".
+- [x] `Bun.serve` Host-header check: 421 unless the Host is `127.0.0.1:<port>`, `localhost:<port>` or
+  the public URL host.
+- [x] **Demo**: `test/extensions/mcp-apps.test.ts` uses the hand-written fixture
+  (`test/extensions/fixtures/mcp-server.ts`): the model is offered `view` and `model_only` but not
+  `app_only`; the view calls its own app-only tool through the handle; `model_only`, another server's
+  view, an undeclared resource and an unknown server are refused; codemode carries the view.
+  `test/application/ui-gateway.test.ts` covers the relay (owner, `ownership`, `watch_only`, single-use
+  content) and view context. Browser check in a temp ZIGGY_HOME with both servers as plugins
+  (codemode exposure): the fixture view rendered, called `app_only`, was refused `model_only`, and its
+  `ui/message` landed in the composer unsent; the official `ext-apps` `server-basic-vanillajs` view
+  rendered the time, and its Get Server Time, Send Message, Send Log and Open Link buttons worked;
+  expand/collapse kept the same iframe; phone width and sheet fit; the card came back from history
+  after reload; a foreign Host got 421.
+
+Deviations. App calls do not run through Pi's `tool_call`/`tool_result` hooks (stock Pi cannot put an
+app-only tool in the pipeline without the model reaching it); the tap enforces the same server and
+visibility rules and Ziggy redacts results itself. Large results go through the content store rather
+than the socket. Codemode carries a nested view (not in the original plan).
+
+Limits. Only the last view per codemode script is shown. A truncated or pre-Step-4 history entry has no
+input/result to replay, so its view shows a placeholder. Views of stored (not live) sessions are
+refused. The live card remounts once when the turn settles. The CSP meta tag is always the first
+element of the `srcdoc`. A meta CSP cannot stop the frame navigating itself: to a real origin, the
+bridge's origin guard closes it; a `data:` or `blob:` page keeps origin `"null"`, still sandboxed
+without same-origin, and its messages still reach the bridge (scoped to the view's own server). A
+tool whose `_meta.ui` does not decode is hidden from the model and logged. App calls fail while
+Pi's connection is down. `app.js` stays at 653 kB (198 kB gzip); the ext-apps and MCP core code
+loads on first view as `assets/app-view.js` (241 kB, 62 kB gzip).
 
 ### Step 3 — Plugin authoring, developed in a lab
 
@@ -189,5 +238,5 @@ rules. A click in the plugin UI counts as user intent.
   subagents (Codex rejects `gpt-6.1-sol` on the ChatGPT account). Commit each step only after the
   reviewer approves.
 - **State**: branch `plugins`; Step 1 committed after review round 3 approved (history in
-  `step1-review.md`); Step 2 committed after review round 2 approved (minor fixes applied).
-- **First next action**: build Step 4 (UI host).
+  `step1-review.md`); Step 2 committed after review round 2 approved (minor fixes applied); Step 4 committed after review round 3 approved (follow-ups applied).
+- **First next action**: build Step 3 (plugin-authoring skill + template), then run the lab.

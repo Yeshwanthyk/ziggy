@@ -11,6 +11,7 @@ import {
   isSafeInteger,
   type ZiggyProfileId,
 } from "./common";
+import { isToolApp, type ZiggyAppContext, type ZiggyToolApp } from "./apps";
 
 export type ZiggyLiveSessionKey =
   | "local/main"
@@ -134,6 +135,7 @@ export interface ZiggyHistoryToolEntry {
   readonly phase: "start" | "end";
   readonly toolName: string;
   readonly failed: boolean;
+  readonly app?: ZiggyToolApp;
 }
 
 export interface ZiggyHistoryAutomationResultEntry {
@@ -200,6 +202,8 @@ export interface ZiggySessionTextParams extends ZiggySessionCommandParams {
   readonly images?: ReadonlyArray<string>;
   readonly text: string;
   readonly recipient?: ZiggyRecipientId;
+  /** Only on `prompt.submit`: what the session's views added to the model's context. */
+  readonly context?: ReadonlyArray<ZiggyAppContext>;
 }
 
 export interface ZiggyConversationRequestMap {
@@ -293,6 +297,7 @@ export interface ZiggyToolEvent {
     readonly toolName: string;
     readonly failed: boolean;
     readonly detail?: string;
+    readonly app?: ZiggyToolApp;
   };
 }
 
@@ -487,7 +492,8 @@ const isHistoryEntry = (value: unknown): value is ZiggySessionHistoryEntry => {
   }
   if (value.kind === "tool") {
     return (
-      hasOnlyKeys(value, ["kind", "timestamp", "phase", "toolName", "failed"]) &&
+      hasOnlyKeys(value, ["kind", "timestamp", "phase", "toolName", "failed", "app"]) &&
+      (value.app === undefined || isToolApp(value.app)) &&
       (value.phase === "start" || value.phase === "end") &&
       isBoundedCodePointString(value.toolName, 48, 0) &&
       typeof value.failed === "boolean"
@@ -671,7 +677,8 @@ export const isGatewayEvent = (value: unknown): value is ZiggyGatewayEvent => {
   }
   if (value.event === "tool") {
     return (
-      hasOnlyKeys(payload, ["phase", "toolCallId", "toolName", "failed", "detail"]) &&
+      hasOnlyKeys(payload, ["phase", "toolCallId", "toolName", "failed", "detail", "app"]) &&
+      (payload.app === undefined || isToolApp(payload.app)) &&
       (payload.phase === "start" || payload.phase === "update" || payload.phase === "end") &&
       isBoundedString(payload.toolCallId, 256) &&
       isBoundedString(payload.toolName, 256) &&

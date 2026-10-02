@@ -254,7 +254,7 @@ const makeLiveUiRuntime = (
             return opened.close;
           },
         },
-        { ...uiOptions, uploads: openedGateway.uploads },
+        { ...uiOptions, uploads: openedGateway.uploads, appContent: openedGateway.appContent },
       );
 
       return yield* Effect.never;

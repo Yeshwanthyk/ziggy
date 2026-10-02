@@ -25,6 +25,7 @@ import {
   AutomationConversationDeliveryFailed,
   type AutomationConversationResult,
 } from "../domain/automation";
+import { McpAppRefused } from "../extensions";
 import { fileSystemCauseDetails } from "../platform/cause";
 import { ProviderConfigError } from "../profile";
 import type { SessionLeaseSet } from "./lease";
@@ -61,7 +62,7 @@ export interface HandleRuntime
       AgentSessionRuntime,
       "switchSession" | "newSession" | "fork" | "setRebindSession" | "dispose"
     >,
-    Partial<Pick<ProfileRuntime, "ephemeralPromptContext" | "voiceHub">> {
+    Partial<Pick<ProfileRuntime, "ephemeralPromptContext" | "voiceHub" | "apps">> {
   readonly session: HandleSession;
   readonly services: { readonly modelRuntime: Pick<ModelRuntime, "getModel"> };
 }
@@ -79,6 +80,13 @@ export interface ChatHandleOptions {
 const transcriptChanged: ChatEvent = { kind: "session-state", scope: "transcript" };
 
 const modelChanged: ChatEvent = { kind: "session-state", scope: "model" };
+
+const noApps = (server: string) =>
+  new McpAppRefused({
+    server,
+    reason: "unknown-server",
+    message: "this session has no MCP servers",
+  });
 
 /** Pi rethrows a lease refusal from the runtime factory; keep it typed. */
 const piStep = <A>(profilePath: string, operation: string, run: () => Promise<A>) =>
@@ -505,6 +513,14 @@ export const makeChatHandle = (
           listeners.delete(listener);
         };
       },
+      callAppTool: (server, resourceUri, tool, args) =>
+        runtime.apps === undefined
+          ? Effect.fail(noApps(server))
+          : runtime.apps.callTool(server, resourceUri, tool, args),
+      readAppResource: (server, uri) =>
+        runtime.apps === undefined
+          ? Effect.fail(noApps(server))
+          : runtime.apps.readResource(server, uri),
       // Disposal waits for the turn, so nothing still writes the transcript when its lease is freed.
       dispose: turn.withPermits(1)(
         Effect.sync(() => {

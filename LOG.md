@@ -1658,3 +1658,92 @@ Automation delivery to a channel goes through one seam, `Deliver = (profile, tar
 
     Mutation check: refusing the clash for every id fails the ownership test.
   - Verification: `bun run check` passes. `bun test test`: 682 pass, 0 fail, 94 files. Nothing was committed.
+
+## Plugins Step 4: MCP Apps UI host (stock Pi 0.99.1)
+
+- Gate (`docs/plans/plugins/step4-gate.md`): no Pi patch. Every connection goes through
+  `createMcpExtension({ createTransport })`, so a tap around Pi's default transport (`src/extensions/mcp-apps.ts`) adds the
+  `io.modelcontextprotocol/ui` capability, records `_meta.ui`, drops non-`"model"` tools from
+  `tools/list` (G7), and sends `ziggy-app-<n>` requests on the live connection.
+- Tool events and history carry `app` (server, tool, resourceUri, input, capped result) through a `tool_result` hook that writes
+  `details.app`. Pi's default plugin exposure is codemode and only the script's result persists, so codemode carries the
+  last nested view (keyed by `parentToolCallId`).
+- The handle has `callAppTool`/`readAppResource` (typed `McpAppRefused`: unknown-server, not-app-resource, not-app-tool),
+  with results redacted like `mcp-redact`.
+- UI SDK: `app.callTool`, `app.readResource`, and `prompt.submit` `context`, which goes to that prompt only, as ephemeral
+  view context.
+- Resident relay: owner-scoped and live-only (`watch_only` otherwise), with large results in a single-use 60 s content store
+  at `GET /app-content/<id>`. Host-header check: 421.
+- Web `clients/web/src/apps/`:
+  - AppBridge in a `srcdoc` frame with `sandbox=allow-scripts` and a CSP meta tag;
+  - an inline card, plus an overlay, panel or sheet that reuses the iframe;
+  - context chips and theme variables;
+  - `ui/message` drafts into the composer and is never sent; only http(s) links open.
+- Faces without UI: see Review round 1 (the footer moved out of the session).
+- Tests:
+  - `test/extensions/mcp-apps.test.ts`: G7, the view record, the own app-only call, refusals, the codemode carry;
+  - two relay and context tests in `test/application/ui-gateway.test.ts`;
+  - the fixture server serves a hand-written bridge view.
+- Browser check in a temp ZIGGY_HOME, with the fixture and the official `server-basic-vanillajs` as codemode plugins:
+  - the fixture view's app-only call went through, model_only was refused, and `ui/message` reached the composer unsent;
+  - the official view's buttons worked;
+  - expand kept the same iframe, the phone layout fit, the card reloaded from history, and a foreign Host got 421.
+  - Fixes made from the check:
+    - cards are titled `<server> · <tool>`, not "codemode";
+    - the fixture applies the host theme variables.
+- Verification: `bun run check` passes. `bun test test`: 686 pass, 0 fail, 95 files. Nothing committed.
+
+### Plugins Step 4: Review round 1
+
+- CSP: the `srcdoc` always starts `<!doctype html><meta http-equiv="Content-Security-Policy">`, so no
+  view markup (including `<!-->` or `--!>` comment tricks) comes before it; unit test with both inputs.
+  The navigation guard also requires `event.source === iframe.contentWindow`. Plan Limits corrected:
+  `data:`/`blob:` self-navigation keeps origin `"null"`.
+- Web UI link: removed from `SessionHandle.prompt` (no more `session/` → `adapters/fs` import). The
+  Telegram, Discord and Slack faces count views from the tool events they already receive
+  (`application/web-view-link.ts`) and add the link only when `.gateway/web.json` has a `publicUrl`.
+  Automations, specialists, ACP and the TUI never get it. Chose face-side counting over a new
+  `prompt` return type, which would have changed every `ChatHandle` fake for one chat-face concern.
+- `app.callTool` / `app.readResource` work only on live `ui` sessions; Slack/Telegram/Discord sessions
+  are `watch_only` (test). The "asking owner" claim now names what is true: content-store results are
+  readable only by the connection's upload owner.
+- `mcp-apps.ts`: a tool whose `_meta.ui` is present but does not decode is hidden and logged; MCP error
+  messages from view calls are redacted.
+- Web: each view is bound to the SessionRef it mounted in; the gateway refuses its calls and drops its
+  context and drafts once another conversation is selected (test). `ui/open-link` needs a recent user
+  gesture (`navigator.userActivation`) or a confirm. AppView loads with `React.lazy`. `CallToolResult`
+  is derived from `@modelcontextprotocol/core`; `@modelcontextprotocol/client` stays a dependency
+  because ext-apps' `app-bridge.js` imports `Protocol` from it at runtime (a required peer).
+- Tests: G7 under codemode (listing and a script calling `tools.mcp__fixture__app_only`), the history
+  view budget, history decode of `details.app`, the chat-face link rule.
+- Lazy chunk: Vite names it `assets/app-view.js` (fixed `chunkFileNames`), and the generator and
+  `adapters/bun/web-assets.ts` embed and serve it. `app.js` is 653 kB (198 kB gzip), was 893 kB; the
+  chunk is 241 kB (62 kB gzip).
+- Browser check on a temp resident: the chunk loads (200), the `srcdoc` begins with the doctype and CSP
+  meta, `sandbox="allow-scripts"`, and the fixture view shows `app_only` ok, `model_only` refused, and
+  the drafted `ui/message`. No console errors.
+- `bun run check` passes; `bun test test` 690 pass, 0 fail (96 files); web `vp test` 89 pass (14 files).
+
+### Plugins Step 4: Review round 2
+
+- Web UI link dropped (supersedes round 1's face-side link). Telegram, Discord and Slack sessions are
+  watch-only for `app.*`, so the link pointed at views that could never load.
+  `application/web-view-link.ts`, its test and its three face call sites are gone; the faces are back
+  to HEAD. Every face without UI shows only the tool's text result (R0).
+- The web UI mounts a view only when the selected conversation is a live web UI session
+  (`selectedServesViews`). The rule is an allow list, not an exclusion list: the ref must be live and
+  in the set of live refs `session.list` reports as kind `ui`. Every other session, including stored,
+  ended and chat-face ones, shows "Interactive view available only in live web UI conversations"
+  (gateway test).
+- `ui/open-link`: `makeLinkGate` per view. A gesture opens at once; otherwise the person confirms
+  (`window.confirm` blocks, so one dialog at a time), and after a decline later requests are refused
+  silently for the view's life (unit test).
+- `generate-web-assets.mjs` fails (generate and `--check`) on any `dist/assets` file it does not list.
+- The navigation guard keeps one comparison, `event.source !== frame.contentWindow`.
+- `bun run check` passes; `bun test test` 689 pass, 0 fail (95 files, one fewer with the link test
+  removed); web `vp test` 91 pass.
+- Round 3 follow-ups: a gesture counts only when `userActivation.isActive` and focus is in this view's
+  iframe (`document.activeElement === frame`), so typing in the composer cannot let a declined view
+  open a tab; `makeLinkGate` dropped its redundant `pending` flag; `selectedServesViews` uses the `ui`
+  allow list above and the note says "live". `bun run check` passes; `bun test test` 689 pass;
+  web `vp test` 91 pass.

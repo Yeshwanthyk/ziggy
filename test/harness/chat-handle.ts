@@ -2,6 +2,7 @@
 import { Effect } from "effect";
 import type { ChatHandle } from "ziggy/session/index";
 import { AutomationConversationDeliveryFailed } from "ziggy/domain/automation";
+import { McpAppRefused } from "ziggy/extensions/index";
 import { ProviderConfigError } from "ziggy/profile/index";
 
 const unsupportedLiveControl = (operation: string) =>
@@ -45,6 +46,14 @@ export const makeChatHandle = (
         listeners.delete(listener);
       };
     },
+    callAppTool: (server) =>
+      Effect.fail(
+        new McpAppRefused({ server, reason: "unknown-server", message: "no MCP servers" }),
+      ),
+    readAppResource: (server) =>
+      Effect.fail(
+        new McpAppRefused({ server, reason: "unknown-server", message: "no MCP servers" }),
+      ),
     dispose: Effect.void,
     ...methods,
     resume: (reference) =>

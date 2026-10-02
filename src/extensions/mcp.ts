@@ -13,6 +13,7 @@ import {
   type ToolResultEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { Predicate, Schema } from "effect";
+import { makeMcpApps, type McpApps, type McpToolApp } from "./mcp-apps";
 import type { PluginMcp, PluginServer } from "./plugin";
 // Pi 0.99.1 requires this concrete class but does not export it from the package root.
 import { McpOAuthCredentialStore } from "../../node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/oauth.js";
@@ -22,6 +23,8 @@ export interface ProfileMcpOptions {
   readonly servers?: ReadonlyArray<McpServerEntry>;
   /** Servers from the Profile's selected Agent Plugins, already resolved by `pluginMcp`. */
   readonly plugins?: PluginMcp;
+  /** The Profile runtime's MCP Apps registry; every connection goes through its transport tap. */
+  readonly apps?: McpApps;
 }
 
 /** Names of tools the MCP extension creates for server tools. */
@@ -166,23 +169,36 @@ const redactResult = (
  * sees them. Nested calls from codemode emit `tool_result` too. Pi only logs a handler that throws
  * and keeps the original result, so a failure withholds the result instead.
  */
+/** Every known secret form, longest first so a secret containing another is replaced whole. */
+const knownSecrets = (
+  servers: ReadonlyArray<Pick<McpServerEntry, "config">>,
+  pluginSecrets: ReadonlyArray<string>,
+): ReadonlyArray<string> =>
+  [
+    ...new Set([...pluginSecrets, ...servers.flatMap((server) => configSecrets(server.config))]),
+  ].sort((left, right) => right.length - left.length);
+
 const redactExtension =
-  (servers: ReadonlyArray<McpServerEntry>, known: ReadonlyArray<string>): ExtensionFactory =>
+  (
+    servers: ReadonlyArray<McpServerEntry>,
+    known: ReadonlyArray<string>,
+    apps: McpApps,
+  ): ExtensionFactory =>
   (pi) => {
     const pluginSecrets = known.flatMap(secretForms);
+
+    // App results never pass through `tool_result`; they get the same redaction here.
+    apps.setRedactor((value) => {
+      const secrets = knownSecrets([...servers, ...pi.getMcpServers()], pluginSecrets);
+
+      return secrets.length === 0 ? value : redactJson(value, secrets);
+    });
 
     pi.on("tool_result", (event: ToolResultEvent): ToolResultEventResult | undefined => {
       if (!carriesMcpOutput(event.toolName)) return undefined;
 
       try {
-        const secrets = [
-          ...new Set([
-            ...pluginSecrets,
-            ...[...servers, ...pi.getMcpServers()].flatMap((server) =>
-              configSecrets(server.config),
-            ),
-          ]),
-        ].sort((left, right) => right.length - left.length);
+        const secrets = knownSecrets([...servers, ...pi.getMcpServers()], pluginSecrets);
 
         return secrets.length === 0 ? undefined : redactResult(event, secrets);
       } catch {
@@ -194,6 +210,55 @@ const redactExtension =
       }
     });
   };
+
+// Codemode scripts whose result has not arrived yet; one that never finishes is dropped oldest first.
+const NESTED_VIEWS_MAX = 32;
+
+/**
+ * Records the view of a model-called MCP tool in `details.app`, after redaction, so live events
+ * and stored history carry the same record. Content and structured content are left alone. A
+ * codemode script (Pi's default exposure) carries the view of the last MCP call it made that has
+ * one, since only the script's own call reaches the conversation.
+ */
+const appExtension =
+  (apps: McpApps): ExtensionFactory =>
+  (pi) => {
+    const nested = new Map<string, McpToolApp>();
+
+    pi.on("tool_result", (event: ToolResultEvent): ToolResultEventResult | undefined => {
+      if (event.toolName === "codemode") {
+        const app = nested.get(event.toolCallId);
+        nested.delete(event.toolCallId);
+
+        if (app === undefined || event.isError || !isJsonRecord(event.details)) return undefined;
+
+        return { details: { ...event.details, app } };
+      }
+
+      if (!isMcpToolName(event.toolName) || event.isError) return undefined;
+      const app = apps.toolApp(event);
+
+      if (app === undefined) return undefined;
+
+      if (event.parentToolCallId !== undefined) {
+        nested.delete(event.parentToolCallId);
+        nested.set(event.parentToolCallId, app);
+
+        for (const id of nested.keys()) {
+          if (nested.size <= NESTED_VIEWS_MAX) break;
+          nested.delete(id);
+        }
+
+        return undefined;
+      }
+
+      if (!isJsonRecord(event.details)) return undefined;
+
+      return { details: { ...event.details, app } };
+    });
+  };
+
+const isJsonRecord = Schema.is(Schema.Record(Schema.String, Schema.Json));
 
 const pluginEntry = ({ name, plugin, config }: PluginServer): McpServerEntry => ({
   name,
@@ -259,6 +324,8 @@ export const mcpExtensions = (
   const servers = [...(options.servers ?? []), ...plugins.map(pluginEntry)];
   // Plugin configs are scanned for header values (and their Bearer/Basic tokens) and credential
   // env values; see `scannedPluginEntry`.
+  // Sessions built without a runtime registry still get the tap, so app-only tools stay hidden.
+  const apps = options.apps ?? makeMcpApps();
   const scanned = [...(options.servers ?? []), ...plugins.map(scannedPluginEntry)];
 
   return [
@@ -274,13 +341,15 @@ export const mcpExtensions = (
         },
         // Caller-owned entries are session configuration, never writable mcp.json files.
         updateConfig: () => undefined,
+        createTransport: apps.transport,
       }),
     },
     { name: "codemode", factory: createCodemodeExtension() },
     { name: "tool-search", factory: createToolSearchExtension() },
     {
       name: "mcp-redact",
-      factory: redactExtension(scanned, options.plugins?.secrets ?? []),
+      factory: redactExtension(scanned, options.plugins?.secrets ?? [], apps),
     },
+    { name: "mcp-apps", factory: appExtension(apps) },
   ];
 };

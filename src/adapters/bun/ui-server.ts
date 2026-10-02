@@ -13,8 +13,10 @@ import { fileSystemCauseDetails } from "../../platform/cause";
 import { openWebAccessStore } from "./web-access-sqlite";
 import { webAssetResponse } from "./web-assets";
 import {
+  makeUiAppContentStore,
   makeUiUploadStore,
   UI_IMAGE_MAX_BYTES,
+  type UiAppContentStore,
   type UiUploadStore,
 } from "../../application/ui-gateway";
 
@@ -48,6 +50,8 @@ const imageMatchesType = (bytes: Buffer, mimeType: string): boolean => {
 };
 
 const TOKEN_PATTERN = /^[0-9a-f]{64}$/u;
+
+const APP_CONTENT_PATH = /^\/app-content\/([0-9a-f-]{36})$/u;
 
 const Token = Schema.String.check(
   Schema.makeFilter((value) => TOKEN_PATTERN.test(value), {
@@ -124,6 +128,7 @@ export interface UiServerOptions {
   readonly port?: number;
   readonly publicUrl?: string;
   readonly uploads?: UiUploadStore;
+  readonly appContent?: UiAppContentStore;
 }
 
 interface SocketState {
@@ -481,6 +486,7 @@ export const openUiServer = (
     }
 
     const uploads = options.uploads ?? makeUiUploadStore();
+    const appContent = options.appContent ?? makeUiAppContentStore();
     const token = randomBytes(32).toString("hex");
     const cookieName = gatewayCookieName(profilePath);
 
@@ -571,6 +577,16 @@ export const openUiServer = (
               `http://localhost:${current.port}`,
               ...(options.publicUrl === undefined ? [] : [new URL(options.publicUrl).origin]),
             ]);
+
+            // A rebound DNS name reaches this loopback port with a foreign Host; refuse it.
+            const allowedHosts = new Set([
+              `127.0.0.1:${current.port}`,
+              `localhost:${current.port}`,
+              ...(options.publicUrl === undefined ? [] : [new URL(options.publicUrl).host]),
+            ]);
+
+            if (!allowedHosts.has(request.headers.get("Host")?.toLowerCase() ?? ""))
+              return new Response("Misdirected Request", { status: 421 });
 
             if (url.pathname === "/auth/pair" && request.method === "POST") {
               const code = await request.text();
@@ -669,6 +685,23 @@ export const openUiServer = (
                 { id },
                 { status: 201, headers: { "Cache-Control": "no-store" } },
               );
+            }
+
+            const contentId = APP_CONTENT_PATH.exec(url.pathname)?.[1];
+
+            if (contentId !== undefined && request.method === "GET") {
+              const body =
+                uploadOwner === undefined ? undefined : appContent.take(uploadOwner, contentId);
+
+              if (body === undefined) return new Response("Not Found", { status: 404 });
+
+              return new Response(body, {
+                headers: {
+                  "Content-Type": "application/json; charset=utf-8",
+                  "Cache-Control": "no-store",
+                  "X-Content-Type-Options": "nosniff",
+                },
+              });
             }
 
             if (url.pathname === "/auth/status")
@@ -829,7 +862,11 @@ export const openUiServer = (
       return yield* serverError("start", "UI server did not bind a TCP port");
     }
 
-    const uploadCleanup = setInterval(uploads.sweep, 60_000);
+    const uploadCleanup = setInterval(() => {
+      uploads.sweep();
+      appContent.sweep();
+    }, 60_000);
+
     const projectionPath = uiServerProjectionPath(profilePath);
     let shutdownStarted = false;
     let projectionPublished = false;

@@ -12,6 +12,7 @@ import {
   UiRequestId,
   UiServerEpoch,
   UiSessionRef,
+  UiToolApp,
   UI_PROTOCOL_MAX_FRAME_BYTES,
 } from "./fields";
 import { UiGatewayErrorCode } from "./core-results";
@@ -90,6 +91,7 @@ const UiToolEvent = Schema.Struct({
     toolName: boundedCodePointString("tool name", 256),
     failed: Schema.Boolean,
     detail: Schema.optionalKey(boundedCodePointString("tool detail", 4_096, 0)),
+    app: Schema.optionalKey(UiToolApp),
   }),
 });
 

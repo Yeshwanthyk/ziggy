@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 import {
   UiEventFrame,
+  UiToolApp,
   type UiEventFrame as UiEventFrameValue,
   type UiCommandId,
   type UiSessionRef,
@@ -10,6 +11,9 @@ import type { LiveSessionEvent } from "../../resident/live-sessions";
 import { boundedText } from "./errors";
 
 const decodeEventFrame = Schema.decodeUnknownSync(UiEventFrame);
+
+/** A view record that would not fit the wire is dropped; the tool line still shows. */
+const isWireToolApp = Schema.is(UiToolApp);
 
 const ASSISTANT_DELTA_MAX_BYTES = 2_000;
 
@@ -84,35 +88,30 @@ export const eventFrame = (
           },
         }),
       );
-    case "tool":
-      if (event.event.detail === undefined) {
-        return decodeEventFrame(
-          withCorrelation({
-            ...base,
-            event: "tool",
-            payload: {
-              phase: event.event.phase,
-              toolCallId: boundedText(event.event.toolCallId, 256, "tool"),
-              toolName: boundedText(event.event.toolName, 256, "tool"),
-              failed: event.event.failed,
-            },
-          }),
-        );
-      }
+    case "tool": {
+      const tool = event.event;
+
+      const payload = {
+        phase: tool.phase,
+        toolCallId: boundedText(tool.toolCallId, 256, "tool"),
+        toolName: boundedText(tool.toolName, 256, "tool"),
+        failed: tool.failed,
+      };
+
+      const detailed =
+        tool.detail === undefined
+          ? payload
+          : { ...payload, detail: wireText(tool.detail, TOOL_DETAIL_MAX_CODE_POINTS) };
 
       return decodeEventFrame(
         withCorrelation({
           ...base,
           event: "tool",
-          payload: {
-            phase: event.event.phase,
-            toolCallId: boundedText(event.event.toolCallId, 256, "tool"),
-            toolName: boundedText(event.event.toolName, 256, "tool"),
-            failed: event.event.failed,
-            detail: wireText(event.event.detail, TOOL_DETAIL_MAX_CODE_POINTS),
-          },
+          payload: isWireToolApp(tool.app) ? { ...detailed, app: tool.app } : detailed,
         }),
       );
+    }
+
     case "voice":
       return decodeEventFrame(
         withCorrelation({

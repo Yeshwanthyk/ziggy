@@ -15,7 +15,17 @@ import {
   Square,
   Star,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
+import type { AppHost } from "@/apps/app-view";
 import type {
   ZiggyRecipientId,
   ZiggySessionHistoryEntry,
@@ -60,6 +70,30 @@ const historyKey = (entry: ZiggySessionHistoryEntry, index: number): string =>
         ? `${entry.automationId}:${entry.runId}`
         : entry.text.slice(0, 24)
   }:${index}`;
+
+// The MCP Apps bridge and its schemas load only when a conversation has a view to show.
+const AppView = lazy(() =>
+  import("@/apps/app-view").then((module) => ({ default: module.AppView })),
+);
+
+function LazyAppView(props: Parameters<typeof AppView>[0]) {
+  return (
+    <Suspense fallback={<div className="app-view is-loading" aria-busy="true" />}>
+      <AppView {...props} />
+    </Suspense>
+  );
+}
+
+/** Shown where a view cannot run: stored, Telegram, Discord and Slack sessions refuse its calls. */
+function ViewUnavailable({ title }: { readonly title: string }) {
+  return (
+    <div className="tool-line">
+      <span className="tool-dot" />
+      <span>{title}</span>
+      <span>Interactive view available only in live web UI conversations</span>
+    </div>
+  );
+}
 
 const sameSession = (left: ZiggySessionRef | undefined, right: ZiggySessionRef): boolean =>
   left?.profileId === right.profileId &&
@@ -130,13 +164,37 @@ function ActionRow({
   );
 }
 
+/** Tool calls with a view render alone, never folded into a group of finished calls. */
+const isFoldableTool = (entry: {
+  readonly phase: string;
+  readonly failed: boolean;
+  readonly app?: unknown;
+}) => entry.phase === "end" && !entry.failed && entry.app === undefined;
+
 export function HistoryEntry({
+  appHost,
   assistantName,
   entry,
+  sessionRef,
 }: {
+  readonly appHost?: AppHost;
   readonly assistantName: string;
   readonly entry: ZiggySessionHistoryEntry;
+  /** Set only when the conversation is a live web UI session that can serve views. */
+  readonly sessionRef?: ZiggySessionRef;
 }) {
+  if (entry.kind === "tool" && entry.app !== undefined) {
+    if (appHost === undefined || sessionRef === undefined)
+      return <ViewUnavailable title={`${entry.app.server} · ${entry.app.tool}`} />;
+    return (
+      <LazyAppView
+        app={entry.app}
+        host={appHost}
+        sessionRef={sessionRef}
+        title={`${entry.app.server} · ${entry.app.tool}`}
+      />
+    );
+  }
   if (entry.kind === "tool") {
     return (
       <div className="tool-line">
@@ -197,6 +255,19 @@ export function App({ connection }: { readonly connection?: AppConnection } = {}
   const [selectedAutomationId, setSelectedAutomationId] = useState<string>();
   const [agentEditorOpen, setAgentEditorOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  // A view's `ui/message` lands in the composer; the person sends it, or not.
+  const appHost: AppHost = useMemo(
+    () => ({
+      readResource: gateway.readAppResource,
+      callTool: gateway.callAppTool,
+      setContext: gateway.setAppContext,
+      draftMessage: (ref, text) => {
+        if (!sameSession(gateway.selectedRef, ref)) return;
+        setDraft((current) => (current.trim().length === 0 ? text : `${current}\n\n${text}`));
+      },
+    }),
+    [gateway.readAppResource, gateway.callAppTool, gateway.setAppContext, gateway.selectedRef],
+  );
   const [attachments, setAttachments] = useState<
     ReadonlyArray<{ readonly file: File; readonly url: string }>
   >([]);
@@ -874,14 +945,18 @@ export function App({ connection }: { readonly connection?: AppConnection } = {}
             ) : null}
             {groupCompletedActivity(
               gateway.history,
-              (entry) => entry.kind === "tool" && entry.phase === "end" && !entry.failed,
+              (entry) => entry.kind === "tool" && isFoldableTool(entry),
             ).map((entries, groupIndex) => (
               <ToolActivity count={entries.length} key={groupIndex}>
                 {entries.map((entry, index) => (
                   <HistoryEntry
+                    appHost={appHost}
                     assistantName={gateway.selectedTitle}
                     entry={entry}
                     key={historyKey(entry, index)}
+                    {...(gateway.selectedRef === undefined || !gateway.selectedServesViews
+                      ? {}
+                      : { sessionRef: gateway.selectedRef })}
                   />
                 ))}
               </ToolActivity>
@@ -901,28 +976,46 @@ export function App({ connection }: { readonly connection?: AppConnection } = {}
                 </div>
               </article>
             )}
-            {groupCompletedActivity(
-              gateway.tools,
-              (tool) => tool.phase === "end" && !tool.failed,
-            ).map((tools, groupIndex) => (
+            {groupCompletedActivity(gateway.tools, isFoldableTool).map((tools, groupIndex) => (
               <ToolActivity count={tools.length} key={groupIndex}>
-                {tools.map((tool) => (
-                  <div className="tool-line live" key={tool.id}>
-                    <span
-                      className={
-                        tool.failed
-                          ? "tool-dot is-error"
-                          : tool.phase === "end"
-                            ? "tool-dot"
-                            : "tool-dot is-running"
-                      }
+                {tools.map((tool) =>
+                  tool.app !== undefined &&
+                  tool.phase === "end" &&
+                  !tool.failed &&
+                  !gateway.selectedServesViews ? (
+                    <ViewUnavailable
+                      key={tool.id}
+                      title={`${tool.app.server} · ${tool.app.tool}`}
                     />
-                    <span>{tool.name}</span>
-                    <span>
-                      {tool.phase === "end" ? (tool.failed ? "failed" : "finished") : "working"}
-                    </span>
-                  </div>
-                ))}
+                  ) : tool.app !== undefined &&
+                    tool.phase === "end" &&
+                    !tool.failed &&
+                    gateway.selectedRef !== undefined ? (
+                    <LazyAppView
+                      app={tool.app}
+                      host={appHost}
+                      key={tool.id}
+                      sessionRef={gateway.selectedRef}
+                      title={`${tool.app.server} · ${tool.app.tool}`}
+                    />
+                  ) : (
+                    <div className="tool-line live" key={tool.id}>
+                      <span
+                        className={
+                          tool.failed
+                            ? "tool-dot is-error"
+                            : tool.phase === "end"
+                              ? "tool-dot"
+                              : "tool-dot is-running"
+                        }
+                      />
+                      <span>{tool.name}</span>
+                      <span>
+                        {tool.phase === "end" ? (tool.failed ? "failed" : "finished") : "working"}
+                      </span>
+                    </div>
+                  ),
+                )}
               </ToolActivity>
             ))}
             {gateway.busy &&
@@ -1018,6 +1111,26 @@ export function App({ connection }: { readonly connection?: AppConnection } = {}
             ) : null}
             <form className="composer" onSubmit={(event) => void send(event)}>
               <div className="composer-content">
+                {gateway.appContext.length === 0 ? null : (
+                  <div className="app-context-chips" aria-label="Context from views">
+                    {gateway.appContext.map((entry) => (
+                      <div className="app-context-chip" key={entry.server} title={entry.text}>
+                        <span>Context from {entry.server}</span>
+                        <button
+                          aria-label={`Remove context from ${entry.server}`}
+                          disabled={sending}
+                          onClick={() => {
+                            if (gateway.selectedRef !== undefined)
+                              gateway.setAppContext(gateway.selectedRef, entry.server, "");
+                          }}
+                          type="button"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {attachments.length === 0 ? null : (
                   <div className="attachment-previews" aria-label="Image attachments">
                     {attachments.map(({ file, url }) => (

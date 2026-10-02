@@ -9,6 +9,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         assetFileNames: "assets/[name][extname]",
+        // Fixed names: the resident embeds a known list (tooling/generate-web-assets.mjs).
+        chunkFileNames: "assets/[name].js",
         entryFileNames: "assets/app.js",
       },
     },
