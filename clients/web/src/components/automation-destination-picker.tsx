@@ -3,7 +3,15 @@ import type { AutomationDestinationOption } from "@/gateway";
 import { Bot, Hash, MessageCircle, Pin } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
-type DestinationFilter = "all" | "pinned" | "agent" | "session" | "slack" | "discord" | "telegram";
+type DestinationFilter =
+  | "all"
+  | "pinned"
+  | "agent"
+  | "session"
+  | "slack"
+  | "discord"
+  | "telegram"
+  | "device";
 
 interface DestinationGroup {
   readonly id: Exclude<DestinationFilter, "all">;
@@ -26,6 +34,7 @@ const filters: ReadonlyArray<{ readonly id: DestinationFilter; readonly label: s
   { id: "slack", label: "Slack" },
   { id: "discord", label: "Discord" },
   { id: "telegram", label: "Telegram" },
+  { id: "device", label: "Devices" },
 ];
 
 const groupLabels = {
@@ -35,6 +44,7 @@ const groupLabels = {
   slack: "Slack",
   discord: "Discord",
   telegram: "Telegram",
+  device: "Device",
 } as const satisfies Record<Exclude<DestinationFilter, "all">, string>;
 
 const normalized = (value: string): string => value.trim().toLocaleLowerCase();
@@ -49,7 +59,11 @@ const contextFor = (destination: AutomationDestinationOption): string => {
       : `Agent · ${destination.agentId}`;
   }
   if (destination.category === "session") return "Conversation history";
-  const address = destination.target.split(":").slice(2).join(":");
+  // `device:<id>` has no kind segment, unlike `slack:channel:<id>`.
+  const address = destination.target
+    .split(":")
+    .slice(destination.category === "device" ? 1 : 2)
+    .join(":");
   return `${groupLabels[destination.category]} · ${address}`;
 };
 
@@ -140,7 +154,9 @@ export function AutomationDestinationPicker({
           ? matches.filter((destination) => destination.pinned)
           : matches.filter((destination) => destination.category === filter);
     const order: ReadonlyArray<Exclude<DestinationFilter, "all">> =
-      filter === "all" ? ["pinned", "agent", "session", "slack", "discord", "telegram"] : [filter];
+      filter === "all"
+        ? ["pinned", "agent", "session", "slack", "discord", "telegram", "device"]
+        : [filter];
 
     return order.flatMap((id): ReadonlyArray<DestinationGroup> => {
       const entries = visible

@@ -178,9 +178,15 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 
 ### S6 — Push
 
-- [ ] `device:<id>` automation target in `domain/automation.ts`; delivery via `notify`.
-- [ ] Remember `device:<id>` as a destination when a device chats (moved from S4).
-- [ ] `display.show {text | image}` from tools and automations.
+- [x] `device:<id>` automation target in `domain/automation.ts`; delivery via `notify`
+  (`DeviceLinks.push`). Offline → `transport`, retriable, not retried; unpaired →
+  `destination-missing`.
+- [x] Remember `device:<id>` as a destination when a device chats (moved from S4).
+- [x] `display.show {text}` from the `device_show` tool; a device without a screen fails the call.
+- Moved to S10: `display.show {image}` needs the renderer.
+- [x] Found while proving: a web bundle built before a new destination kind rejects the whole
+  `destination.list`, so the sidebar shows "could not be refreshed". Rebuild with
+  `bun run generate:web-assets`, not only `tooling/generate-web-assets.mjs`.
 - Gate: `[push]`.
 
 ### S7 — ESP32 port (ESP32-S3-BOX-3 first)
@@ -209,6 +215,7 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 ### S10 — Small-screen views
 
 - [ ] Render a reply or an MCP Apps view to JPEG / RGB565 at the device's reported resolution.
+- [ ] `display.show {image}` from `device_show` and automations (moved from S6).
 - Gate: `[screen]`.
 
 ### S11 — BLE pairing and OTA
@@ -243,7 +250,8 @@ Taken so slices can proceed without blocking; each can be changed later.
 | S3 | done | `bun test test/e2e/device-conformance.test.ts` (pair and pin, forged key refused before the code is sent, reconnect across a hub restart, revoke 4401, replace 4409); `bun run check:device` (vector, tamper); recipe C4 `/tmp/ziggy-devices-proof/s3-20261003-135654` |
 | S4 | done | `bun test test/e2e/device-chat.test.ts` (T1 status, deltas, done; T2 one session that continues; T3 abort → chat.error; T4 busy -32001, text never sent; T5 provider failure → chat.error); recipe T1, T2 `/tmp/ziggy-devices-proof/s4-20261003-140448` |
 | S5 | done | `bun test test/e2e/device-tools.test.ts` (K1 tool listed, none in `ziggy run`; K2 call and result reach the model; K3 offline fails at once; K4 specialist allowlist; K5 a command added online reaches later sessions); recipe K1, K2 `/tmp/ziggy-devices-proof/s5-20261003-141513` |
-| S6–S12 | not started | |
+| S6 | done | `bun test test/e2e/device-push.test.ts` (U1 broadcast `device:<id>` → `notify`; U2 offline → transport retriable, unpaired → destination-missing; U3 `device_show` on a screen, error without one, chatting device listed as a destination); recipe U1–U3 and web picker `/tmp/ziggy-devices-proof/s6-20261003-142144` |
+| S7–S12 | not started | |
 
 ## Open decisions
 

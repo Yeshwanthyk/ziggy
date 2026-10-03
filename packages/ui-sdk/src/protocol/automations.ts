@@ -11,13 +11,19 @@ import {
 
 export type ZiggyAutomationId = string;
 
-export type ZiggyAutomationDestinationKind = "conversation" | "telegram" | "discord" | "slack";
+export type ZiggyAutomationDestinationKind =
+  | "conversation"
+  | "telegram"
+  | "discord"
+  | "slack"
+  | "device";
 export type ZiggyAutomationDestinationCategory =
   | "agent"
   | "session"
   | "telegram"
   | "discord"
-  | "slack";
+  | "slack"
+  | "device";
 
 export interface ZiggyAutomationDestination {
   readonly target: string;
@@ -243,6 +249,7 @@ export const isAutomationTarget = (value: unknown): value is string =>
   (/^conversation:[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u.test(value) ||
     /^telegram:chat:-?[1-9][0-9]*$/u.test(value) ||
     /^discord:channel:[1-9][0-9]*$/u.test(value) ||
+    /^device:[a-z0-9][a-z0-9-]{0,31}$/u.test(value) ||
     /^slack:channel:[CDG][A-Z0-9]{8,}(?::thread:[1-9][0-9]*\.[0-9]{6})?$/u.test(value));
 
 export const isDestinationListResult = (value: unknown): value is ZiggyDestinationListResult =>
@@ -267,12 +274,14 @@ export const isDestinationListResult = (value: unknown): value is ZiggyDestinati
       (entry.kind === "conversation" ||
         entry.kind === "telegram" ||
         entry.kind === "discord" ||
-        entry.kind === "slack") &&
+        entry.kind === "slack" ||
+        entry.kind === "device") &&
       (entry.category === "agent" ||
         entry.category === "session" ||
         entry.category === "telegram" ||
         entry.category === "discord" ||
-        entry.category === "slack") &&
+        entry.category === "slack" ||
+        entry.category === "device") &&
       typeof entry.pinned === "boolean" &&
       (entry.label === undefined || isBoundedCodePointString(entry.label, 160)) &&
       (entry.activityAt === undefined || isBoundedString(entry.activityAt, 128)) &&

@@ -2139,3 +2139,20 @@ section "T10".
 - `test/e2e/device-tools.test.ts` covers K1–K5 against a real resident: tool listed and absent from `ziggy run`; call and result; offline fails at once; a specialist allowlist hides it; a command added while online reaches later sessions.
 - `[tools]` K1 and K2 were driven by hand through `ziggy-device run --commands` with a scripted model. Evidence is in `/tmp/ziggy-devices-proof/s5-20261003-141513`.
 - Full `bun test`: 719 pass, 0 fail.
+
+## 2026-10-03 — Devices S6: push
+
+- `device:<id>` is an automation target. Delivery pushes `notify {title: <Profile name>, text}` over the device's live link (`DeviceLinks.push`), cut at 4000 code points. If the device is offline, the delivery fails as `transport`: it is marked retriable but not retried, and a push is never queued for later. A device that is not paired fails as `destination-missing`.
+- The model's `device_show` tool (`{device, text}`) sends `display.show` text. It is offered while this process runs the hub and at least one device is paired. A device whose hello declared no `screen` fails the call. Images move to S10 with the renderer.
+- When a device chats, the resident remembers `device:<id>` (labelled with the device name) in its destination book, so the web destination picker lists it under a new **Devices** filter. The UI SDK, the gateway projections and the web client accept the `device` kind and category.
+- `ziggy-device run --screen <w>x<h>` declares a screen and logs `display …` lines.
+
+**Found while proving.** A web bundle built before a new destination kind rejects the whole `destination.list`, and the sidebar says "Some sidebar data could not be refreshed". The fix was to rebuild with `bun run generate:web-assets`, which builds `clients/web` first; `tooling/generate-web-assets.mjs` alone embeds the old `dist`.
+
+**Proof.**
+- `test/e2e/device-push.test.ts` runs against a real resident:
+  - U1: a broadcast to `device:kitchen` arrives as `notify`.
+  - U2: an offline device fails as transport, retriable; an unpaired device fails as destination-missing.
+  - U3: `device_show` reaches a screen and fails on a device without one; the device that chatted is listed by `destination.list`.
+- `[push]` U1–U4 were driven by hand: two `ziggy-device run` devices, `ziggy wake`, a chat that calls `device_show`, and the web picker. Evidence is in `/tmp/ziggy-devices-proof/s6-20261003-142144`.
+- Full `bun test`: 722 pass, 0 fail. `bun run check` exit 0.

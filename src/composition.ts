@@ -51,7 +51,9 @@ const SetupLayer = SetupLive.pipe(
   Layer.provide(Layer.mergeAll(Profiles.layer, Auth.layer, Models.layer, DoctorLayer)),
 );
 
-const AutomationsLayer = AutomationsLive.pipe(Layer.provide(ZiggyAgentLayer));
+const AutomationsLayer = AutomationsLive.pipe(
+  Layer.provide(Layer.merge(ZiggyAgentLayer, DeviceLinks.layer)),
+);
 
 const AutomationSchedulerLayer = AutomationSchedulerLive.pipe(Layer.provide(AutomationsLayer));
 

@@ -15,12 +15,19 @@ export class DeviceToolFailed extends Schema.TaggedErrorClass<DeviceToolFailed>(
 
 export type DeviceToolArguments = { readonly [key: string]: Schema.Json };
 
+/** What the hub may push to a device unasked. Images on the screen come with S10. */
+export type DevicePush =
+  | { readonly method: "notify"; readonly title?: string; readonly text: string }
+  | { readonly method: "display.show"; readonly text: string };
+
 /** One connected device, as the hub serves it. */
 export interface DeviceLink {
   readonly call: (
     name: string,
     args: DeviceToolArguments,
   ) => Effect.Effect<ToolResult, DeviceToolFailed>;
+  /** Queues a push; `display.show` fails for a device without a screen. */
+  readonly push: (message: DevicePush) => Effect.Effect<void, DeviceToolFailed>;
 }
 
 const linkKey = (profilePath: string, deviceId: string) => `${profilePath}\u0000${deviceId}`;
@@ -30,6 +37,15 @@ export class DeviceLinks extends Context.Service<DeviceLinks>()("ziggy/DeviceLin
     const hubs = new Map<string, number>();
 
     const links = new Map<string, DeviceLink>();
+
+    const linked = (profilePath: string, deviceId: string) =>
+      Effect.suspend(() => {
+        const link = links.get(linkKey(profilePath, deviceId));
+
+        return link === undefined
+          ? Effect.fail(new DeviceToolFailed({ deviceId, message: `${deviceId} is offline` }))
+          : Effect.succeed(link);
+      });
 
     return {
       /** A hub for this Profile runs in this process. */
@@ -61,13 +77,14 @@ export class DeviceLinks extends Context.Service<DeviceLinks>()("ziggy/DeviceLin
         name: string,
         args: DeviceToolArguments,
       ): Effect.Effect<ToolResult, DeviceToolFailed> =>
-        Effect.suspend(() => {
-          const link = links.get(linkKey(profilePath, deviceId));
-
-          return link === undefined
-            ? Effect.fail(new DeviceToolFailed({ deviceId, message: `${deviceId} is offline` }))
-            : link.call(name, args);
-        }),
+        linked(profilePath, deviceId).pipe(Effect.flatMap((link) => link.call(name, args))),
+      /** Pushes to a device; one that is not connected fails at once. */
+      push: (
+        profilePath: string,
+        deviceId: string,
+        message: DevicePush,
+      ): Effect.Effect<void, DeviceToolFailed> =>
+        linked(profilePath, deviceId).pipe(Effect.flatMap((link) => link.push(message))),
     };
   }),
 }) {

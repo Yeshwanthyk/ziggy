@@ -28,6 +28,11 @@ const SlackTarget = Schema.TaggedStruct("slack", {
   threadTs: Schema.optional(Schema.String),
 });
 
+const DeviceTarget = Schema.TaggedStruct("device", {
+  target: Schema.String,
+  deviceId: Schema.String,
+});
+
 const StoredSessionId = Schema.String.check(
   Schema.makeFilter(
     (value) => value.length <= 128 && /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u.test(value),
@@ -44,6 +49,7 @@ export const AutomationTarget = Schema.Union([
   TelegramTarget,
   DiscordTarget,
   SlackTarget,
+  DeviceTarget,
   ConversationTarget,
 ]);
 
@@ -111,6 +117,10 @@ export const automationTargetFromString = (source: string): AutomationTarget | u
       return { _tag: "telegram", target: source, chatId };
     }
   }
+
+  const device = /^device:([a-z0-9][a-z0-9-]{0,31})$/.exec(source);
+
+  if (device?.[1] !== undefined) return { _tag: "device", target: source, deviceId: device[1] };
 
   const discord = /^discord:channel:([1-9][0-9]*)$/.exec(source);
 

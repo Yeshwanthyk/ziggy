@@ -3,10 +3,11 @@
  * `ziggy-device`: run a Ziggy device from a shell, e.g. on a Raspberry Pi.
  *
  *   ziggy-device pair '<zdp://… URI>' --state device.json [--name Kitchen] [--model pi]
- *   ziggy-device run --state device.json [--commands ./commands.ts]
+ *   ziggy-device run --state device.json [--commands ./commands.ts] [--screen 320x240]
  *
  * The state file holds the device's private key; it is written 0600. A commands module's default
- * export is called with the device before it connects, to add commands.
+ * export is called with the device before it connects, to add commands. `--screen` declares a
+ * screen, so `display.show` text arrives as `display …` lines.
  *
  * While running, each line on stdin is sent to the Profile as a chat message, and `/abort` stops
  * the running turn. The reply is logged as `chat <turn> …` lines.
@@ -20,7 +21,7 @@ import { type DeviceIdentity, ZiggyDevice, type ZiggyDeviceOptions } from "../sr
 
 const USAGE = `usage:
   ziggy-device pair <uri> --state <file> [--name <name>] [--model <model>]
-  ziggy-device run --state <file> [--commands <module>]`;
+  ziggy-device run --state <file> [--commands <module>] [--screen <width>x<height>]`;
 
 const log = (line: string) => console.log(`[ziggy-device] ${line}`);
 
@@ -72,11 +73,17 @@ const readIdentity = async (path: string): Promise<DeviceIdentity> => {
   return isIdentity(value) ? value : fail(`${path} is not a device state file`);
 };
 
-const deviceOptions = (identity: DeviceIdentity): ZiggyDeviceOptions => ({
-  name: identity.name,
-  model: identity.model,
-  identity,
-});
+const parseScreen = (value: string) => {
+  const match = /^(\d+)x(\d+)$/.exec(value) ?? fail("--screen must be <width>x<height>");
+
+  return { width: Number(match[1]), height: Number(match[2]), formats: ["rgb565" as const] };
+};
+
+const deviceOptions = (identity: DeviceIdentity, screen?: string): ZiggyDeviceOptions => {
+  const options: ZiggyDeviceOptions = { name: identity.name, model: identity.model, identity };
+
+  return screen === undefined ? options : { ...options, screen: parseScreen(screen) };
+};
 
 const watch = (device: ZiggyDevice) => {
   device.on("state", (state, closed) =>
@@ -148,7 +155,7 @@ if (command === "pair") {
   log(`paired as ${identity.id} with ${identity.profile}; state in ${statePath}`);
   device.stop();
 } else if (command === "run") {
-  const device = new ZiggyDevice(deviceOptions(await readIdentity(statePath)));
+  const device = new ZiggyDevice(deviceOptions(await readIdentity(statePath), flags.get("screen")));
 
   const commands = flags.get("commands");
 

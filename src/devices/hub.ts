@@ -13,7 +13,12 @@ import { readPhysicalFile } from "../platform/tree";
 import { serveWebSockets, type WebSocketLink } from "../platform/websocket-server";
 import { type DeviceChat, type DeviceChatEvent } from "./chat";
 import { deviceHubKey } from "./keys";
-import { type DeviceLinksApi, type DeviceToolArguments, DeviceToolFailed } from "./links";
+import {
+  type DeviceLinksApi,
+  type DevicePush,
+  type DeviceToolArguments,
+  DeviceToolFailed,
+} from "./links";
 import {
   ZDP_PATH,
   ZDP_PROLOGUE,
@@ -295,6 +300,31 @@ const narrow = <M extends ZdpRequest["method"]>(
   return matches(message)
     ? Effect.succeed(message)
     : Effect.fail(drop(INTERNAL, `expected ${method}`));
+};
+
+/** A push becomes a notification on the link's outbox, after anything already queued. */
+const push = (
+  outbox: Queue.Queue<ZdpMessage>,
+  deviceId: string,
+  capabilities: DeviceCapabilities,
+  message: DevicePush,
+): Effect.Effect<void, DeviceToolFailed> => {
+  if (message.method === "display.show" && capabilities.screen === undefined)
+    return Effect.fail(new DeviceToolFailed({ deviceId, message: `${deviceId} has no screen` }));
+
+  return Queue.offer(
+    outbox,
+    message.method === "notify"
+      ? {
+          jsonrpc: "2.0",
+          method: "notify",
+          params:
+            message.title === undefined
+              ? { text: message.text }
+              : { title: message.title, text: message.text },
+        }
+      : { jsonrpc: "2.0", method: "display.show", params: { text: message.text } },
+  ).pipe(Effect.asVoid);
 };
 
 /** Requests the hub sends to one device, matched to their answers by id. */
@@ -725,7 +755,10 @@ export const runDeviceHub = (
         yield* Effect.gen(function* () {
           // A device may add its first command while online, so every link can be called.
           if (options.links !== undefined)
-            yield* options.links.attach(profilePath, device.id, { call: requests.callTool });
+            yield* options.links.attach(profilePath, device.id, {
+              call: requests.callTool,
+              push: (message) => push(outbox, device.id, capabilities, message),
+            });
 
           if (capabilities.tools !== undefined) yield* Effect.forkScoped(refreshTools);
 

@@ -1,6 +1,7 @@
 /**
  * A connected device's commands as Profile tools: `device__<id>__<cmd>`, one per command the device
- * listed, calling it over the hub's link. Only a process whose hub is running offers them.
+ * listed, calling it over the hub's link, plus `device_show` to put text on a device's screen.
+ * Only a process whose hub is running offers them.
  */
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
@@ -61,6 +62,47 @@ const defineDeviceTool = (
   };
 };
 
+interface DeviceShowArguments {
+  readonly device: string;
+  readonly text: string;
+}
+
+/** Puts text on a paired device's screen; a device without one, or offline, fails the call. */
+const defineDeviceShow = (
+  links: DeviceLinksApi,
+  profilePath: string,
+  devices: ReadonlyArray<DeviceRecord>,
+): ToolDefinition => ({
+  name: "device_show",
+  label: "device_show",
+  description: `Show text on a device's screen. Devices: ${devices
+    .map((device) => `${device.id} (${device.name})`)
+    .join(", ")}.`,
+  parameters: Type.Object({
+    device: Type.Union(devices.map((device) => Type.Literal(device.id))),
+    text: Type.String({ minLength: 1 }),
+  }),
+  execute(_toolCallId, params: DeviceShowArguments, signal) {
+    const program = links
+      .push(profilePath, params.device, { method: "display.show", text: params.text })
+      .pipe(
+        Effect.match({
+          onFailure: (failure) => ({ ok: false as const, message: failure.message }),
+          onSuccess: () => ({ ok: true as const }),
+        }),
+      );
+
+    return runCallback(program, signal).then((outcome) => {
+      if (!outcome.ok) throw new Error(outcome.message);
+
+      return {
+        content: [{ type: "text" as const, text: `shown on ${params.device}` }],
+        details: undefined,
+      };
+    });
+  },
+});
+
 /** Contributes the commands of this Profile's devices while its hub runs in this process. */
 export const deviceTools =
   (links: DeviceLinksApi): SessionTools =>
@@ -79,9 +121,13 @@ export const deviceTools =
                       `device tool ${deviceToolName(device.id, command.name)} is longer than ${MAX_TOOL_NAME} characters; skipped`,
                     ).pipe(Effect.as([]))
                   : Effect.succeed([defineDeviceTool(links, profilePath, device, command)]),
-            ),
+            ).pipe(Effect.map((tools) => ({ devices, tools }))),
           ),
-          Effect.map((tools) => tools.flat()),
+          Effect.map(({ devices, tools }) =>
+            devices.length === 0
+              ? tools.flat()
+              : [...tools.flat(), defineDeviceShow(links, profilePath, devices)],
+          ),
           Effect.catch((failure) =>
             Effect.logWarning(`device tools unavailable: ${failure.message}`).pipe(Effect.as([])),
           ),

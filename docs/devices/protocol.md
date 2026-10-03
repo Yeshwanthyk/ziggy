@@ -218,8 +218,12 @@ succeeds and does nothing.
 {"jsonrpc":"2.0","method":"audio.play","params":{"stream":4,"format":"mp3"}}
 ```
 
-The hub sends only what the device's `capabilities` allow: `display.show` images in a listed format
-at the device's size, `audio.play` in a listed `out` format.
+The hub sends only what the device's `capabilities` allow: `display.show` only with `screen`,
+images in a listed format at the device's size, `audio.play` in a listed `out` format.
+
+Ziggy pushes `notify` for an automation broadcast to `device:<id>`, titled with the Profile's
+name; the text is cut at 4000 code points. The model's `device_show` tool sends `display.show`
+text. Push is fire-and-forget: a device that is offline when a push is due does not get it later.
 
 ## Errors
 

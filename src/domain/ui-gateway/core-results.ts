@@ -235,9 +235,9 @@ export type UiSessionListResult = typeof UiSessionListResult.Type;
 
 export const UiAutomationDestination = Schema.Struct({
   target: AutomationTargetString,
-  kind: Schema.Literals(["conversation", "telegram", "discord", "slack"]),
+  kind: Schema.Literals(["conversation", "telegram", "discord", "slack", "device"]),
   label: Schema.optionalKey(boundedCodePointString("destination label", 160, 1)),
-  category: Schema.Literals(["agent", "session", "telegram", "discord", "slack"]),
+  category: Schema.Literals(["agent", "session", "telegram", "discord", "slack", "device"]),
   pinned: Schema.Boolean,
   activityAt: Schema.optionalKey(boundedString("destination activity timestamp", 128)),
   agentId: Schema.optionalKey(ProfileAgentId.check(Schema.isMaxLength(80))),

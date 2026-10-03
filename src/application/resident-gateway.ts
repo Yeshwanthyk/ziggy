@@ -131,6 +131,7 @@ export interface ResidentDevicesRuntime {
   readonly run: (
     target: ProfileTarget,
     live: LiveSessionsApi,
+    destinations: DestinationBook,
     logError: (message: string) => Effect.Effect<void>,
   ) => Effect.Effect<never, never, Scope.Scope>;
 }
@@ -144,7 +145,7 @@ const makeLiveDevicesRuntime = (
   agent: ZiggyAgentApi,
   links: DeviceLinksApi,
 ): ResidentDevicesRuntime => ({
-  run: (target, live, logError) =>
+  run: (target, live, destinations, logError) =>
     Effect.gen(function* () {
       const config = yield* readDevicesConfig(target.path);
 
@@ -155,7 +156,7 @@ const makeLiveDevicesRuntime = (
         profileName: target.name,
         hostname: config.listen.host,
         port: config.listen.port,
-        chat: makeDeviceChat(target, agent, live),
+        chat: makeDeviceChat(target, agent, live, destinations),
         links,
         log: logError,
       });
@@ -341,7 +342,7 @@ export const makeResidentGateway = (
                   runtime.logError(`[gateway] UI server stopped: ${failure.message}`),
                 ),
               ),
-            devices.run(target, live, runtime.logError),
+            devices.run(target, live, destinations, runtime.logError),
           ];
 
           if (config.telegram !== undefined)

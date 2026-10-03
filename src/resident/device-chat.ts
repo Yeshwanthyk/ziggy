@@ -8,6 +8,7 @@ import type { ZiggyAgentError } from "../domain/agent";
 import type { ProfileTarget } from "../profile";
 import { type DeviceChat, type DeviceChatEvent, DeviceChatRefused } from "../devices";
 import type { ChatHandle, ZiggyAgentApi } from "../session";
+import type { DestinationBook } from "./destinations";
 import type { LiveSessionsApi } from "./live-sessions";
 
 const ABORTED = "the turn was aborted";
@@ -19,6 +20,7 @@ export const makeDeviceChat = (
   target: ProfileTarget,
   agent: ZiggyAgentApi,
   live: LiveSessionsApi,
+  destinations: DestinationBook,
 ): DeviceChat => {
   /** Devices whose running turn was aborted, so it ends with an error whatever Pi returns. */
   const aborted = new Set<string>();
@@ -82,16 +84,23 @@ export const makeDeviceChat = (
         name: `Device · ${device.name}`,
       });
 
-      return live.acquire(key, "device", open).pipe(
-        Effect.andThen(live.runExclusive(key, (handle) => turn(device.id, text, emit, handle))),
-        Effect.mapError(
-          (refused) =>
-            new DeviceChatRefused({
-              reason: refused.reason === "busy" ? "busy" : "unavailable",
-              message: refused.reason === "busy" ? "a turn is running" : refused.message,
-            }),
-        ),
-      );
+      // A device that chats is a place automations can push to.
+      return destinations
+        .remember({
+          target: { _tag: "device", target: `device:${device.id}`, deviceId: device.id },
+          label: device.name,
+        })
+        .pipe(
+          Effect.andThen(live.acquire(key, "device", open)),
+          Effect.andThen(live.runExclusive(key, (handle) => turn(device.id, text, emit, handle))),
+          Effect.mapError(
+            (refused) =>
+              new DeviceChatRefused({
+                reason: refused.reason === "busy" ? "busy" : "unavailable",
+                message: refused.reason === "busy" ? "a turn is running" : refused.message,
+              }),
+          ),
+        );
     },
     abort: (device) => {
       const key = `device/${device.id}`;

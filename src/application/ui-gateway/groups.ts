@@ -207,9 +207,9 @@ export const dispatchGroups = (
           string,
           {
             readonly target: string;
-            readonly kind: "conversation" | "telegram" | "discord" | "slack";
+            readonly kind: "conversation" | "telegram" | "discord" | "slack" | "device";
             readonly label?: string;
-            readonly category: "agent" | "session" | "telegram" | "discord" | "slack";
+            readonly category: "agent" | "session" | "telegram" | "discord" | "slack" | "device";
             readonly pinned: boolean;
             readonly activityAt?: string;
             readonly agentId?: string;
