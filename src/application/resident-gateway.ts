@@ -37,6 +37,7 @@ import { ProfileAgents, type ProfileAgentsApi } from "../agents";
 import { readDevicesConfig, runDeviceHub } from "../devices";
 import { ZiggyAgent, type ZiggyAgentApi } from "../session";
 import { makeDestinationBook, type DestinationBook } from "../resident/destinations";
+import { makeDeviceChat } from "../resident/device-chat";
 import { makeLiveSessions, type LiveSessionsApi } from "../resident/live-sessions";
 import {
   DiscordGateway,
@@ -129,6 +130,7 @@ export interface ResidentUiRuntime {
 export interface ResidentDevicesRuntime {
   readonly run: (
     target: ProfileTarget,
+    live: LiveSessionsApi,
     logError: (message: string) => Effect.Effect<void>,
   ) => Effect.Effect<never, never, Scope.Scope>;
 }
@@ -138,8 +140,8 @@ const disabledDevicesRuntime: ResidentDevicesRuntime = {
 };
 
 /** Serves ZDP/1 when `devices.json` exists; without it no port is opened. */
-const liveDevicesRuntime: ResidentDevicesRuntime = {
-  run: (target, logError) =>
+const makeLiveDevicesRuntime = (agent: ZiggyAgentApi): ResidentDevicesRuntime => ({
+  run: (target, live, logError) =>
     Effect.gen(function* () {
       const config = yield* readDevicesConfig(target.path);
 
@@ -150,6 +152,7 @@ const liveDevicesRuntime: ResidentDevicesRuntime = {
         profileName: target.name,
         hostname: config.listen.host,
         port: config.listen.port,
+        chat: makeDeviceChat(target, agent, live),
         log: logError,
       });
 
@@ -163,7 +166,7 @@ const liveDevicesRuntime: ResidentDevicesRuntime = {
         ),
       ),
     ),
-};
+});
 
 const liveRuntime: ResidentGatewayRuntime = {
   loadConfig: loadResidentGatewayConfig,
@@ -334,7 +337,7 @@ export const makeResidentGateway = (
                   runtime.logError(`[gateway] UI server stopped: ${failure.message}`),
                 ),
               ),
-            devices.run(target, runtime.logError),
+            devices.run(target, live, runtime.logError),
           ];
 
           if (config.telegram !== undefined)
@@ -421,7 +424,7 @@ export const ResidentGatewayLive = Layer.effect(
         paths.profilesRegistry,
         paths.profilesDirectory,
       ),
-      liveDevicesRuntime,
+      makeLiveDevicesRuntime(yield* ZiggyAgent),
     );
   }),
 );

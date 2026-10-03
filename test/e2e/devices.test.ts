@@ -172,7 +172,7 @@ describe("with devices on", () => {
       result: { id: "kitchen", profile: "Harness", zdp: "1" },
     });
     expect((await first.closed).code).toBe(ZdpClose.replaced);
-    expect(await second.request("chat.send", { text: "hi" })).toMatchObject({
+    expect(await second.request("tools/list")).toMatchObject({
       error: { code: ZdpErrorCode.methodNotFound },
     });
   });

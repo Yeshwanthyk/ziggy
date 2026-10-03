@@ -8,7 +8,7 @@ export const MAX_UI_SESSIONS = 32;
 
 export const LIVE_REPLAY_LIMIT = 256;
 
-export type LiveSessionKind = "telegram" | "discord" | "slack" | "ui";
+export type LiveSessionKind = "telegram" | "discord" | "slack" | "device" | "ui";
 
 export interface LiveSessionEvent {
   readonly seq: number;

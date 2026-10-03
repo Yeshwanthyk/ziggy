@@ -7,10 +7,14 @@
  *
  * The state file holds the device's private key; it is written 0600. A commands module's default
  * export is called with the device before it connects, to add commands.
+ *
+ * While running, each line on stdin is sent to the Profile as a chat message, and `/abort` stops
+ * the running turn. The reply is logged as `chat <turn> …` lines.
  */
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { type DeviceIdentity, ZiggyDevice, type ZiggyDeviceOptions } from "../src/index";
 
@@ -94,6 +98,25 @@ const watch = (device: ZiggyDevice) => {
   );
 };
 
+const chat = (device: ZiggyDevice) => {
+  device.on("chat", (event) => {
+    if (event.type === "status")
+      log(`chat ${event.turn} ${event.state}${event.tool === undefined ? "" : ` ${event.tool}`}`);
+    else if (event.type === "error") log(`chat ${event.turn} error ${event.message}`);
+    else log(`chat ${event.turn} ${event.type} ${event.text}`);
+  });
+
+  createInterface({ input: process.stdin }).on("line", (line) => {
+    const text = line.trim();
+
+    if (text.length === 0) return;
+
+    const sent = text === "/abort" ? device.abort() : device.send(text);
+
+    sent.catch((error: Error) => log(`chat refused: ${error.message}`));
+  });
+};
+
 const loadCommands = async (device: ZiggyDevice, path: string) => {
   const module: { readonly default?: (device: ZiggyDevice) => void | Promise<void> } = await import(
     pathToFileURL(resolve(path)).href
@@ -132,6 +155,7 @@ if (command === "pair") {
   if (commands !== undefined) await loadCommands(device, commands);
 
   watch(device);
+  chat(device);
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => device.stop());
 

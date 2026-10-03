@@ -157,9 +157,13 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 
 ### S4 — Device chat
 
-- [ ] `LiveSessionKind: "device"`, sessions under `sessions/device/<id>`, `live.acquire`.
-- [ ] `chat.send` → `handle.prompt` → `chat.delta`/`chat.status`/`chat.done`; abort; busy.
-- [ ] Destination remembered as `device:<id>`.
+- [x] `LiveSessionKind: "device"`, sessions under `sessions/device/<id>`, `live.acquire`; the
+  web UI lists and watches them as `device/<id>`.
+- [x] `chat.send` → `handle.prompt` → `chat.delta`/`chat.status`/`chat.done`; abort; busy. The
+  hub owns turn ids and wire order through the `DeviceChat` port (`src/devices/chat.ts`); the
+  resident implements it (`src/resident/device-chat.ts`).
+- [x] `ziggy-device run` sends stdin lines as chat; `/abort` aborts.
+- Moved to S6: remembering `device:<id>` as a destination needs the automation target S6 adds.
 - Gate: `[chat]`.
 
 ### S5 — Device tools
@@ -172,6 +176,7 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 ### S6 — Push
 
 - [ ] `device:<id>` automation target in `domain/automation.ts`; delivery via `notify`.
+- [ ] Remember `device:<id>` as a destination when a device chats (moved from S4).
 - [ ] `display.show {text | image}` from tools and automations.
 - Gate: `[push]`.
 
@@ -233,7 +238,8 @@ Taken so slices can proceed without blocking; each can be changed later.
 | S1 | done | `bun test test/devices/protocol.test.ts`: every `json zdp` example in the spec decodes strictly and re-encodes to the same text; every method is shown; bad input gets the right JSON-RPC code |
 | S2 | done | `bun test test/e2e/devices.test.ts` (devices off; pair, spent code, unknown key, reconnect and 4409, version 4426, revoke, ping and 4408); recipe run `/tmp/ziggy-devices-proof/s2-20261003-134705` |
 | S3 | done | `bun test test/e2e/device-conformance.test.ts` (pair and pin, forged key refused before the code is sent, reconnect across a hub restart, revoke 4401, replace 4409); `bun run check:device` (vector, tamper); recipe C4 `/tmp/ziggy-devices-proof/s3-20261003-135654` |
-| S4–S12 | not started | |
+| S4 | done | `bun test test/e2e/device-chat.test.ts` (T1 status, deltas, done; T2 one session that continues; T3 abort → chat.error; T4 busy -32001, text never sent; T5 provider failure → chat.error); recipe T1, T2 `/tmp/ziggy-devices-proof/s4-20261003-140448` |
+| S5–S12 | not started | |
 
 ## Open decisions
 

@@ -138,6 +138,9 @@ that could not run at all. The hub gives a call 30 s.
 
 One Profile session per device. `chat.send` starts a turn and is answered at once with its id;
 the turn then streams as notifications. A second `chat.send` while a turn runs fails with `-32001`.
+A device that did not declare `chat` is refused with `-32002`. Turn ids are unique per connection;
+a refused send does not use one. The conversation lives in the Profile under
+`sessions/device/<id>` and continues across connections.
 
 ```json zdp
 {"jsonrpc":"2.0","id":2,"method":"chat.send","params":{"text":"What's on today?"}}

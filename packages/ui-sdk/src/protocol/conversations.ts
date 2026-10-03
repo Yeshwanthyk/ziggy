@@ -54,7 +54,7 @@ export type ZiggySessionRef =
 
 export interface ZiggyLiveSession {
   readonly ref: Extract<ZiggySessionRef, { readonly kind: "live" }>;
-  readonly kind: "ui" | "telegram" | "discord" | "slack";
+  readonly kind: "ui" | "telegram" | "discord" | "slack" | "device";
   readonly idle: boolean;
   readonly context?: ZiggyConversationContext;
   readonly agentId?: string;
@@ -392,7 +392,7 @@ const isLiveSessionKey = (value: unknown): value is ZiggyLiveSessionKey =>
   typeof value === "string" &&
   (/^local\/main$/u.test(value) ||
     /^local\/agents\/[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value) ||
-    /^(?:ui|telegram|discord|slack)\/[A-Za-z0-9._%~-]{1,240}$/u.test(value)) &&
+    /^(?:ui|telegram|discord|slack|device)\/[A-Za-z0-9._%~-]{1,240}$/u.test(value)) &&
   !value.split("/").some((segment) => segment === "." || segment === "..") &&
   new TextEncoder().encode(value).byteLength <= 256;
 
@@ -461,7 +461,8 @@ const isLiveSession = (value: unknown): value is ZiggyLiveSession =>
   (value.kind === "ui" ||
     value.kind === "telegram" ||
     value.kind === "discord" ||
-    value.kind === "slack") &&
+    value.kind === "slack" ||
+    value.kind === "device") &&
   typeof value.idle === "boolean" &&
   (value.context === undefined || isConversationContext(value.context)) &&
   (value.agentId === undefined ||

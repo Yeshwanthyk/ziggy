@@ -11,11 +11,13 @@ import { writeFileAtomic } from "../platform/atomic-write";
 import { noiseXX, type NoiseKeyPair, type NoiseSession } from "../platform/noise";
 import { readPhysicalFile } from "../platform/tree";
 import { serveWebSockets, type WebSocketLink } from "../platform/websocket-server";
+import { type DeviceChat, type DeviceChatEvent } from "./chat";
 import { deviceHubKey } from "./keys";
 import {
   ZDP_PATH,
   ZDP_PROLOGUE,
   ZDP_VERSION,
+  type DeviceCapabilities,
   ZdpClose,
   ZdpErrorCode,
   type ZdpFrame,
@@ -62,6 +64,8 @@ export interface DeviceHubOptions {
   readonly hostname: string;
   readonly port: number;
   readonly timing?: DeviceHubTiming;
+  /** Serves `chat.*` to devices that declared `chat`; without it `chat.send` is refused. */
+  readonly chat?: DeviceChat;
   readonly log: (message: string) => Effect.Effect<void>;
 }
 
@@ -121,6 +125,25 @@ type Request = Extract<ZdpMessage, { readonly id: unknown; readonly method: unkn
 
 const isRequest = (message: ZdpMessage): message is Request =>
   "method" in message && "id" in message;
+
+const chatNotification = (turn: string, event: DeviceChatEvent): ZdpMessage => {
+  switch (event.kind) {
+    case "thinking":
+      return { jsonrpc: "2.0", method: "chat.status", params: { turn, state: "thinking" } };
+    case "tool":
+      return {
+        jsonrpc: "2.0",
+        method: "chat.status",
+        params: { turn, state: "tool", tool: event.tool },
+      };
+    case "delta":
+      return { jsonrpc: "2.0", method: "chat.delta", params: { turn, text: event.text } };
+    case "done":
+      return { jsonrpc: "2.0", method: "chat.done", params: { turn, text: event.text } };
+    case "error":
+      return { jsonrpc: "2.0", method: "chat.error", params: { turn, message: event.message } };
+  }
+};
 
 /** One authenticated link: encrypted, serialized sends and a clock of the last traffic. */
 interface Channel {
@@ -370,6 +393,8 @@ export const runDeviceHub = (
           profile: options.profileName,
           zdp: ZDP_VERSION,
         });
+
+        return hello.params.capabilities;
       });
 
     /** Pings when idle and drops a silent link, until the link ends. */
@@ -397,8 +422,74 @@ export const runDeviceHub = (
         }
       }).pipe(Effect.catchTag("LinkDropped", () => Effect.void));
 
-    const serve = (channel: Channel) =>
+    /**
+     * Starts a turn and says whether it was accepted. Its notifications go through `outbox` and are
+     * held until the `{turn}` reply is queued, so the device always sees the reply first.
+     */
+    const startTurn = (
+      channel: Channel,
+      outbox: Queue.Queue<ZdpMessage>,
+      chat: DeviceChat,
+      device: DeviceRecord,
+      request: Extract<ZdpRequest, { readonly method: "chat.send" }>,
+      turn: string,
+    ) =>
       Effect.gen(function* () {
+        if (!("text" in request.params)) {
+          yield* channel.refuse(
+            request.id,
+            ZdpErrorCode.notAllowed,
+            "this hub does not take audio yet",
+          );
+
+          return false;
+        }
+
+        const held: Array<ZdpMessage> = [];
+
+        let accepted = false;
+
+        const emit = (event: DeviceChatEvent) => {
+          const message = chatNotification(turn, event);
+
+          if (accepted) Queue.offerUnsafe(outbox, message);
+          else held.push(message);
+        };
+
+        const refused = yield* chat
+          .start(device, request.params.text, emit)
+          .pipe(Effect.as(undefined), Effect.catchTag("DeviceChatRefused", Effect.succeed));
+
+        if (refused !== undefined) {
+          yield* channel.refuse(
+            request.id,
+            refused.reason === "busy" ? ZdpErrorCode.busy : ZdpErrorCode.internal,
+            refused.message,
+          );
+
+          return false;
+        }
+
+        return yield* Effect.sync(() => {
+          Queue.offerUnsafe(outbox, { jsonrpc: "2.0", id: request.id, result: { turn } });
+          Queue.offerAllUnsafe(outbox, held);
+          accepted = true;
+
+          return true;
+        });
+      });
+
+    const serve = (
+      channel: Channel,
+      device: DeviceRecord,
+      capabilities: DeviceCapabilities,
+      outbox: Queue.Queue<ZdpMessage>,
+    ) =>
+      Effect.gen(function* () {
+        const chat = capabilities.chat === undefined ? undefined : options.chat;
+
+        let turns = 0;
+
         while (true) {
           const message = yield* receiveMessage(channel);
 
@@ -408,7 +499,24 @@ export const runDeviceHub = (
           if (message.method === "ping") yield* channel.respond(message, {});
           else if (message.method === "device.pair" || message.method === "device.hello")
             yield* channel.refuse(message.id, ZdpErrorCode.notAllowed, "already connected");
-          else
+          else if (
+            (message.method === "chat.send" || message.method === "chat.abort") &&
+            chat === undefined
+          )
+            yield* channel.refuse(
+              message.id,
+              ZdpErrorCode.notAllowed,
+              capabilities.chat === undefined
+                ? "this device did not declare chat"
+                : "this hub does not serve chat",
+            );
+          else if (message.method === "chat.send" && chat !== undefined) {
+            if (yield* startTurn(channel, outbox, chat, device, message, `t${turns + 1}`))
+              turns += 1;
+          } else if (message.method === "chat.abort" && chat !== undefined) {
+            yield* chat.abort(device);
+            yield* channel.respond(message, {});
+          } else
             yield* channel.refuse(
               message.id,
               ZdpErrorCode.methodNotFound,
@@ -434,12 +542,10 @@ export const runDeviceHub = (
           Effect.mapError(registryFault),
         );
 
-        const device = yield* Effect.gen(function* () {
+        const { device, capabilities } = yield* Effect.gen(function* () {
           const record = known ?? (yield* pair(channel, session, remote));
 
-          yield* greet(channel, record);
-
-          return record;
+          return { device: record, capabilities: yield* greet(channel, record) };
         }).pipe(
           Effect.timeoutOrElse({
             duration: timing.handshakeMs,
@@ -468,9 +574,15 @@ export const runDeviceHub = (
           yield* options.log(`[devices] ${device.id} offline`);
         });
 
-        yield* Effect.raceFirst(serve(channel), keepAlive(link, channel)).pipe(
-          Effect.ensuring(leave),
-        );
+        const outbox = yield* Queue.unbounded<ZdpMessage>();
+
+        const drain = Effect.forever(Queue.take(outbox).pipe(Effect.flatMap(channel.send)));
+
+        yield* Effect.raceAll([
+          serve(channel, device, capabilities, outbox),
+          keepAlive(link, channel),
+          drain,
+        ]).pipe(Effect.ensuring(leave));
       }).pipe(
         Effect.catchTag("LinkDropped", (dropped) =>
           Effect.gen(function* () {

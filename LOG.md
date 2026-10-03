@@ -2108,3 +2108,18 @@ section "T10".
 - `[connection]` C4 was driven by hand: `run.out` shows offline, connecting and online, then `stopped (4401 revoked)`. Evidence is in `/tmp/ziggy-devices-proof/s3-20261003-135654`.
 - Found while driving: a separate `ziggy-device chat` process with the same identity replaced the running device (4409), so that subcommand was dropped. S4 will read chat from `run`'s stdin instead.
 - Bug fixed: a link that never opened left a rejected promise with no handler.
+
+## 2026-10-03 — Devices S4: device chat
+
+**What shipped.**
+- A device that declared `chat` talks to the Profile. `chat.send` is answered `{turn}`, then the turn streams as `chat.status` (thinking, or tool with its name), `chat.delta` and exactly one of `chat.done` or `chat.error`.
+- `src/devices/chat.ts` is the `DeviceChat` port. The hub owns turn ids and wire order: notifications are held until the `{turn}` reply is queued, so the reply always arrives first. A refused send does not use up a turn id.
+- `src/resident/device-chat.ts` implements the port on live sessions. Each device has one session under `sessions/device/<id>` (`session: "continue"`, named `Device · <name>`), kept live as `device/<id>`. Busy comes from `runExclusive` (-32001). Abort calls Pi's abort, interrupts the turn and ends it with `chat.error` "the turn was aborted".
+- `device` joins the live session kinds on the UI wire and in `@ziggy/ui-sdk`, so the web UI lists and watches device chats.
+- `ziggy-device run` sends each stdin line as chat, and `/abort` aborts.
+- Moved to S6: remembering `device:<id>` as a destination. It needs the automation target S6 adds.
+
+**Proof.**
+- `test/e2e/device-chat.test.ts` covers T1–T5 against a real resident and a scripted model.
+- `[chat]` T1 and T2 were driven by hand through `ziggy-device run` on a fifo: two turns, one `.jsonl`, and the second request carries both messages. Evidence is in `/tmp/ziggy-devices-proof/s4-20261003-140448`.
+- A model failure reaches the device as "provider request failed", the same sanitized text the UI gets.

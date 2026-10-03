@@ -117,7 +117,7 @@ export class UiGatewayError extends Schema.TaggedErrorClass<UiGatewayError>()("U
 
 export const UiLiveSession = Schema.Struct({
   ref: Schema.Struct({ profileId: ProfileId, kind: Schema.Literal("live"), key: UiSessionKey }),
-  kind: Schema.Literals(["telegram", "discord", "slack", "ui"]),
+  kind: Schema.Literals(["telegram", "discord", "slack", "device", "ui"]),
   idle: Schema.Boolean,
   context: Schema.optionalKey(UiConversationContext),
   agentId: Schema.optionalKey(ProfileAgentId.check(Schema.isMaxLength(80))),
