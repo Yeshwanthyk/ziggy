@@ -580,7 +580,7 @@ read the artifact back first.
   - Selection, loader, required cache, update with recovery, and the smaller tool.
   - Rebuild the extension half of `doctor-checks.ts`.
   - Update the extension skills and ops docs.
-- [ ] **7. On the core.** In any order:
+- [x] **7. On the core.** In any order:
   - [x] `agents/`: one policy function, no selection runtime, tools through the seam.
   - [x] `memory/`: scope table, 5 plain backups, tool through the seam; update docs.
   - [x] Delivery through gateway-owned targets:

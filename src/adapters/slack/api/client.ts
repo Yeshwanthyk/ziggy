@@ -27,6 +27,7 @@ import {
   decodeThreadReplyFile,
   decodeUpdateMessageResponse,
   encodeStreamChunk,
+  encodeStreamContent,
   ensureHttpSuccess,
   isSlackPrivateFileUrl,
   jsonRequest,
@@ -287,8 +288,7 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
     jsonRequest(client, token, "appendStream", "chat.appendStream", {
       channel,
       ts,
-      chunks: chunks.map(encodeStreamChunk),
-      ...(markdownText !== undefined ? { markdown_text: markdownText } : undefined),
+      ...encodeStreamContent(chunks, markdownText),
     }).pipe(
       Effect.flatMap((response) => ensureHttpSuccess(token, "appendStream", response)),
       Effect.flatMap((response) =>
@@ -314,8 +314,7 @@ export const makeSlackApi = (client: HttpClient.HttpClient) => ({
     jsonRequest(client, token, "stopStream", "chat.stopStream", {
       channel,
       ts,
-      ...(markdownText !== undefined ? { markdown_text: markdownText } : undefined),
-      ...(chunks !== undefined ? { chunks: chunks.map(encodeStreamChunk) } : undefined),
+      ...encodeStreamContent(chunks, markdownText),
     }).pipe(
       Effect.flatMap((response) => ensureHttpSuccess(token, "stopStream", response)),
       Effect.flatMap((response) =>

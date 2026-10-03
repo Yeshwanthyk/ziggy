@@ -1,6 +1,0 @@
-{
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "linear",
-  "version": "0.1.0",
-  "description": "Read-only Linear issues, projects and teams over Linear's hosted MCP server"
-}
