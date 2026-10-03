@@ -2167,3 +2167,16 @@ section "T10".
 - `test/extensions/device-authoring.test.ts`: `rules.ts` accepts exactly the names `ZiggyDevice.command` accepts, and flags exactly the commands whose tools the Profile skips for length.
 - **Found while proving.** smoke passed `checkCommands` a Map, so a command defined twice was never reported. The recorder now keeps every registration in order.
 - `[authoring]` A1–A3 were driven by hand: the template copied into a sandbox Profile, smoke ok, a module with bad commands (smoke prints a `problem` for each and exits 1), then `ziggy-device run --commands` with a scripted model calling `device__demo__counter_add` and `counter_read` on the device. Evidence is in `/tmp/ziggy-devices-proof/s12-20261003-143043`.
+
+## 2026-10-03 — Devices S10: images on small screens
+
+- `device_show` takes `image: "<path in the Profile>"` as well as `text`, exactly one of them. The hub decodes the PNG or JPEG, fits it inside the device's screen (shrinks only, centred on black, never cropped) and sends `display.show {image: {stream, format, width, height}}` followed by the bytes in 16 KiB chunks on an even hub stream id. It sends `rgb565` (little-endian) when the device lists it, otherwise `jpeg`. A file that is not a PNG or JPEG, is over 20 MiB, or lies outside the Profile fails the call with that message.
+- New `src/devices/image.ts`. PNG decoding is our own, on `node:zlib` (every colour type and bit depth; interlaced is refused). JPEG uses the new dependency `jpeg-js@0.4.4` (BSD-3, pure JS, no dependencies).
+- The hub's outbox now carries chunks as well as messages, so an image's message and chunks leave together and in order.
+- `ziggy-device run` takes `--formats rgb565,jpeg` and `--display-dir <dir>`, which saves each image (rgb565 converted to PNG) so a person can look at it.
+- Not done: rendering an MCP Apps view to an image needs a headless browser hosting the view bridge. It is deferred until there is a view worth showing on a device. Wrapping long text belongs to the board's firmware (S7).
+
+**Proof.**
+- `test/devices/image.test.ts`: eight PNG fixtures written by Pillow decode to exactly Pillow's RGBA; a JPEG to within 4; fitting letterboxes, centres and never crops; rgb565 byte order; format choice.
+- `test/e2e/device-push.test.ts` U5: through a real resident, an rgb565 device gets 320×240×2 bytes, black at the corner and the picture at the centre; a jpeg-only device gets a JPEG; a text file and `../outside.png` are refused.
+- `[screen]` S3 and S4 were driven by hand: a 640×360 PNG with text shown on a `ziggy-device --screen 320x240`. The saved frame is letterboxed and readable. Evidence is in `/tmp/ziggy-devices-proof/s10-20261003-144148`.

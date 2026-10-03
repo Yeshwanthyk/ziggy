@@ -15,10 +15,14 @@ export class DeviceToolFailed extends Schema.TaggedErrorClass<DeviceToolFailed>(
 
 export type DeviceToolArguments = { readonly [key: string]: Schema.Json };
 
-/** What the hub may push to a device unasked. Images on the screen come with S10. */
+/**
+ * What the hub may push to a device unasked. `display.image` carries a PNG or JPEG file's bytes;
+ * the hub fits it to the device's screen and sends it as `display.show` with an image stream.
+ */
 export type DevicePush =
   | { readonly method: "notify"; readonly title?: string; readonly text: string }
-  | { readonly method: "display.show"; readonly text: string };
+  | { readonly method: "display.show"; readonly text: string }
+  | { readonly method: "display.image"; readonly image: Uint8Array };
 
 /** One connected device, as the hub serves it. */
 export interface DeviceLink {
@@ -26,7 +30,7 @@ export interface DeviceLink {
     name: string,
     args: DeviceToolArguments,
   ) => Effect.Effect<ToolResult, DeviceToolFailed>;
-  /** Queues a push; `display.show` fails for a device without a screen. */
+  /** Queues a push; `display.*` fails for a device without a screen or with a bad image. */
   readonly push: (message: DevicePush) => Effect.Effect<void, DeviceToolFailed>;
 }
 

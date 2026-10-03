@@ -221,9 +221,14 @@ succeeds and does nothing.
 The hub sends only what the device's `capabilities` allow: `display.show` only with `screen`,
 images in a listed format at the device's size, `audio.play` in a listed `out` format.
 
+An image is exactly the screen's `width` × `height`. `rgb565` is 2 bytes per pixel, row-major,
+little-endian, red in the top 5 bits; `jpeg` is a baseline JPEG. Ziggy fits the picture inside the
+screen without cropping or enlarging it, centred on black, and sends `rgb565` when the device
+lists it, otherwise `jpeg`. Its chunks carry at most 16 KiB each.
+
 Ziggy pushes `notify` for an automation broadcast to `device:<id>`, titled with the Profile's
 name; the text is cut at 4000 code points. The model's `device_show` tool sends `display.show`
-text. Push is fire-and-forget: a device that is offline when a push is due does not get it later.
+text, or a PNG or JPEG file from the Profile as an image. Push is fire-and-forget: a device that is offline when a push is due does not get it later.
 
 ## Errors
 

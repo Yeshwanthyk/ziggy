@@ -83,8 +83,10 @@ the configured host. Anything on `*` or a LAN address you did not configure: sto
   use it for protocol violations and exact frames.
 - **SDK device:** `packages/device` (`@ziggy/device`). From a shell,
   `bun packages/device/bin/ziggy-device.ts pair '<uri>' --state <file> [--name …] [--model …]`,
-  then `run --state <file> [--commands <module>] [--screen 320x240]`; `run` logs
-  `[ziggy-device] <state> (<close>)`, `notify …` and `display …` for pushes, and
+  then `run --state <file> [--commands <module>] [--screen 320x240] [--formats rgb565,jpeg]
+  [--display-dir <dir>]`; `run` logs `[ziggy-device] <state> (<close>)`, `notify …` and
+  `display …` for pushes (`display image <w>x<h> <format> <n> bytes saved <dir>/display-<n>.png`
+  with `--display-dir`, which writes each image as a viewable PNG, or JPEG as sent), and
   reconnects with backoff until revoked (4401), replaced (4409) or refused (4426). In tests,
   `new ZiggyDevice({…, timing, trace})`; `trace` sees every decrypted frame both ways.
 - **Model:** `test/harness/provider.ts` scripts replies; use `tools(...)` to make the model call

@@ -1,14 +1,17 @@
 /**
  * A connected device's commands as Profile tools: `device__<id>__<cmd>`, one per command the device
- * listed, calling it over the hub's link, plus `device_show` to put text on a device's screen.
+ * listed, calling it over the hub's link, plus `device_show` to put text or an image on a device's
+ * screen.
  * Only a process whose hub is running offers them.
  */
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { relative, resolve } from "node:path";
 import { Effect } from "effect";
 import { Type } from "typebox";
 import { runCallback } from "../platform/callback";
+import { readPhysicalFile } from "../platform/tree";
 import type { SessionTools } from "../session";
-import type { DeviceLinksApi, DeviceToolArguments } from "./links";
+import type { DeviceLinksApi, DevicePush, DeviceToolArguments } from "./links";
 import type { DeviceTool, ToolResult } from "./protocol";
 import { type DeviceRecord, listDevices } from "./registry";
 
@@ -64,10 +67,45 @@ const defineDeviceTool = (
 
 interface DeviceShowArguments {
   readonly device: string;
-  readonly text: string;
+  readonly text?: string;
+  readonly image?: string;
 }
 
-/** Puts text on a paired device's screen; a device without one, or offline, fails the call. */
+/** Image files larger than this are refused before they are read into memory twice. */
+const MAX_IMAGE_BYTES = 20 * 1_024 * 1_024;
+
+/** The push for `device_show`, reading `image` from the Profile; a message says what is wrong. */
+const showPush = (
+  profilePath: string,
+  params: DeviceShowArguments,
+): Effect.Effect<DevicePush, string> => {
+  if ((params.text === undefined) === (params.image === undefined))
+    return Effect.fail("give exactly one of text and image");
+
+  if (params.text !== undefined)
+    return Effect.succeed({ method: "display.show", text: params.text });
+
+  const path = resolve(profilePath, params.image ?? "");
+
+  if (relative(profilePath, path).startsWith(".."))
+    return Effect.fail(`${params.image} is outside the Profile`);
+
+  return readPhysicalFile(path).pipe(
+    Effect.mapError((failure) => failure.message),
+    Effect.flatMap((bytes) =>
+      bytes === undefined
+        ? Effect.fail(`${params.image} does not exist`)
+        : bytes.length > MAX_IMAGE_BYTES
+          ? Effect.fail(`${params.image} is larger than 20 MiB`)
+          : Effect.succeed<DevicePush>({ method: "display.image", image: bytes }),
+    ),
+  );
+};
+
+/**
+ * Puts text, or a PNG or JPEG from the Profile fitted to the screen, on a paired device; a device
+ * without a screen, or offline, fails the call.
+ */
 const defineDeviceShow = (
   links: DeviceLinksApi,
   profilePath: string,
@@ -75,22 +113,28 @@ const defineDeviceShow = (
 ): ToolDefinition => ({
   name: "device_show",
   label: "device_show",
-  description: `Show text on a device's screen. Devices: ${devices
+  description: `Show text, or a PNG or JPEG image from the Profile, on a device's screen. The image is shrunk to fit, never cropped. Devices: ${devices
     .map((device) => `${device.id} (${device.name})`)
     .join(", ")}.`,
   parameters: Type.Object({
     device: Type.Union(devices.map((device) => Type.Literal(device.id))),
-    text: Type.String({ minLength: 1 }),
+    text: Type.Optional(Type.String({ minLength: 1 })),
+    image: Type.Optional(
+      Type.String({ minLength: 1, description: "Path of a PNG or JPEG file in the Profile." }),
+    ),
   }),
   execute(_toolCallId, params: DeviceShowArguments, signal) {
-    const program = links
-      .push(profilePath, params.device, { method: "display.show", text: params.text })
-      .pipe(
-        Effect.match({
-          onFailure: (failure) => ({ ok: false as const, message: failure.message }),
-          onSuccess: () => ({ ok: true as const }),
-        }),
-      );
+    const program = showPush(profilePath, params).pipe(
+      Effect.flatMap((message) =>
+        links
+          .push(profilePath, params.device, message)
+          .pipe(Effect.mapError((failure) => failure.message)),
+      ),
+      Effect.match({
+        onFailure: (message) => ({ ok: false as const, message }),
+        onSuccess: () => ({ ok: true as const }),
+      }),
+    );
 
     return runCallback(program, signal).then((outcome) => {
       if (!outcome.ok) throw new Error(outcome.message);

@@ -214,8 +214,14 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 
 ### S10 — Small-screen views
 
-- [ ] Render a reply or an MCP Apps view to JPEG / RGB565 at the device's reported resolution.
-- [ ] `display.show {image}` from `device_show` and automations (moved from S6).
+- [x] `src/devices/image.ts`: PNG (every colour type and depth, not interlaced) and JPEG decode,
+  fit inside the screen (shrink only, centred on black, never cropped), encode as RGB565 or
+  JPEG (`jpeg-js`, BSD-3, pure JS). Checked against Pillow's decode of each fixture.
+- [x] `display.show {image}` from `device_show {image: <path in the Profile>}`, streamed in 16 KiB
+  chunks on even hub stream ids. `ziggy-device --display-dir` saves what arrives.
+- [ ] Render an MCP Apps view to an image. It needs a headless browser hosting the view's bridge;
+  deferred until a view worth showing on a device exists.
+- [ ] Images from automations: a broadcast carries text only, so this waits for a reason.
 - Gate: `[screen]`.
 
 ### S11 — BLE pairing and OTA
@@ -258,7 +264,8 @@ Taken so slices can proceed without blocking; each can be changed later.
 | S5 | done | `bun test test/e2e/device-tools.test.ts` (K1 tool listed, none in `ziggy run`; K2 call and result reach the model; K3 offline fails at once; K4 specialist allowlist; K5 a command added online reaches later sessions); recipe K1, K2 `/tmp/ziggy-devices-proof/s5-20261003-141513` |
 | S6 | done | `bun test test/e2e/device-push.test.ts` (U1 broadcast `device:<id>` → `notify`; U2 offline → transport retriable, unpaired → destination-missing; U3 `device_show` on a screen, error without one, chatting device listed as a destination); recipe U1–U3 and web picker `/tmp/ziggy-devices-proof/s6-20261003-142144` |
 | S12 | done | `bun test test/extensions/device-authoring.test.ts` (command names agree with `ZiggyDevice.command`; flagged names are exactly the tools the Profile skips); recipe A1–A3 `/tmp/ziggy-devices-proof/s12-20261003-143043` |
-| S7–S11 | not started | Order: S10, S8 and S9 software first (stub engines), then S7 and S11, which need a board and ESP-IDF |
+| S10 | done (images) | `bun test test/devices/image.test.ts` (8 PNG variants equal Pillow's decode; JPEG within 4; fit letterboxes, centres, never crops; rgb565 byte order; format choice); `bun test test/e2e/device-push.test.ts` U5 (rgb565 and jpeg devices, non-image and outside-Profile refused); recipe S3, S4 `/tmp/ziggy-devices-proof/s10-20261003-144148`. MCP Apps views deferred |
+| S7–S9, S11 | not started | Order: S10, S8 and S9 software first (stub engines), then S7 and S11, which need a board and ESP-IDF |
 
 ## Open decisions
 

@@ -40,6 +40,7 @@
     "@earendil-works/pi-coding-agent": "0.99.1",
     "@effect/platform-bun": "4.0.0-beta.99",
     "effect": "4.0.0-beta.99",
+    "jpeg-js": "0.4.4",
     "picocolors": "1.1.1"
   },
   "devDependencies": {

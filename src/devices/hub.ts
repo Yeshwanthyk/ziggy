@@ -12,6 +12,7 @@ import { noiseXX, type NoiseKeyPair, type NoiseSession } from "../platform/noise
 import { readPhysicalFile } from "../platform/tree";
 import { serveWebSockets, type WebSocketLink } from "../platform/websocket-server";
 import { type DeviceChat, type DeviceChatEvent } from "./chat";
+import { screenImage } from "./image";
 import { deviceHubKey } from "./keys";
 import {
   type DeviceLinksApi,
@@ -34,6 +35,7 @@ import {
   type ZdpMessage,
   type ZdpRequest,
   decodeZdpFrame,
+  encodeZdpChunk,
   encodeZdpMessageFrame,
 } from "./protocol";
 import {
@@ -107,6 +109,22 @@ const JSON_FRAME = 0x7b;
 
 const MAX_MESSAGE_BYTES = 65_535;
 
+/** Image and audio bytes go out in chunks this large, small enough for a device's buffers. */
+const CHUNK_BYTES = 16 * 1_024;
+
+/** A chunk of a hub stream, queued like a message so the two leave in order. */
+interface OutgoingChunk {
+  readonly stream: number;
+  readonly last: boolean;
+  readonly data: Uint8Array;
+}
+
+type Outgoing = ZdpMessage | OutgoingChunk;
+
+type Outbox = Queue.Queue<Outgoing>;
+
+const isChunk = (item: Outgoing): item is OutgoingChunk => !("jsonrpc" in item);
+
 const projectionPath = (profilePath: string) => join(profilePath, ".runtime", "device-hub.json");
 
 export const DeviceHubProjection = Schema.Struct({
@@ -164,6 +182,7 @@ const chatNotification = (turn: string, event: DeviceChatEvent): ZdpMessage => {
 interface Channel {
   readonly receive: Effect.Effect<ZdpFrame, LinkDropped | ZdpInvalid>;
   readonly send: (message: ZdpMessage) => Effect.Effect<void, LinkDropped>;
+  readonly sendChunk: (chunk: OutgoingChunk) => Effect.Effect<void, LinkDropped>;
   readonly respond: (request: Request, result: Schema.Json) => Effect.Effect<void, LinkDropped>;
   readonly refuse: (
     id: Request["id"] | null,
@@ -204,12 +223,8 @@ const makeChannel = (link: WebSocketLink, session: NoiseSession) =>
 
     let lastSent = lastReceived;
 
-    const send = (message: ZdpMessage) =>
+    const sendFrame = (frame: Uint8Array) =>
       Effect.gen(function* () {
-        const frame = yield* encodeZdpMessageFrame(message).pipe(
-          Effect.mapError((failure) => drop(INTERNAL, `could not encode: ${failure.message}`)),
-        );
-
         // Encrypt and send under one permit, so frames leave in nonce order.
         const sent = yield* Semaphore.withPermits(
           sending,
@@ -228,6 +243,12 @@ const makeChannel = (link: WebSocketLink, session: NoiseSession) =>
 
         if (!sent) return yield* drop(GONE, "closed", false);
       });
+
+    const send = (message: ZdpMessage) =>
+      encodeZdpMessageFrame(message).pipe(
+        Effect.mapError((failure) => drop(INTERNAL, `could not encode: ${failure.message}`)),
+        Effect.flatMap(sendFrame),
+      );
 
     const channel: Channel = {
       receive: Effect.gen(function* () {
@@ -251,6 +272,7 @@ const makeChannel = (link: WebSocketLink, session: NoiseSession) =>
         );
       }),
       send,
+      sendChunk: (chunk) => sendFrame(encodeZdpChunk(chunk.stream, chunk.last, chunk.data)),
       respond: (request, result) => send({ jsonrpc: "2.0", id: request.id, result }),
       refuse: (id, code, message) => send({ jsonrpc: "2.0", id, error: { code, message } }),
       lastReceived: () => lastReceived,
@@ -302,29 +324,79 @@ const narrow = <M extends ZdpRequest["method"]>(
     : Effect.fail(drop(INTERNAL, `expected ${method}`));
 };
 
-/** A push becomes a notification on the link's outbox, after anything already queued. */
+/** Hub stream ids: even, from 2, reused after 65534 (each stream has ended long before). */
+const evenStreams = () => {
+  let last = 0;
+
+  return () => {
+    last = last >= 65_534 ? 2 : last + 2;
+
+    return last;
+  };
+};
+
+/** The bytes as chunks of `stream`, the last one flagged. */
+const chunks = (stream: number, data: Uint8Array): Array<OutgoingChunk> => {
+  const count = Math.max(1, Math.ceil(data.length / CHUNK_BYTES));
+
+  return Array.from({ length: count }, (_, index) => ({
+    stream,
+    last: index === count - 1,
+    data: data.subarray(index * CHUNK_BYTES, (index + 1) * CHUNK_BYTES),
+  }));
+};
+
+/**
+ * A push becomes a notification on the link's outbox, after anything already queued. An image
+ * is fitted to the screen and follows its `display.show` as one stream, queued together.
+ */
 const push = (
-  outbox: Queue.Queue<ZdpMessage>,
+  outbox: Outbox,
+  nextStream: () => number,
   deviceId: string,
   capabilities: DeviceCapabilities,
   message: DevicePush,
 ): Effect.Effect<void, DeviceToolFailed> => {
-  if (message.method === "display.show" && capabilities.screen === undefined)
+  if (message.method === "notify")
+    return Queue.offer(outbox, {
+      jsonrpc: "2.0",
+      method: "notify",
+      params:
+        message.title === undefined
+          ? { text: message.text }
+          : { title: message.title, text: message.text },
+    }).pipe(Effect.asVoid);
+
+  const screen = capabilities.screen;
+
+  if (screen === undefined)
     return Effect.fail(new DeviceToolFailed({ deviceId, message: `${deviceId} has no screen` }));
 
-  return Queue.offer(
-    outbox,
-    message.method === "notify"
-      ? {
+  if (message.method === "display.show")
+    return Queue.offer(outbox, {
+      jsonrpc: "2.0",
+      method: "display.show",
+      params: { text: message.text },
+    }).pipe(Effect.asVoid);
+
+  return screenImage(message.image, screen).pipe(
+    Effect.mapError((failure) => new DeviceToolFailed({ deviceId, message: failure.message })),
+    Effect.flatMap((image) => {
+      const stream = nextStream();
+
+      return Queue.offerAll(outbox, [
+        {
           jsonrpc: "2.0",
-          method: "notify",
-          params:
-            message.title === undefined
-              ? { text: message.text }
-              : { title: message.title, text: message.text },
-        }
-      : { jsonrpc: "2.0", method: "display.show", params: { text: message.text } },
-  ).pipe(Effect.asVoid);
+          method: "display.show",
+          params: {
+            image: { stream, format: image.format, width: image.width, height: image.height },
+          },
+        },
+        ...chunks(stream, image.data),
+      ]);
+    }),
+    Effect.asVoid,
+  );
 };
 
 /** Requests the hub sends to one device, matched to their answers by id. */
@@ -342,11 +414,7 @@ interface HubRequests {
 }
 
 /** Requests go through the link's outbox, so the device sees them after any status sent before. */
-const makeRequests = (
-  outbox: Queue.Queue<ZdpMessage>,
-  deviceId: string,
-  timeoutMs: number,
-): HubRequests => {
+const makeRequests = (outbox: Outbox, deviceId: string, timeoutMs: number): HubRequests => {
   let sent = 0;
 
   let closed = false;
@@ -582,7 +650,7 @@ export const runDeviceHub = (
      */
     const startTurn = (
       channel: Channel,
-      outbox: Queue.Queue<ZdpMessage>,
+      outbox: Outbox,
       chat: DeviceChat,
       device: DeviceRecord,
       request: Extract<ZdpRequest, { readonly method: "chat.send" }>,
@@ -637,7 +705,7 @@ export const runDeviceHub = (
       channel: Channel,
       device: DeviceRecord,
       capabilities: DeviceCapabilities,
-      outbox: Queue.Queue<ZdpMessage>,
+      outbox: Outbox,
       requests: HubRequests,
       refreshTools: Effect.Effect<void>,
     ) =>
@@ -737,9 +805,17 @@ export const runDeviceHub = (
           yield* options.log(`[devices] ${device.id} offline`);
         });
 
-        const outbox = yield* Queue.unbounded<ZdpMessage>();
+        const outbox = yield* Queue.unbounded<Outgoing>();
 
-        const drain = Effect.forever(Queue.take(outbox).pipe(Effect.flatMap(channel.send)));
+        const drain = Effect.forever(
+          Queue.take(outbox).pipe(
+            Effect.flatMap((item) =>
+              isChunk(item) ? channel.sendChunk(item) : channel.send(item),
+            ),
+          ),
+        );
+
+        const streams = evenStreams();
 
         const requests = makeRequests(outbox, device.id, timing.requestMs);
 
@@ -757,7 +833,7 @@ export const runDeviceHub = (
           if (options.links !== undefined)
             yield* options.links.attach(profilePath, device.id, {
               call: requests.callTool,
-              push: (message) => push(outbox, device.id, capabilities, message),
+              push: (message) => push(outbox, streams, device.id, capabilities, message),
             });
 
           if (capabilities.tools !== undefined) yield* Effect.forkScoped(refreshTools);

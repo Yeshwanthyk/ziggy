@@ -172,3 +172,45 @@ test("U3: device_show puts text on a screen and fails on a device without one; a
     expect.objectContaining({ target: "device:box", kind: "device", label: "Box" }),
   );
 });
+
+test("U5: device_show sends a Profile image fitted to each screen, in a format the device takes", async () => {
+  const box = await pairDevice("Box", { width: 320, height: 240, formats: ["rgb565", "jpeg"] });
+
+  const frame = await pairDevice("Frame", { width: 64, height: 48, formats: ["jpeg"] });
+
+  await mkdir(join(profile.path, "pictures"), { recursive: true });
+  await writeFile(
+    join(profile.path, "pictures", "chart.png"),
+    await Bun.file(join(import.meta.dir, "..", "devices", "images", "rgb8.png")).bytes(),
+  );
+  await writeFile(join(profile.path, "notes.txt"), "not a picture", "utf8");
+  server.push(
+    tools({ name: "device_show", arguments: { device: "box", image: "pictures/chart.png" } }),
+    tools({ name: "device_show", arguments: { device: "frame", image: "pictures/chart.png" } }),
+    tools({ name: "device_show", arguments: { device: "box", image: "notes.txt" } }),
+    tools({ name: "device_show", arguments: { device: "box", image: "../outside.png" } }),
+    text("shown"),
+  );
+  expect(await box.device.send("show the chart")).toEqual({ turn: "t1" });
+  expect(await turnEnd(box.events, "t1")).toMatchObject({ type: "done", text: "shown" });
+
+  const [boxImage] = box.events.shown.flatMap((event) => ("image" in event ? [event.image] : []));
+
+  const [frameImage] = frame.events.shown.flatMap((event) =>
+    "image" in event ? [event.image] : [],
+  );
+
+  expect(boxImage).toMatchObject({ format: "rgb565", width: 320, height: 240 });
+  expect(boxImage?.data.length).toBe(320 * 240 * 2);
+  // Letterboxed: black at the corner, the 9×7 picture at the centre.
+  expect([...(boxImage?.data.subarray(0, 2) ?? [])]).toEqual([0, 0]);
+  expect([
+    ...(boxImage?.data.subarray((120 * 320 + 160) * 2, (120 * 320 + 160) * 2 + 2) ?? []),
+  ]).not.toEqual([0, 0]);
+  expect(frameImage).toMatchObject({ format: "jpeg", width: 64, height: 48 });
+  expect([...(frameImage?.data.subarray(0, 2) ?? [])]).toEqual([0xff, 0xd8]);
+  expect(server.toolResults(1)).toContain("shown on box");
+  expect(server.toolResults(2)).toContain("shown on frame");
+  expect(server.toolResults(3)).toContain("only PNG and JPEG images can be shown");
+  expect(server.toolResults(4)).toContain("outside the Profile");
+});

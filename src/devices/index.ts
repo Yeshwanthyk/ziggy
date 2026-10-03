@@ -4,6 +4,8 @@ export * from "./config";
 
 export * from "./hub";
 
+export * from "./image";
+
 export * from "./keys";
 
 export * from "./links";

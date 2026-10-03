@@ -4,24 +4,33 @@
  *
  *   ziggy-device pair '<zdp://… URI>' --state device.json [--name Kitchen] [--model pi]
  *   ziggy-device run --state device.json [--commands ./commands.ts] [--screen 320x240]
+ *                    [--formats rgb565,jpeg] [--display-dir ./shown]
  *
  * The state file holds the device's private key; it is written 0600. A commands module's default
  * export is called with the device before it connects, to add commands. `--screen` declares a
- * screen, so `display.show` text arrives as `display …` lines.
+ * screen taking `--formats` (default rgb565), so `display.show` text arrives as `display …` lines,
+ * and each image is saved in `--display-dir` as `display-<n>.png` (or `.jpg`) when given.
  *
  * While running, each line on stdin is sent to the Profile as a chat message, and `/abort` stops
  * the running turn. The reply is logged as `chat <turn> …` lines.
  */
-import { chmod, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { deflateSync } from "node:zlib";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
-import { type DeviceIdentity, ZiggyDevice, type ZiggyDeviceOptions } from "../src/index";
+import {
+  type DeviceIdentity,
+  type ScreenCapability,
+  ZiggyDevice,
+  type ZiggyDeviceOptions,
+} from "../src/index";
 
 const USAGE = `usage:
   ziggy-device pair <uri> --state <file> [--name <name>] [--model <model>]
-  ziggy-device run --state <file> [--commands <module>] [--screen <width>x<height>]`;
+  ziggy-device run --state <file> [--commands <module>] [--screen <width>x<height>]
+                   [--formats rgb565,jpeg] [--display-dir <dir>]`;
 
 const log = (line: string) => console.log(`[ziggy-device] ${line}`);
 
@@ -73,19 +82,110 @@ const readIdentity = async (path: string): Promise<DeviceIdentity> => {
   return isIdentity(value) ? value : fail(`${path} is not a device state file`);
 };
 
-const parseScreen = (value: string) => {
+const isFormat = (format: string): format is "rgb565" | "jpeg" =>
+  format === "rgb565" || format === "jpeg";
+
+const parseScreen = (value: string, formats = "rgb565"): ScreenCapability => {
   const match = /^(\d+)x(\d+)$/.exec(value) ?? fail("--screen must be <width>x<height>");
 
-  return { width: Number(match[1]), height: Number(match[2]), formats: ["rgb565" as const] };
+  const listed = formats.split(",").map((format) => format.trim());
+
+  const valid = listed.filter(isFormat);
+
+  const [first, ...others] = valid;
+
+  if (first === undefined || valid.length !== listed.length)
+    return fail("--formats lists rgb565 and/or jpeg");
+
+  return { width: Number(match[1]), height: Number(match[2]), formats: [first, ...others] };
 };
 
-const deviceOptions = (identity: DeviceIdentity, screen?: string): ZiggyDeviceOptions => {
+const deviceOptions = (
+  identity: DeviceIdentity,
+  screen?: string,
+  formats?: string,
+): ZiggyDeviceOptions => {
   const options: ZiggyDeviceOptions = { name: identity.name, model: identity.model, identity };
 
-  return screen === undefined ? options : { ...options, screen: parseScreen(screen) };
+  return screen === undefined ? options : { ...options, screen: parseScreen(screen, formats) };
 };
 
-const watch = (device: ZiggyDevice) => {
+const CRC_TABLE = Array.from({ length: 256 }, (_, byte) => {
+  let crc = byte;
+
+  for (let bit = 0; bit < 8; bit += 1) crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
+
+  return crc >>> 0;
+});
+
+const crc32 = (bytes: Uint8Array) => {
+  let crc = 0xffffffff;
+
+  for (const byte of bytes) crc = (CRC_TABLE[(crc ^ byte) & 0xff] ?? 0) ^ (crc >>> 8);
+
+  return (crc ^ 0xffffffff) >>> 0;
+};
+
+const pngChunk = (type: string, data: Uint8Array) => {
+  const chunk = Buffer.alloc(12 + data.length);
+
+  chunk.writeUInt32BE(data.length, 0);
+  chunk.write(type, 4, "ascii");
+  chunk.set(data, 8);
+  chunk.writeUInt32BE(crc32(chunk.subarray(4, 8 + data.length)), 8 + data.length);
+
+  return chunk;
+};
+
+/** An rgb565 frame (little-endian) as an 8-bit RGB PNG, to look at what the hub sent. */
+const rgb565Png = (width: number, height: number, data: Uint8Array) => {
+  const rows = Buffer.alloc(height * (1 + width * 3));
+
+  for (let y = 0; y < height; y += 1)
+    for (let x = 0; x < width; x += 1) {
+      const value = (data[(y * width + x) * 2] ?? 0) | ((data[(y * width + x) * 2 + 1] ?? 0) << 8);
+
+      const at = y * (1 + width * 3) + 1 + x * 3;
+
+      rows[at] = ((value >> 11) & 0x1f) * 8.226;
+      rows[at + 1] = ((value >> 5) & 0x3f) * 4.048;
+      rows[at + 2] = (value & 0x1f) * 8.226;
+    }
+
+  const header = Buffer.alloc(13);
+
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", header),
+    pngChunk("IDAT", deflateSync(rows)),
+    pngChunk("IEND", new Uint8Array()),
+  ]);
+};
+
+let shown = 0;
+
+const saveImage = async (
+  directory: string,
+  image: { format: string; width: number; height: number; data: Uint8Array },
+) => {
+  shown += 1;
+
+  const path = join(directory, `display-${shown}.${image.format === "jpeg" ? "jpg" : "png"}`);
+
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    path,
+    image.format === "rgb565" ? rgb565Png(image.width, image.height, image.data) : image.data,
+  );
+
+  return path;
+};
+
+const watch = (device: ZiggyDevice, displayDir?: string) => {
   device.on("state", (state, closed) =>
     log(
       closed === undefined
@@ -96,13 +196,20 @@ const watch = (device: ZiggyDevice) => {
   device.on("notify", (notice) =>
     log(`notify ${notice.title ?? ""} ${notice.text}`.replaceAll("  ", " ")),
   );
-  device.on("display", (event) =>
-    log(
-      "text" in event
-        ? `display ${event.text}`
-        : `display image ${event.image.width}x${event.image.height}`,
-    ),
-  );
+  device.on("display", (event) => {
+    if ("text" in event) return log(`display ${event.text}`);
+
+    const { format, width, height, data } = event.image;
+
+    const line = `display image ${width}x${height} ${format} ${data.length} bytes`;
+
+    if (displayDir === undefined) return log(line);
+
+    saveImage(displayDir, event.image).then(
+      (path) => log(`${line} saved ${path}`),
+      (error: Error) => log(`${line} not saved: ${error.message}`),
+    );
+  });
 };
 
 const chat = (device: ZiggyDevice) => {
@@ -155,13 +262,15 @@ if (command === "pair") {
   log(`paired as ${identity.id} with ${identity.profile}; state in ${statePath}`);
   device.stop();
 } else if (command === "run") {
-  const device = new ZiggyDevice(deviceOptions(await readIdentity(statePath), flags.get("screen")));
+  const device = new ZiggyDevice(
+    deviceOptions(await readIdentity(statePath), flags.get("screen"), flags.get("formats")),
+  );
 
   const commands = flags.get("commands");
 
   if (commands !== undefined) await loadCommands(device, commands);
 
-  watch(device);
+  watch(device, flags.get("display-dir"));
   chat(device);
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => device.stop());
