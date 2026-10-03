@@ -2191,3 +2191,14 @@ section "T10".
 **Proof.**
 - `test/e2e/device-voice.test.ts`: through a real resident, with a script engine that prints the size of the WAV it was given, a 1.5 s recording (three chunks) becomes `{turn: t1}`, then the transcript, then the reply, and the transcript is the model's user text (V1–V3). Too short, too long, silent and failing recordings are refused and reach no model; the next recording is still t1 (V5). `device-chat.test.ts` V6: without `speech.transcribe`, -32002 and the link stays up.
 - Driven by hand with a real engine: `say` recorded "Turn on the kitchen light please." at 16 kHz and whisper-cli with `ggml-tiny.en` transcribed it exactly. The 0.1 s clip was refused first. Evidence is in `/tmp/ziggy-devices-proof/s8-20261003-145555`.
+
+## 2026-10-03 — Devices S9: spoken replies
+
+- `devices.json` `speech.speak.command` names a text-to-speech program: `{text}` is the reply and `{mp3}` the file it writes. It runs through the same adapter as speech-to-text (no shell, temporary folder, timeout). The result must start like an MP3 (ID3 or a frame sync) and be at most 8 MiB.
+- After `chat.done` of a turn started from speech, the hub speaks the reply and pushes `audio.play {stream, format: "mp3"}` with the MP3 in 16 KiB chunks. This only happens when the device lists `mp3` in `audio.out`. One fiber per link speaks replies in order. A typed turn's reply is not spoken, and a failing speaker is logged while the device keeps the text.
+- `ziggy-device --speaker <dir>` declares MP3 playback and saves each clip as `audio-<n>.mp3`. The CLI now always declares `audio.in`.
+- Not done: playback on the BOX-3 (S7).
+
+**Proof.**
+- `test/e2e/device-voice.test.ts` V4: a 21 KB spoken reply arrives as one MP3 stream across chunks, a typed turn in between gets no clip, and the next spoken turn's clip follows in order.
+- Driven by hand: whisper-cli transcribed the question, the model answered, and `say` + ffmpeg spoke the answer to `heard/audio-1.mp3`. whisper-cli transcribed that clip back as "The kitchen light is on.", the reply's text. Evidence is in `/tmp/ziggy-devices-proof/s9-20261003-150121`.

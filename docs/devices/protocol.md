@@ -230,6 +230,10 @@ little-endian, red in the top 5 bits; `jpeg` is a baseline JPEG. Ziggy fits the 
 screen without cropping or enlarging it, centred on black, and sends `rgb565` when the device
 lists it, otherwise `jpeg`. Its chunks carry at most 16 KiB each.
 
+`audio.play` is a reply spoken aloud: when the Profile names `speech.speak` and the device lists
+`mp3` in `audio.out`, the reply to each turn started from speech follows its `chat.done` as one MP3
+stream (16 KiB chunks). Replies to typed turns are not spoken.
+
 Ziggy pushes `notify` for an automation broadcast to `device:<id>`, titled with the Profile's
 name; the text is cut at 4000 code points. The model's `device_show` tool sends `display.show`
 text, or a PNG or JPEG file from the Profile as an image. Push is fire-and-forget: a device that is offline when a push is due does not get it later.

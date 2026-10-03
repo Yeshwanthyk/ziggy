@@ -1,7 +1,8 @@
 /**
  * Device voice through a real resident: a device streams PCM, the hub runs the Profile's
  * `speech.transcribe` command on it as a WAV, and the transcript starts a turn like typed text.
- * The command here is a script that names the size of the WAV it was given.
+ * The transcribe command here is a script that names the size of the WAV it was given, and the
+ * speak command writes an ID3 tag followed by the text, so the device's clip shows what was said.
  */
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -35,6 +36,8 @@ let profile: ScratchProfile;
 let kitchen: ZiggyDevice;
 
 let events: Array<ChatEvent>;
+
+let clips: Array<string>;
 
 const turnEnd = (turn: string) =>
   eventually(`the end of ${turn}`, () =>
@@ -71,13 +74,20 @@ beforeEach(async () => {
 
   await writeFile(script, TRANSCRIBE);
 
+  const speak = join(profile.path, "speak.sh");
+
+  await writeFile(speak, `#!/bin/sh\nprintf 'ID3%s' "$1" > "$2"\n`);
+
   const config = join(profile.path, "devices.json");
 
   await writeFile(
     config,
     JSON.stringify({
       ...JSON.parse(await readFile(config, "utf8")),
-      speech: { transcribe: { command: ["/bin/sh", script, "{wav}"] } },
+      speech: {
+        transcribe: { command: ["/bin/sh", script, "{wav}"] },
+        speak: { command: ["/bin/sh", speak, "{text}", "{mp3}"] },
+      },
     }),
   );
   await startResident(profile);
@@ -91,8 +101,16 @@ beforeEach(async () => {
   const printed = await ziggy(profile, "devices", "pair", profile.path);
 
   events = [];
-  kitchen = new ZiggyDevice({ name: "Kitchen", model: "box-3" });
+  clips = [];
+  kitchen = new ZiggyDevice({
+    name: "Kitchen",
+    model: "box-3",
+    audio: { in: ["pcm16/16000"], out: ["mp3"] },
+  });
   kitchen.on("chat", (event) => events.push(event));
+  kitchen.on("audio", (clip) =>
+    clips.push(`${clip.format} ${new TextDecoder().decode(clip.data)}`),
+  );
   await kitchen.pair(printed.stdout.split("\n")[0] ?? "");
 });
 
@@ -149,4 +167,21 @@ test("V5: too short, too long, silent and failed recordings are refused without 
   server.push(text("yes?"));
   expect(await kitchen.sendAudio(new Uint8Array(32_000))).toEqual({ turn: "t1" });
   expect(await turnEnd("t1")).toMatchObject({ type: "done", text: "yes?" });
+});
+
+test("V4: the reply to a spoken turn is played as MP3; a typed turn's is not", async () => {
+  // Longer than one 16 KiB chunk.
+  const long = "la ".repeat(7_000).trim();
+
+  server.push(text(long), text("typed answer"), text("spoken again"));
+
+  expect(await kitchen.sendAudio(new Uint8Array(32_000))).toEqual({ turn: "t1" });
+  await eventually("the first clip", () => clips[0]);
+  expect(await kitchen.send("typed")).toEqual({ turn: "t2" });
+  expect(await turnEnd("t2")).toMatchObject({ type: "done", text: "typed answer" });
+  expect(await kitchen.sendAudio(new Uint8Array(32_000))).toEqual({ turn: "t3" });
+  await eventually("the second clip", () => clips[1]);
+
+  // Clips play in order, so a clip for t2 would sit between these two.
+  expect(clips).toEqual([`mp3 ID3${long}`, "mp3 ID3spoken again"]);
 });

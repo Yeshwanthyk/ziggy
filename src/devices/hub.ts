@@ -46,7 +46,7 @@ import {
   redeemPairingCode,
   setDeviceTools,
 } from "./registry";
-import { MAX_RECORDING_BYTES, MIN_RECORDING_BYTES, type Transcriber } from "./speech";
+import { MAX_RECORDING_BYTES, MIN_RECORDING_BYTES, type Speaker, type Transcriber } from "./speech";
 
 export class DeviceHubFailed extends Schema.TaggedErrorClass<DeviceHubFailed>()("DeviceHubFailed", {
   message: Schema.String,
@@ -84,6 +84,8 @@ export interface DeviceHubOptions {
   readonly chat?: DeviceChat;
   /** Turns a device's recorded speech into the text of a turn; without it audio is refused. */
   readonly transcribe?: Transcriber;
+  /** Speaks replies to spoken turns on devices that play `mp3`; without it they stay text. */
+  readonly speak?: Speaker;
   /** Where connected devices are attached so device tools can reach them. */
   readonly links?: DeviceLinksApi;
   readonly log: (message: string) => Effect.Effect<void>;
@@ -655,7 +657,7 @@ export const runDeviceHub = (
     /**
      * Starts a turn and says whether it was accepted. Its notifications go through `outbox` and are
      * held until the `{turn}` reply is queued, so the device always sees the reply first. A turn
-     * from speech sends `chat.transcript` right after the reply.
+     * from speech sends `chat.transcript` right after the reply, and hands its answer to `speak`.
      */
     const startTurn = (
       channel: Channel,
@@ -666,6 +668,7 @@ export const runDeviceHub = (
       text: string,
       turn: string,
       spoken: boolean,
+      speak: (reply: string) => void,
     ) =>
       Effect.gen(function* () {
         const held: Array<ZdpMessage> = [];
@@ -674,6 +677,8 @@ export const runDeviceHub = (
 
         const emit = (event: DeviceChatEvent) => {
           const message = chatNotification(turn, event);
+
+          if (spoken && event.kind === "done" && event.text.trim() !== "") speak(event.text);
 
           if (accepted) Queue.offerUnsafe(outbox, message);
           else held.push(message);
@@ -715,11 +720,47 @@ export const runDeviceHub = (
       device: DeviceRecord,
       capabilities: DeviceCapabilities,
       outbox: Outbox,
+      nextStream: () => number,
       requests: HubRequests,
       refreshTools: Effect.Effect<void>,
     ) =>
       Effect.gen(function* () {
         const chat = capabilities.chat === undefined ? undefined : options.chat;
+
+        const speaker = capabilities.audio?.out?.includes("mp3") ? options.speak : undefined;
+
+        const replies = yield* Queue.unbounded<string>();
+
+        // Replies to spoken turns, played in order as `audio.play` streams.
+        if (speaker !== undefined)
+          yield* Effect.forkChild(
+            Effect.forever(
+              Queue.take(replies).pipe(
+                Effect.flatMap(speaker),
+                Effect.flatMap((audio) => {
+                  const stream = nextStream();
+
+                  return Queue.offerAll(outbox, [
+                    {
+                      jsonrpc: "2.0",
+                      method: "audio.play",
+                      params: { stream, format: "mp3" },
+                    },
+                    ...chunks(stream, audio),
+                  ]);
+                }),
+                Effect.catchTag("SpeechFailed", (failure) =>
+                  options.log(
+                    `[devices] ${device.id}: could not speak a reply: ${failure.message}`,
+                  ),
+                ),
+              ),
+            ),
+          );
+
+        const speak = (reply: string) => {
+          if (speaker !== undefined) Queue.offerUnsafe(replies, reply);
+        };
 
         let turns = 0;
 
@@ -782,6 +823,7 @@ export const runDeviceHub = (
                 heard.text,
                 nextTurn(),
                 true,
+                speak,
               ),
             );
           }).pipe(Effect.catchTag("LinkDropped", () => Effect.void));
@@ -869,6 +911,7 @@ export const runDeviceHub = (
                   params.text,
                   nextTurn(),
                   false,
+                  speak,
                 ),
               );
             else if (options.transcribe === undefined)
@@ -992,7 +1035,7 @@ export const runDeviceHub = (
 
           // Whichever ends first, by success or failure, ends the link.
           yield* Effect.raceAllFirst([
-            serve(channel, device, capabilities, outbox, requests, refreshTools),
+            serve(channel, device, capabilities, outbox, streams, requests, refreshTools),
             keepAlive(link, channel, requests),
             drain,
           ]);

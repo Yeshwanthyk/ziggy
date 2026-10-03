@@ -214,8 +214,12 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 
 ### S9 — Spoken replies
 
-- [ ] TTS adapter, `audio.play` MP3 frames, playback on the BOX-3. Muse's stock firmware cannot
-  do this.
+- [x] Text-to-speech is a command the Profile names (`speech.speak.command`, `{text}` and `{mp3}`),
+  run by the same adapter as S8. It must write an MP3 (ID3 or frame sync), at most 8 MiB.
+- [x] The reply to a spoken turn goes to the speaker after `chat.done`; the MP3 follows as
+  `audio.play` on an even hub stream, in order. Only devices with `audio.out: ["mp3"]` get it.
+  `ziggy-device --speaker <dir>` declares that and saves each clip.
+- [ ] Playback on the BOX-3 (S7). Muse's stock firmware cannot do this.
 - Gate: `[voice]` V4.
 
 ### S10 — Small-screen views
@@ -272,7 +276,8 @@ Taken so slices can proceed without blocking; each can be changed later.
 | S12 | done | `bun test test/extensions/device-authoring.test.ts` (command names agree with `ZiggyDevice.command`; flagged names are exactly the tools the Profile skips); recipe A1–A3 `/tmp/ziggy-devices-proof/s12-20261003-143043` |
 | S10 | done (images) | `bun test test/devices/image.test.ts` (8 PNG variants equal Pillow's decode; JPEG within 4; fit letterboxes, centres, never crops; rgb565 byte order; format choice); `bun test test/e2e/device-push.test.ts` U5 (rgb565 and jpeg devices, non-image and outside-Profile refused); recipe S3, S4 `/tmp/ziggy-devices-proof/s10-20261003-144148`. MCP Apps views deferred |
 | S8 | done (software) | `bun test test/e2e/device-voice.test.ts` (V1–V3 a 1.5 s recording in chunks → WAV → command → `{turn}`, transcript, reply, and the transcript is the model's user text; V5 too short, too long, silent, failing engine refused without a turn) and `device-chat.test.ts` V6 (no `speech.transcribe` → -32002); recipe with `say` and whisper-cli tiny.en `/tmp/ziggy-devices-proof/s8-20261003-145555`. PTT on the board waits for S7 |
-| S7, S9, S11 | not started | Order: S9 software next, then S7 and S11, which need a board and ESP-IDF |
+| S9 | done (software) | `bun test test/e2e/device-voice.test.ts` V4 (a long spoken reply arrives as one MP3 stream over several chunks; a typed turn's reply is not spoken; clips in order); recipe with `say` + ffmpeg as the speaker, the saved MP3 transcribed back by whisper-cli to the reply's text, `/tmp/ziggy-devices-proof/s9-20261003-150121`. Playback on the board waits for S7 |
+| S7, S11 | not started | Need a BOX-3 on the desk and ESP-IDF |
 
 ## Open decisions
 

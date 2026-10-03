@@ -47,3 +47,14 @@ export const wavFromPcm16 = (pcm: Uint8Array, sampleRate = PCM_SAMPLE_RATE): Uin
 
   return wav;
 };
+
+/** Turns a reply into MP3 audio for a device to play. */
+export type Speaker = (text: string) => Effect.Effect<Uint8Array, SpeechFailed>;
+
+/** Several minutes of speech at the bitrates a speaker writes. */
+export const MAX_SPOKEN_BYTES = 8 * 1_024 * 1_024;
+
+/** Starts with an ID3 tag or an MPEG audio frame. */
+export const isMp3 = (bytes: Uint8Array): boolean =>
+  (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) ||
+  (bytes[0] === 0xff && ((bytes[1] ?? 0) & 0xe0) === 0xe0);

@@ -4,12 +4,14 @@
  *
  *   ziggy-device pair '<zdp://… URI>' --state device.json [--name Kitchen] [--model pi]
  *   ziggy-device run --state device.json [--commands ./commands.ts] [--screen 320x240]
- *                    [--formats rgb565,jpeg] [--display-dir ./shown]
+ *                    [--formats rgb565,jpeg] [--display-dir ./shown] [--speaker ./heard]
  *
  * The state file holds the device's private key; it is written 0600. A commands module's default
  * export is called with the device before it connects, to add commands. `--screen` declares a
  * screen taking `--formats` (default rgb565), so `display.show` text arrives as `display …` lines,
  * and each image is saved in `--display-dir` as `display-<n>.png` (or `.jpg`) when given.
+ * `--speaker` declares that the device plays MP3; each clip the hub sends (a spoken reply) is saved
+ * there as `audio-<n>.mp3`.
  *
  * While running, each line on stdin is sent to the Profile as a chat message, and `/abort` stops
  * the running turn. `/audio <file.wav>` sends a recording instead (16 kHz mono 16-bit PCM WAV, as
@@ -32,7 +34,7 @@ import {
 const USAGE = `usage:
   ziggy-device pair <uri> --state <file> [--name <name>] [--model <model>]
   ziggy-device run --state <file> [--commands <module>] [--screen <width>x<height>]
-                   [--formats rgb565,jpeg] [--display-dir <dir>]`;
+                   [--formats rgb565,jpeg] [--display-dir <dir>] [--speaker <dir>]`;
 
 const log = (line: string) => console.log(`[ziggy-device] ${line}`);
 
@@ -106,8 +108,14 @@ const deviceOptions = (
   identity: DeviceIdentity,
   screen?: string,
   formats?: string,
+  speaker?: string,
 ): ZiggyDeviceOptions => {
-  const options: ZiggyDeviceOptions = { name: identity.name, model: identity.model, identity };
+  const options: ZiggyDeviceOptions = {
+    name: identity.name,
+    model: identity.model,
+    identity,
+    audio: speaker === undefined ? { in: ["pcm16/16000"] } : { in: ["pcm16/16000"], out: ["mp3"] },
+  };
 
   return screen === undefined ? options : { ...options, screen: parseScreen(screen, formats) };
 };
@@ -187,7 +195,30 @@ const saveImage = async (
   return path;
 };
 
-const watch = (device: ZiggyDevice, displayDir?: string) => {
+let played = 0;
+
+const saveAudio = async (directory: string, data: Uint8Array) => {
+  played += 1;
+
+  const path = join(directory, `audio-${played}.mp3`);
+
+  await mkdir(directory, { recursive: true });
+  await writeFile(path, data);
+
+  return path;
+};
+
+const watch = (device: ZiggyDevice, displayDir?: string, speakerDir?: string) => {
+  device.on("audio", (clip) => {
+    const line = `audio ${clip.format} ${clip.data.length} bytes`;
+
+    if (speakerDir === undefined) return log(line);
+
+    saveAudio(speakerDir, clip.data).then(
+      (path) => log(`${line} saved ${path}`),
+      (error: Error) => log(`${line} not saved: ${error.message}`),
+    );
+  });
   device.on("state", (state, closed) =>
     log(
       closed === undefined
@@ -312,14 +343,19 @@ if (command === "pair") {
   device.stop();
 } else if (command === "run") {
   const device = new ZiggyDevice(
-    deviceOptions(await readIdentity(statePath), flags.get("screen"), flags.get("formats")),
+    deviceOptions(
+      await readIdentity(statePath),
+      flags.get("screen"),
+      flags.get("formats"),
+      flags.get("speaker"),
+    ),
   );
 
   const commands = flags.get("commands");
 
   if (commands !== undefined) await loadCommands(device, commands);
 
-  watch(device, flags.get("display-dir"));
+  watch(device, flags.get("display-dir"), flags.get("speaker"));
   chat(device);
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => device.stop());

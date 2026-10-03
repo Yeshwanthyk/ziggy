@@ -16,7 +16,7 @@ the recipe is the slice's gate and the path is recorded as unreachable.
 | [Push](push.md) | An automation or tool shows something on the device unprompted | S6 | green — 2026-10-03, U1–U3: `/tmp/ziggy-devices-proof/s6-20261003-142144`; U1–U3: `bun test test/e2e/device-push.test.ts`; images wait for S10 |
 | [Authoring](authoring.md) | The Profile writes a device's commands; the device runs them | S12 | green — 2026-10-03, A1–A3: `/tmp/ziggy-devices-proof/s12-20261003-143043`; rules agreement: `bun test test/extensions/device-authoring.test.ts` |
 | [Hardware](hardware.md) | A real BOX-3 or Pi pairs, chats and runs commands | S7 / M1 | not built |
-| [Voice](voice.md) | Push-to-talk gets a transcript and a reply; later a spoken one | S8, S9 | V1–V3, V5, V6 built (software); V4 not built |
+| [Voice](voice.md) | Push-to-talk gets a transcript and a reply; later a spoken one | S8, S9 | built in software (V1–V6); push-to-talk and playback on the BOX-3 wait for S7 |
 | [Screen](screen.md) | A reply or view renders legibly on a small screen | S10 | green for images — 2026-10-03, S3, S4: `/tmp/ziggy-devices-proof/s10-20261003-144148`; `bun test test/e2e/device-push.test.ts` U5; S1 waits for the board (S7), S2 (MCP Apps views) not built |
 
 Uncovered and not yet planned as features: BLE pairing and OTA (S11), mDNS discovery, remote

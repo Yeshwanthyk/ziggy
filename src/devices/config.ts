@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Effect, Schema } from "effect";
 import { readPhysicalFile } from "../platform/tree";
 
-/** A program run per recording: `{wav}` in an argument becomes the recording's WAV path. */
+/** A program run per recording or reply; `{…}` placeholders in its arguments are filled in. */
 const SpeechCommand = Schema.Struct({
   command: Schema.NonEmptyArray(Schema.NonEmptyString),
   /** Default 60. */
@@ -26,6 +26,11 @@ export const DevicesConfig = Schema.Struct({
     Schema.Struct({
       /** Prints the recording's text on stdout, e.g. `whisper-cli -m <model> -nt -np -f {wav}`. */
       transcribe: Schema.optionalKey(SpeechCommand),
+      /**
+       * Writes a reply as MP3 at `{mp3}`, given it as `{text}`; replies to spoken turns are played
+       * on devices that take `mp3`.
+       */
+      speak: Schema.optionalKey(SpeechCommand),
     }),
   ),
 });
