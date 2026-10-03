@@ -17,7 +17,7 @@ Past conversations can be listed, read and continued without being rewritten.
 
 ## Proof
 
-`treeHash` equal across list/show; one session file with four message roles.
+`treeHash` equal across list/show; one session file with four message roles after the opening `system` snapshot entry.
 
 ## Gotchas
 

@@ -32,6 +32,12 @@ By hand, with a real local engine, after the SKILL.md launch steps (sandbox, `de
    `curl -sSL -o /tmp/ggml-tiny.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin`.
 2. Add to `"$PROFILE/devices.json"`:
    `"speech": {"transcribe": {"command": ["whisper-cli", "-m", "/tmp/ggml-tiny.en.bin", "-nt", "-np", "-f", "{wav}"]}}`.
+   On Linux without whisper-cli, Cactus Whistle works the same way: `python3 -m venv w &&
+   w/bin/pip install cactus-needle`, then a two-line script that prints
+   `needle.transcribe(sys.argv[1])["text"]` with `NEEDLE_TELEMETRY=0`, as
+   `"command": ["/path/whistle-transcribe", "{wav}"]`. The first call downloads the 17 MB model.
+   Linux has no `say`; record the question on a Mac or with any TTS, and use the stand-in speaker
+   from the tests (`printf 'ID3%s'`) unless a real one such as piper is installed.
    For V4 add a speaker to `speech`, here macOS `say` and ffmpeg:
    `"speak": {"command": ["/bin/sh", "-c", "say -o \"$0.aiff\" \"$1\" && ffmpeg -loglevel error -y -i \"$0.aiff\" -ac 1 -b:a 48k \"$0\"", "{mp3}", "{text}"]}`.
    Then start `serve`; the hub reads it at start.

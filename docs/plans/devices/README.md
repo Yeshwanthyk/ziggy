@@ -282,7 +282,8 @@ Taken so slices can proceed without blocking; each can be changed later.
 ## Open decisions
 
 - STT: decided as "a command the Profile names"; whisper.cpp locally is what we prove with. A
-  default model and install path are left to the person.
+  default model and install path are left to the person. Cactus Whistle (`cactus-needle`,
+  Apache-2.0, 17 MB, CPU) is proven as the same kind of command on Linux; it has no TTS.
 - First board: ESP32-S3-BOX-3 assumed. Needed by S7.
 - Remote access: tunnel product, if any. Not needed before M1 (LAN is enough).
 - Gadget SDK Terms: we use Meta's code under Apache-2.0 and none of their service; confirm the

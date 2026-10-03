@@ -35,7 +35,7 @@ Pair two SDK devices, `box` and `speaker`, then run them; only `box` has a scree
 ```bash
 for d in box speaker; do
   URI=$(HOME=$SCRATCH_HOME bun src/main.ts devices pair "$PROFILE" | head -1)
-  bun packages/device/bin/ziggy-device.ts pair "$URI" --state "$EVIDENCE/$d.json" --name "${(C)d}" --model test
+  bun packages/device/bin/ziggy-device.ts pair "$URI" --state "$EVIDENCE/$d.json" --name "$d" --model test
 done
 mkfifo "$EVIDENCE/box.in"; (sleep 60 > "$EVIDENCE/box.in" &)
 bun packages/device/bin/ziggy-device.ts run --state "$EVIDENCE/box.json" --screen 320x240 < "$EVIDENCE/box.in" > "$EVIDENCE/box.log" 2>&1 & BOX=$!
