@@ -206,7 +206,7 @@ test("the hub pings an idle device and drops a silent one", async () => {
       profileName: "harness",
       hostname: "127.0.0.1",
       port: 0,
-      timing: { handshakeMs: 1_000, idlePingMs: 100, deadMs: 600, sweepMs: 100 },
+      timing: { handshakeMs: 1_000, idlePingMs: 100, deadMs: 600, sweepMs: 100, requestMs: 1_000 },
       log: () => Effect.void,
     }).pipe(
       Scope.provide(scope),

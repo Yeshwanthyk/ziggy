@@ -34,7 +34,7 @@ import { Automations, type AutomationsApi } from "./automations";
 import { Doctor, type DoctorApi } from "./doctor";
 import { Memory, type MemoryApi } from "../memory";
 import { ProfileAgents, type ProfileAgentsApi } from "../agents";
-import { readDevicesConfig, runDeviceHub } from "../devices";
+import { DeviceLinks, type DeviceLinksApi, readDevicesConfig, runDeviceHub } from "../devices";
 import { ZiggyAgent, type ZiggyAgentApi } from "../session";
 import { makeDestinationBook, type DestinationBook } from "../resident/destinations";
 import { makeDeviceChat } from "../resident/device-chat";
@@ -140,7 +140,10 @@ const disabledDevicesRuntime: ResidentDevicesRuntime = {
 };
 
 /** Serves ZDP/1 when `devices.json` exists; without it no port is opened. */
-const makeLiveDevicesRuntime = (agent: ZiggyAgentApi): ResidentDevicesRuntime => ({
+const makeLiveDevicesRuntime = (
+  agent: ZiggyAgentApi,
+  links: DeviceLinksApi,
+): ResidentDevicesRuntime => ({
   run: (target, live, logError) =>
     Effect.gen(function* () {
       const config = yield* readDevicesConfig(target.path);
@@ -153,6 +156,7 @@ const makeLiveDevicesRuntime = (agent: ZiggyAgentApi): ResidentDevicesRuntime =>
         hostname: config.listen.host,
         port: config.listen.port,
         chat: makeDeviceChat(target, agent, live),
+        links,
         log: logError,
       });
 
@@ -424,7 +428,7 @@ export const ResidentGatewayLive = Layer.effect(
         paths.profilesRegistry,
         paths.profilesDirectory,
       ),
-      makeLiveDevicesRuntime(yield* ZiggyAgent),
+      makeLiveDevicesRuntime(yield* ZiggyAgent, yield* DeviceLinks),
     );
   }),
 );

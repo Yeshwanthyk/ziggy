@@ -168,9 +168,12 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 
 ### S5 — Device tools
 
-- [ ] On `device.hello` and `tools/list_changed`, store the command list in the registry.
-- [ ] `src/devices/tools.ts` adds `device__<id>__<cmd>` through `SessionTools`; calls go over the
-  live connection; offline → immediate tool error (R3).
+- [x] On `device.hello` and `tools/list_changed`, store the command list in the registry
+  (`setDeviceTools`; `DeviceRecord.tools`).
+- [x] `src/devices/tools.ts` adds `device__<id>__<cmd>` through `SessionTools`. Calls go over the
+  live link through `DeviceLinks` (`src/devices/links.ts`); offline → immediate tool error (R3).
+- [x] Found while proving: the link's fibers raced with `raceAll`, which waits for a *success*,
+  so a closed device stayed online until the next ping. It is now `raceAllFirst`.
 - Gate: `[tools]`.
 
 ### S6 — Push
@@ -239,7 +242,8 @@ Taken so slices can proceed without blocking; each can be changed later.
 | S2 | done | `bun test test/e2e/devices.test.ts` (devices off; pair, spent code, unknown key, reconnect and 4409, version 4426, revoke, ping and 4408); recipe run `/tmp/ziggy-devices-proof/s2-20261003-134705` |
 | S3 | done | `bun test test/e2e/device-conformance.test.ts` (pair and pin, forged key refused before the code is sent, reconnect across a hub restart, revoke 4401, replace 4409); `bun run check:device` (vector, tamper); recipe C4 `/tmp/ziggy-devices-proof/s3-20261003-135654` |
 | S4 | done | `bun test test/e2e/device-chat.test.ts` (T1 status, deltas, done; T2 one session that continues; T3 abort → chat.error; T4 busy -32001, text never sent; T5 provider failure → chat.error); recipe T1, T2 `/tmp/ziggy-devices-proof/s4-20261003-140448` |
-| S5–S12 | not started | |
+| S5 | done | `bun test test/e2e/device-tools.test.ts` (K1 tool listed, none in `ziggy run`; K2 call and result reach the model; K3 offline fails at once; K4 specialist allowlist; K5 a command added online reaches later sessions); recipe K1, K2 `/tmp/ziggy-devices-proof/s5-20261003-141513` |
+| S6–S12 | not started | |
 
 ## Open decisions
 

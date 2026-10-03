@@ -176,6 +176,9 @@ src/
     memory.ts             read, update (scope table, file lock, backups)
     tool.ts               memory_write, contributed via session/tools.ts                         [Pi]
 
+  devices/                the ZDP/1 hub, registry and device links (docs/plans/devices)
+    tools.ts              device__<id>__<cmd>, contributed via session/tools.ts                  [Pi]
+
   resident/               left in place for now (today application/ gateways + adapters/bun etc.);
                           only live-sessions is rebuilt, the rest changes imports only
   cli/                    today faces/; unchanged except imports; per-area command files continue

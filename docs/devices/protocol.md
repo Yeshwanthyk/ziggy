@@ -81,8 +81,9 @@ The first message of every paired connection. The hub refuses other methods unti
 
 `capabilities` says what the device can do; every key is optional:
 
-- `tools`: the device has commands. The hub calls `tools/list` after the hello, and again when
-  the device sends `notifications/tools/list_changed` (only if `listChanged` is true).
+- `tools`: the device has commands. The hub calls `tools/list` after the hello, and again
+  whenever the device sends `notifications/tools/list_changed`. That includes a device that adds
+  its first command after the hello.
 - `screen`: it can show text and images of this size in these formats.
 - `audio`: it can record (`in`) and play (`out`) these formats.
 - `chat`: it can talk to the Profile with `chat.send`.
@@ -106,6 +107,14 @@ receiving anything (close `4408`). The result is empty.
 
 These are MCP's shapes. The hub exposes each command to the Profile as the tool
 `device__<id>__<name>`. Names match `[a-z0-9_]{1,48}`.
+
+- The hub keeps the latest list in the device's registry entry.
+- A session gets the tools listed when it opens, and only in the process that runs the hub. A
+  foreground `ziggy run` has none.
+- Providers cap tool names at 64 characters. A command whose full name is longer is skipped with
+  a warning, so keep the device id and command name short.
+- Calling a device that is not connected fails at once with "`<id>` is offline". It does not wait
+  for the 30 s limit.
 
 ```json zdp
 {"jsonrpc":"2.0","id":"h-1","method":"tools/list"}

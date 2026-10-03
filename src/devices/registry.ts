@@ -11,7 +11,7 @@ import { writeFileAtomic } from "../platform/atomic-write";
 import { fileSystemCauseDetails } from "../platform/cause";
 import { withFileLock } from "../platform/file-lock";
 import { readPhysicalFile } from "../platform/tree";
-import { normalizeZdpPairingCode } from "./protocol";
+import { DeviceTool, normalizeZdpPairingCode } from "./protocol";
 
 export class DeviceRegistryFailed extends Schema.TaggedErrorClass<DeviceRegistryFailed>()(
   "DeviceRegistryFailed",
@@ -31,6 +31,8 @@ export const DeviceRecord = Schema.Struct({
   /** The device's static X25519 public key, base64url. */
   publicKey: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/)),
   pairedAt: Schema.String,
+  /** The commands the device last listed; the Profile sees them as tools. */
+  tools: Schema.optionalKey(Schema.Array(DeviceTool)),
 });
 
 export type DeviceRecord = typeof DeviceRecord.Type;
@@ -307,6 +309,26 @@ export const renameDevice = (
       yield* writeJson(recordPath(profilePath, id), renamed, "rename device");
 
       return renamed;
+    }),
+  );
+
+/** Stores the commands a device listed; false when the device was revoked meanwhile. */
+export const setDeviceTools = (
+  profilePath: string,
+  id: string,
+  tools: ReadonlyArray<DeviceTool>,
+): Effect.Effect<boolean, DeviceRegistryFailed> =>
+  locked(
+    profilePath,
+    "store device tools",
+    Effect.gen(function* () {
+      const record = yield* readDevice(profilePath, id, "store device tools");
+
+      if (record === undefined) return false;
+
+      yield* writeJson(recordPath(profilePath, id), { ...record, tools }, "store device tools");
+
+      return true;
     }),
   );
 

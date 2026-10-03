@@ -6,13 +6,14 @@
  */
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { Clock, Effect, Queue, Schema, Scope, Semaphore } from "effect";
+import { Clock, Deferred, Effect, Queue, Schema, Scope, Semaphore } from "effect";
 import { writeFileAtomic } from "../platform/atomic-write";
 import { noiseXX, type NoiseKeyPair, type NoiseSession } from "../platform/noise";
 import { readPhysicalFile } from "../platform/tree";
 import { serveWebSockets, type WebSocketLink } from "../platform/websocket-server";
 import { type DeviceChat, type DeviceChatEvent } from "./chat";
 import { deviceHubKey } from "./keys";
+import { type DeviceLinksApi, type DeviceToolArguments, DeviceToolFailed } from "./links";
 import {
   ZDP_PATH,
   ZDP_PROLOGUE,
@@ -22,6 +23,9 @@ import {
   ZdpErrorCode,
   type ZdpFrame,
   ZdpInvalid,
+  type DeviceTool,
+  type ToolResult,
+  decodeZdpResult,
   type ZdpMessage,
   type ZdpRequest,
   decodeZdpFrame,
@@ -33,6 +37,7 @@ import {
   listDevices,
   pairingOpen,
   redeemPairingCode,
+  setDeviceTools,
 } from "./registry";
 
 export class DeviceHubFailed extends Schema.TaggedErrorClass<DeviceHubFailed>()("DeviceHubFailed", {
@@ -49,6 +54,8 @@ export interface DeviceHubTiming {
   readonly deadMs: number;
   /** How often revoked devices are looked for. */
   readonly sweepMs: number;
+  /** How long the device has to answer a request. */
+  readonly requestMs: number;
 }
 
 export const DEVICE_HUB_TIMING: DeviceHubTiming = {
@@ -56,6 +63,7 @@ export const DEVICE_HUB_TIMING: DeviceHubTiming = {
   idlePingMs: 20_000,
   deadMs: 60_000,
   sweepMs: 2_000,
+  requestMs: 30_000,
 };
 
 export interface DeviceHubOptions {
@@ -66,6 +74,8 @@ export interface DeviceHubOptions {
   readonly timing?: DeviceHubTiming;
   /** Serves `chat.*` to devices that declared `chat`; without it `chat.send` is refused. */
   readonly chat?: DeviceChat;
+  /** Where connected devices are attached so device tools can reach them. */
+  readonly links?: DeviceLinksApi;
   readonly log: (message: string) => Effect.Effect<void>;
 }
 
@@ -287,6 +297,123 @@ const narrow = <M extends ZdpRequest["method"]>(
     : Effect.fail(drop(INTERNAL, `expected ${method}`));
 };
 
+/** Requests the hub sends to one device, matched to their answers by id. */
+interface HubRequests {
+  readonly nextId: () => string;
+  readonly listTools: Effect.Effect<ReadonlyArray<DeviceTool>, DeviceToolFailed>;
+  readonly callTool: (
+    name: string,
+    args: DeviceToolArguments,
+  ) => Effect.Effect<ToolResult, DeviceToolFailed>;
+  /** Settles the request `message` answers; false when it answers none. */
+  readonly settle: (message: ZdpMessage) => Effect.Effect<boolean>;
+  /** Fails every request still waiting, once the link ends. */
+  readonly failAll: Effect.Effect<void>;
+}
+
+/** Requests go through the link's outbox, so the device sees them after any status sent before. */
+const makeRequests = (
+  outbox: Queue.Queue<ZdpMessage>,
+  deviceId: string,
+  timeoutMs: number,
+): HubRequests => {
+  let sent = 0;
+
+  let closed = false;
+
+  const pending = new Map<string, Deferred.Deferred<Schema.Json, DeviceToolFailed>>();
+
+  const failed = (message: string) => new DeviceToolFailed({ deviceId, message });
+
+  const nextId = () => {
+    sent += 1;
+
+    return `h-${sent}`;
+  };
+
+  const request = (
+    method: "tools/list" | "tools/call",
+    params?: { readonly name: string; readonly arguments: DeviceToolArguments },
+  ) =>
+    Effect.gen(function* () {
+      if (closed) return yield* failed(`${deviceId} is offline`);
+
+      const id = nextId();
+
+      const answer = yield* Deferred.make<Schema.Json, DeviceToolFailed>();
+
+      pending.set(id, answer);
+
+      const answered = Effect.gen(function* () {
+        yield* Queue.offer(
+          outbox,
+          params === undefined
+            ? { jsonrpc: "2.0", id, method: "tools/list" }
+            : { jsonrpc: "2.0", id, method: "tools/call", params },
+        );
+
+        const result = yield* Deferred.await(answer).pipe(
+          Effect.timeoutOrElse({
+            duration: timeoutMs,
+            orElse: () =>
+              Effect.fail(failed(`${deviceId} did not answer ${method} within ${timeoutMs} ms`)),
+          }),
+        );
+
+        return yield* decodeZdpResult(method, result).pipe(
+          Effect.mapError((invalid) =>
+            failed(`${deviceId} answered ${method} badly: ${invalid.message}`),
+          ),
+        );
+      });
+
+      return yield* answered.pipe(Effect.ensuring(Effect.sync(() => pending.delete(id))));
+    });
+
+  return {
+    nextId,
+    listTools: request("tools/list").pipe(
+      Effect.map((result) => (result.method === "tools/list" ? result.result.tools : [])),
+    ),
+    callTool: (name, args) =>
+      request("tools/call", { name, arguments: args }).pipe(
+        Effect.flatMap((result) =>
+          result.method === "tools/call"
+            ? Effect.succeed(result.result)
+            : Effect.fail(failed(`${deviceId} answered tools/call with another result`)),
+        ),
+      ),
+    settle: (message) =>
+      Effect.suspend(() => {
+        if ("method" in message || message.id === null) return Effect.succeed(false);
+
+        const answer = pending.get(String(message.id));
+
+        if (answer === undefined) return Effect.succeed(false);
+
+        pending.delete(String(message.id));
+
+        return (
+          "result" in message
+            ? Deferred.succeed(answer, message.result)
+            : Deferred.fail(answer, failed(message.error.message))
+        ).pipe(Effect.as(true));
+      }),
+    failAll: Effect.suspend(() => {
+      const waiting = [...pending.values()];
+
+      closed = true;
+      pending.clear();
+
+      return Effect.forEach(
+        waiting,
+        (answer) => Deferred.fail(answer, failed(`${deviceId} went offline`)),
+        { discard: true },
+      );
+    }),
+  };
+};
+
 export const runDeviceHub = (
   options: DeviceHubOptions,
 ): Effect.Effect<DeviceHub, DeviceHubFailed, Scope.Scope> =>
@@ -398,10 +525,8 @@ export const runDeviceHub = (
       });
 
     /** Pings when idle and drops a silent link, until the link ends. */
-    const keepAlive = (link: WebSocketLink, channel: Channel) =>
+    const keepAlive = (link: WebSocketLink, channel: Channel, requests: HubRequests) =>
       Effect.gen(function* () {
-        let pings = 0;
-
         const tick = Math.max(10, Math.min(1000, Math.floor(timing.idlePingMs / 4)));
 
         while (true) {
@@ -416,8 +541,7 @@ export const runDeviceHub = (
           }
 
           if (now - channel.lastSent() > timing.idlePingMs) {
-            pings += 1;
-            yield* channel.send({ jsonrpc: "2.0", id: `h-${pings}`, method: "ping" });
+            yield* channel.send({ jsonrpc: "2.0", id: requests.nextId(), method: "ping" });
           }
         }
       }).pipe(Effect.catchTag("LinkDropped", () => Effect.void));
@@ -484,6 +608,8 @@ export const runDeviceHub = (
       device: DeviceRecord,
       capabilities: DeviceCapabilities,
       outbox: Queue.Queue<ZdpMessage>,
+      requests: HubRequests,
+      refreshTools: Effect.Effect<void>,
     ) =>
       Effect.gen(function* () {
         const chat = capabilities.chat === undefined ? undefined : options.chat;
@@ -493,7 +619,14 @@ export const runDeviceHub = (
         while (true) {
           const message = yield* receiveMessage(channel);
 
-          // Notifications and the device's answers to our pings need nothing back.
+          if (yield* requests.settle(message)) continue;
+
+          if ("method" in message && message.method === "notifications/tools/list_changed") {
+            yield* Effect.forkChild(refreshTools);
+            continue;
+          }
+
+          // Other notifications and the device's answers to our pings need nothing back.
           if (!isRequest(message)) continue;
 
           if (message.method === "ping") yield* channel.respond(message, {});
@@ -578,11 +711,31 @@ export const runDeviceHub = (
 
         const drain = Effect.forever(Queue.take(outbox).pipe(Effect.flatMap(channel.send)));
 
-        yield* Effect.raceAll([
-          serve(channel, device, capabilities, outbox),
-          keepAlive(link, channel),
-          drain,
-        ]).pipe(Effect.ensuring(leave));
+        const requests = makeRequests(outbox, device.id, timing.requestMs);
+
+        /** Stores the device's commands, which become `device__<id>__<cmd>` tools. */
+        const refreshTools = requests.listTools.pipe(
+          Effect.flatMap((tools) => setDeviceTools(profilePath, device.id, tools)),
+          Effect.asVoid,
+          Effect.catch((cause) =>
+            options.log(`[devices] could not list ${device.id}'s tools: ${cause.message}`),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          // A device may add its first command while online, so every link can be called.
+          if (options.links !== undefined)
+            yield* options.links.attach(profilePath, device.id, { call: requests.callTool });
+
+          if (capabilities.tools !== undefined) yield* Effect.forkScoped(refreshTools);
+
+          // Whichever ends first, by success or failure, ends the link.
+          yield* Effect.raceAllFirst([
+            serve(channel, device, capabilities, outbox, requests, refreshTools),
+            keepAlive(link, channel, requests),
+            drain,
+          ]);
+        }).pipe(Effect.scoped, Effect.ensuring(requests.failAll), Effect.ensuring(leave));
       }).pipe(
         Effect.catchTag("LinkDropped", (dropped) =>
           Effect.gen(function* () {
@@ -602,6 +755,8 @@ export const runDeviceHub = (
     }).pipe(Effect.mapError((cause) => new DeviceHubFailed({ message: cause.message, cause })));
 
     port = server.port;
+
+    if (options.links !== undefined) yield* options.links.serve(profilePath);
     yield* publish;
     yield* Effect.addFinalizer(() =>
       Effect.tryPromise(() => rm(projectionPath(profilePath), { force: true })).pipe(

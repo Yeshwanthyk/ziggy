@@ -2123,3 +2123,19 @@ section "T10".
 - `test/e2e/device-chat.test.ts` covers T1–T5 against a real resident and a scripted model.
 - `[chat]` T1 and T2 were driven by hand through `ziggy-device run` on a fifo: two turns, one `.jsonl`, and the second request carries both messages. Evidence is in `/tmp/ziggy-devices-proof/s4-20261003-140448`.
 - A model failure reaches the device as "provider request failed", the same sanitized text the UI gets.
+
+## 2026-10-03 — Devices S5: device tools
+
+**What shipped.**
+- A device's commands are Profile tools named `device__<id>__<cmd>`. After the hello, and on every `notifications/tools/list_changed`, the hub calls `tools/list` and stores the list in the device's registry entry (`DeviceRecord.tools`).
+- `src/devices/links.ts` adds the `DeviceLinks` service: which Profiles have a hub in this process, and the live link for each connected device. A call to a device that is not connected fails at once with "`<id>` is offline".
+- The hub sends its own requests (`tools/list`, `tools/call`, pings) with one id counter per link. They go through the link's outbox, so the device sees `chat.status tool` before the call. An answer settles its pending request; a missing answer fails after `requestMs` (30 s); the link ending fails every request still waiting.
+- `src/devices/tools.ts` (`[Pi]`) contributes the tools through `SessionTools`, only while this process runs the Profile's hub. A tool's `isError` result or a failed call rejects, so Pi marks the call failed. Names over 64 characters are skipped with a warning.
+- `test/harness/sandbox.ts --script` scripts the hand-drive model, so a recipe can make the model call a tool.
+
+**Bug fixed.** The link's fibers raced with `Effect.raceAll`, which waits for the first *success*. When a device closed, `serve` failed and the link stayed online until the next idle ping, up to 20 s later. It is now `raceAllFirst`.
+
+**Proof.**
+- `test/e2e/device-tools.test.ts` covers K1–K5 against a real resident: tool listed and absent from `ziggy run`; call and result; offline fails at once; a specialist allowlist hides it; a command added while online reaches later sessions.
+- `[tools]` K1 and K2 were driven by hand through `ziggy-device run --commands` with a scripted model. Evidence is in `/tmp/ziggy-devices-proof/s5-20261003-141513`.
+- Full `bun test`: 719 pass, 0 fail.

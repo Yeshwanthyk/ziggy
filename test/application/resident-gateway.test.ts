@@ -22,6 +22,7 @@ import {
 import { AutomationDefinitions } from "ziggy/application/automation-definitions";
 import { Automations } from "ziggy/application/automations";
 import { Doctor } from "ziggy/application/doctor";
+import { DeviceLinks } from "ziggy/devices/index";
 import { Memory } from "ziggy/memory/index";
 import { ProfileAgents } from "ziggy/agents/index";
 import { DiscordGateway, type DiscordGatewayApi } from "ziggy/application/discord-gateway";
@@ -475,6 +476,7 @@ describe("resident gateway supervision", () => {
       Layer.mock(Models, {}),
       Layer.mock(ProfileAgents, {}),
       Layer.mock(PluginSecrets, {}),
+      DeviceLinks.layer,
     );
 
     await runScoped(

@@ -23,6 +23,7 @@ export const piFiles = new Set([
   "src/agents/run.ts",
   "src/agents/tools.ts",
   "src/memory/tool.ts",
+  "src/devices/tools.ts",
 ]);
 
 export function isTestLike(filename) {

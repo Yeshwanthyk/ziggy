@@ -29,6 +29,8 @@ Build status is per feature in [`features/README.md`](features/README.md). A fea
    ```
 
    This exports `ZIGGY_HOME`, `SCRATCH_HOME`, `PROFILE`, `MODEL_URL` and `REQUESTS`.
+   Add `--script replies.json` to script the model: a JSON array of `{"text": …}` or
+   `{"tools": [{"name": …, "arguments": {…}}]}`, taken in order before the default `ok`.
 
 2. Hub config (only for features past `devices-off`):
 
