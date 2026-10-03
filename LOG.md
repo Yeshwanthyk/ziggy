@@ -2068,3 +2068,27 @@ section "T10".
 - Versioning: a new field may only appear behind a hello capability, which is what lets every receiver decode strictly.
 
 `src/devices/protocol.ts` decodes all of it with `onExcessProperty: "error"`. A two-step decode tells an unknown method (-32601) apart from bad params (-32602). The test reads each fenced `json zdp` example from the spec and checks it decodes and re-encodes to the same bytes, so the spec and the schemas cannot drift apart.
+
+## 2026-10-03 — Devices S2: hub and pairing
+
+**The resident serves ZDP/1 when the Profile has `devices.json`.** The resident gateway gains a devices branch. Without `devices.json` nothing listens. A hub that fails logs `[gateway] devices stopped: …` and leaves Telegram and the UI running.
+- `src/devices/hub.ts` handles each link in order: the Noise responder handshake, then pairing or a known key, then `device.hello`, then serving. It keeps `.runtime/device-hub.json` (`{port, online}`) current and removes it on stop.
+- Close codes: 4401 for an unknown or revoked key, 4409 when a newer link replaces an older one, 4426 for another `zdp` version, and 4408 after 60 s of silence. The hub pings any link idle for 20 s.
+- `src/devices/registry.ts`: each paired device is stored as `devices/<id>.json` and holds only public facts. Pairing codes are stored as SHA-256 hashes, are single-use, and expire after ten minutes. Every write happens under the one file lock.
+- `src/devices/keys.ts`: the hub's static key is kept in the macOS Keychain (`ziggy-device-hub`, one account per Profile). With `ZIGGY_DEVICE_KEYSTORE=file`, or on another OS, it goes in `.gateway/device-hub.key` (0600) instead. The Keychain calls moved into `src/platform/keychain.ts`, and plugin secrets share them.
+- CLI: `ziggy devices configure|pair|list|rename|revoke`. `pair` prints the `zdp://` URI with the live port and a LAN address in place of `0.0.0.0`.
+
+**Design change: pairing proves the code by sending it.** The device pins the hub key from the URI, so the Noise channel already reaches the right hub and is encrypted. `device.pair` therefore carries `{code, name, model}`, and the HMAC proof is gone. The spec and schemas were changed to match.
+
+**Proof.** `test/e2e/devices.test.ts` (6 tests) runs against a real resident:
+- devices off;
+- pair, pin and list as online;
+- refusing a spent code;
+- dropping an unknown key;
+- hello before serving;
+- one link replacing another;
+- refusing another version;
+- revoking a live link and refusing its reconnect;
+- an in-process hub with short timings for pings and the 4408 close.
+
+`test/harness/device-cli.ts` drives the recipes from a shell. The pairing and connection recipes ran by hand in the sandbox; evidence is in `/tmp/ziggy-devices-proof/s2-20261003-134705`. C4, the device reconnect loop, waits for S3. Gotcha: a scratch `HOME` has no Keychain, so a sandbox drive must export `ZIGGY_DEVICE_KEYSTORE=file`.

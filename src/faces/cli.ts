@@ -730,6 +730,51 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
     return invalid(renderZiggyHelp("web"));
   }
 
+  if (word === "devices") {
+    const devicesHelp = renderZiggyHelp("devices");
+
+    const target = rest[1];
+
+    if (!required(target)) return invalid(devicesHelp);
+
+    if (rest[0] === "pair" && rest.length === 2) return { _tag: "DevicesPair", target };
+
+    if (rest[0] === "list" && (rest.length === 2 || (rest.length === 3 && rest[2] === "--json")))
+      return { _tag: "DevicesList", target, json: rest.length === 3 };
+
+    if (rest[0] === "revoke" && rest.length === 3 && required(rest[2]))
+      return { _tag: "DevicesRevoke", target, id: rest[2] };
+
+    if (rest[0] === "rename" && rest.length >= 4 && required(rest[2])) {
+      const name = rest.slice(3).join(" ").trim();
+
+      if (name.length === 0) return invalid(devicesHelp);
+
+      return { _tag: "DevicesRename", target, id: rest[2], name };
+    }
+
+    if (rest[0] === "configure") {
+      let host = "0.0.0.0";
+      let port = 7316;
+
+      for (let index = 2; index < rest.length; index += 2) {
+        const option = rest[index];
+        const value = rest[index + 1];
+
+        if (!required(value)) return invalid("devices configure options require values");
+
+        if (option === "--port" && /^\d+$/u.test(value) && Number(value) <= 65_535)
+          port = Number(value);
+        else if (option === "--host") host = value;
+        else return invalid(`unknown or invalid devices configure option ${option ?? ""}`);
+      }
+
+      return { _tag: "DevicesConfigure", target, host, port };
+    }
+
+    return invalid(devicesHelp);
+  }
+
   if (word === "gateway") {
     if (rest.length !== 1 || !required(rest[0])) {
       return invalid("usage: ziggy gateway <name|path>");

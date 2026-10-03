@@ -136,6 +136,21 @@ export type CliCommand =
     }
   | { readonly _tag: "WebPair"; readonly target: string }
   | { readonly _tag: "WebRevoke"; readonly target: string }
+  | {
+      readonly _tag: "DevicesConfigure";
+      readonly target: string;
+      readonly host: string;
+      readonly port: number;
+    }
+  | { readonly _tag: "DevicesPair"; readonly target: string }
+  | { readonly _tag: "DevicesList"; readonly target: string; readonly json: boolean }
+  | {
+      readonly _tag: "DevicesRename";
+      readonly target: string;
+      readonly id: string;
+      readonly name: string;
+    }
+  | { readonly _tag: "DevicesRevoke"; readonly target: string; readonly id: string }
   | { readonly _tag: "Gateway"; readonly target: string }
   | { readonly _tag: "UnsupportedResidentAlias"; readonly name: "discord" | "slack" }
   | { readonly _tag: "Open"; readonly target: string };

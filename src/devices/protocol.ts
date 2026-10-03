@@ -32,15 +32,19 @@ export const ZdpClose = {
   version: 4426,
 } as const;
 
-/** A message or frame that does not match the protocol; `code` is the JSON-RPC error to answer. */
+const RequestId = Schema.Union([Schema.Int, Schema.String]);
+
+/**
+ * A message or frame that does not match the protocol; `code` is the JSON-RPC error to answer,
+ * and `id` the request's id when it could be read.
+ */
 export class ZdpInvalid extends Schema.TaggedErrorClass<ZdpInvalid>()("ZdpInvalid", {
   code: Schema.Int,
   message: Schema.String,
+  id: Schema.optionalKey(RequestId),
 }) {}
 
 const strict = { onExcessProperty: "error" } as const;
-
-const RequestId = Schema.Union([Schema.Int, Schema.String]);
 
 const NoParams = Schema.Struct({});
 
@@ -63,7 +67,8 @@ const JsonObject = Schema.Record(Schema.String, Schema.Json);
 // Pairing and session.
 
 const DevicePair = Schema.Struct({
-  proof: Schema.NonEmptyString,
+  /** The pairing code from the URI; dashes and case are ignored. */
+  code: Schema.NonEmptyString,
   name: Schema.NonEmptyString,
   model: Schema.NonEmptyString,
 });
@@ -301,10 +306,15 @@ export const decodeZdpMessage = (text: string): Effect.Effect<ZdpMessage, ZdpInv
       ),
     );
 
+    const id = envelope.id ?? undefined;
+
+    const answer = id === undefined ? {} : { id };
+
     if (envelope.method !== undefined && !methods.has(envelope.method))
       return yield* new ZdpInvalid({
         code: ZdpErrorCode.methodNotFound,
         message: `unknown method ${envelope.method}`,
+        ...answer,
       });
 
     return yield* decodeMessage(json).pipe(
@@ -316,6 +326,7 @@ export const decodeZdpMessage = (text: string): Effect.Effect<ZdpMessage, ZdpInv
                 ? ZdpErrorCode.invalidRequest
                 : ZdpErrorCode.invalidParams,
             message: issue.message,
+            ...answer,
           }),
       ),
     );

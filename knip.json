@@ -3,6 +3,7 @@
   "entry": [
     "test/**/*.test.ts",
     "test/harness/sandbox.ts",
+    "test/harness/device-cli.ts",
     "test/platform/noise-interop.ts",
     "extensions/*/index.ts",
     "extensions/*/bin/**/*.{ts,mjs}",

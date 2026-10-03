@@ -125,13 +125,20 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 
 ### S2 — Hub and pairing
 
-- [ ] `devices.json` `{version:1, listen:{host, port}}` decoded in the gateway config loader;
-  absent → no listener (R0).
-- [ ] Ziggy static keypair in Keychain (Linux: env/file fallback documented, same as plugin secrets).
-- [ ] Registry `<profile>/devices/<id>.json` `{id, name, publicKey, pairedAt, commands}`.
-- [ ] `ziggy devices pair <profile>` prints a one-time code; the device redeems it once and
-  exchanges static keys. `list`, `revoke`, `rename`.
-- [ ] Resident branch: listener, handshake, `device.hello`, liveness, refuse unknown keys (R1).
+- [x] `devices.json` `{version:1, listen:{host, port}}` decoded strictly by `src/devices/config.ts`
+  (`ziggy devices configure` writes it); absent → no listener (R0).
+- [x] Hub static key per Profile in the Keychain (service `ziggy-device-hub`); elsewhere, or with
+  `ZIGGY_DEVICE_KEYSTORE=file`, `.gateway/device-hub.key` (0600). `src/platform/keychain.ts` is
+  shared with plugin secrets.
+- [x] Registry `<profile>/devices/<id>.json` `{version, id, name, model, publicKey, pairedAt}`;
+  commands are not stored, they come from the live device (S5). Open codes are kept hashed in
+  `.gateway/device-pairing.json`; every write holds the devices file lock.
+- [x] `ziggy devices pair <profile>` prints a one-time URI; the device redeems it once
+  (`device.pair {code}`; the HMAC proof was dropped because the device already pins the hub key).
+  `list`, `revoke`, `rename`.
+- [x] Resident branch: listener, handshake, `device.hello`, liveness, refuse unknown keys (R1),
+  4409 on reconnect, revoked links dropped within 2 s; `.runtime/device-hub.json` lists who is
+  online. A failing hub logs and stops alone.
 - Gate: `[pairing]`, `[connection]`, and `[devices-off]` still green.
 
 ### S3 — `@ziggy/device` and the harness fake
@@ -218,7 +225,8 @@ Taken so slices can proceed without blocking; each can be changed later.
 |---|---|---|
 | S0 | done | `bun test test/platform/noise.test.ts` (vector, both roles; tamper poisons); `bun test/platform/noise-interop.ts <muse-gadget-sdk>` → hash equal both roles |
 | S1 | done | `bun test test/devices/protocol.test.ts`: every `json zdp` example in the spec decodes strictly and re-encodes to the same text; every method is shown; bad input gets the right JSON-RPC code |
-| S2–S12 | not started | |
+| S2 | done | `bun test test/e2e/devices.test.ts` (devices off; pair, spent code, unknown key, reconnect and 4409, version 4426, revoke, ping and 4408); recipe run `/tmp/ziggy-devices-proof/s2-20261003-134705` |
+| S3–S12 | not started | `test/harness/device.ts` and `device-cli.ts` exist (S2 needed them); `packages/device` does not |
 
 ## Open decisions
 

@@ -30,10 +30,11 @@ Build status is per feature in [`features/README.md`](features/README.md). A fea
 
    This exports `ZIGGY_HOME`, `SCRATCH_HOME`, `PROFILE`, `MODEL_URL` and `REQUESTS`.
 
-2. Hub config (only for features past `devices-off`; lands in S2):
+2. Hub config (only for features past `devices-off`):
 
    ```bash
-   printf '{"version":1,"listen":{"host":"127.0.0.1","port":0}}\n' > "$PROFILE/devices.json"
+   export ZIGGY_DEVICE_KEYSTORE=file   # a scratch HOME has no Keychain; never use the real one
+   HOME=$SCRATCH_HOME bun src/main.ts devices configure "$PROFILE" --host 127.0.0.1 --port 0
    ```
 
    Use `127.0.0.1` for the harness fake. Use the machine's LAN address only for the `hardware`
@@ -46,11 +47,11 @@ Build status is per feature in [`features/README.md`](features/README.md). A fea
    until [ -f "$PROFILE/.runtime/ui-server.json" ]; do sleep 0.25; done
    ```
 
-   Ready when `ui-server.json` exists (and, once S2 lands, `.runtime/device-hub.json` with the hub
-   port and Ziggy's public key).
+   Ready when `ui-server.json` exists, and with `devices.json` also `.runtime/device-hub.json`
+   (`{"version":1,"port":…,"online":[…]}`); `serve.log` says `[gateway] devices listening on …`.
 
-Automated: once S3 lands, `bun run test:e2e test/e2e/devices.test.ts` does all of this per test
-with `startResident` and `test/harness/device.ts`, and cleans up.
+Automated: `bun test test/e2e/devices.test.ts` does all of this per test with `startResident`
+and `test/harness/device.ts`, and cleans up.
 
 ## Doctor
 
@@ -72,9 +73,11 @@ the configured host. Anything on `*` or a LAN address you did not configure: sto
 
 ## Drive
 
-- **Harness fake (default, from S3):** `test/harness/device.ts` `startDevice(resident, {name,
-  commands})` pairs through `ziggy devices pair`, connects, and records every ZDP frame in both
-  directions. `device.chat(text)` sends `chat.send`; `device.frames` is the transcript.
+- **Harness device (default):** from a shell, `bun test/harness/device-cli.ts pair '<uri>'
+  <key-file> [name] [--hold ms]` or `connect <port> <key-file> [--hold ms]`; it prints one JSON
+  line per event (`handshake` with `pinned`, each reply, `received`, `closed` with the code). In
+  tests, `connectDevice({port, keyPair})` from `test/harness/device.ts` gives `request`,
+  `received`, `mute` and `closed`. It answers the hub's pings unless muted.
 - **Model:** `test/harness/provider.ts` scripts replies; use `tools(...)` to make the model call
   a `device__<id>__<cmd>` tool and `held(...)` to hold a turn for abort.
 - **CLI:** `HOME=$SCRATCH_HOME bun src/main.ts devices pair|list|revoke|rename "$PROFILE" …`.

@@ -49,13 +49,14 @@ zdp://192.168.1.20:7316/pair?code=K7QM-3XW9-TB&key=<hub public key, base64url>
   other key, so a man in the middle cannot pair.
 
 The device connects with a static key the hub has not seen, and its first message is
-`device.pair` instead of `device.hello`. `proof` is `HMAC-SHA256(key = code without dashes,
-upper-case ASCII, message = handshake hash)`, base64url. Binding the proof to this handshake means a
-relayed proof is useless. The hub checks it against the open code, spends the code, records the
-device's public key, and answers with the id it gave the device.
+`device.pair` instead of `device.hello`, carrying the code. The device has already checked that the
+hub proved the `key` from the URI, so the code travels only to the real hub, encrypted. The hub
+checks it against its open codes (it stores only their hashes), spends it, records the device's
+public key, and answers with the id it gave the device. A wrong or expired code is answered with
+`-32002` and the link is closed with `4401`.
 
 ```json zdp
-{"jsonrpc":"2.0","id":1,"method":"device.pair","params":{"proof":"q0pRZq4Yw6e3bH2pB0p5mJm7d0R8Y2xVt1o0b3l2bXo","name":"Kitchen","model":"esp32-s3-box-3"}}
+{"jsonrpc":"2.0","id":1,"method":"device.pair","params":{"code":"K7QM-3XW9-TB","name":"Kitchen","model":"esp32-s3-box-3"}}
 ```
 
 ```json zdp result=device.pair
