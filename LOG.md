@@ -2018,3 +2018,17 @@ section "T10".
 - Seen in passing: Slack `appendStream` / `stopStream` fail with
   `cannot_provide_both_markdown_text_and_chunks` (0.3.1 logs, before this release). Split out as
   its own task.
+
+## Slack stream fix and plugins plan cleanup (2026-10-03)
+
+- Slack `chat.appendStream` and `chat.stopStream` reject `markdown_text` beside `chunks`
+  (`cannot_provide_both_markdown_text_and_chunks`, seen in squarey's resident log). So
+  `encodeStreamContent` sends the text as a trailing `markdown_text` chunk whenever there are other
+  chunks. It sends `markdown_text` on its own only when there are none. The adapter test now pins
+  both request bodies.
+- The plugins plan is done, so it is removed (Git history keeps it). Shipped behaviour is in
+  `docs/operations/plugins.md`, and the open items are under "Plugins later" in
+  `docs/plans/README.md`. Tight-core work-order step 7 is ticked, and the plan is listed in the
+  index.
+- Lab removed: the lab resident, fake Linear and URL guard are stopped. `dump/plugin-lab` and
+  `dump/plugin-lab-notes` were moved to the Trash.

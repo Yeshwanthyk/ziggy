@@ -417,7 +417,27 @@ export const request = (
 
 type SlackPostMessageBody = { channel: string; markdown_text: string; thread_ts?: string };
 
-type SlackEncodedStreamChunk = ReturnType<typeof encodeStreamChunk>;
+type SlackEncodedStreamChunk =
+  | ReturnType<typeof encodeStreamChunk>
+  | { readonly type: "markdown_text"; readonly text: string };
+
+/**
+ * Slack rejects `markdown_text` beside `chunks` (`cannot_provide_both_markdown_text_and_chunks`),
+ * so text rides as a trailing `markdown_text` chunk whenever there are other chunks.
+ */
+export const encodeStreamContent = (
+  chunks: ReadonlyArray<SlackStreamChunk> | undefined,
+  markdownText: string | undefined,
+): { chunks: ReadonlyArray<SlackEncodedStreamChunk> } | { markdown_text: string } | undefined => {
+  const encoded: Array<SlackEncodedStreamChunk> = (chunks ?? []).map(encodeStreamChunk);
+
+  if (encoded.length === 0)
+    return markdownText === undefined ? undefined : { markdown_text: markdownText };
+
+  if (markdownText !== undefined) encoded.push({ type: "markdown_text", text: markdownText });
+
+  return { chunks: encoded };
+};
 
 type SlackStartStreamBody = {
   channel: string;
@@ -431,7 +451,7 @@ type SlackStartStreamBody = {
 type SlackAppendStreamBody = {
   channel: string;
   ts: string;
-  chunks: ReadonlyArray<SlackEncodedStreamChunk>;
+  chunks?: ReadonlyArray<SlackEncodedStreamChunk>;
   markdown_text?: string;
 };
 

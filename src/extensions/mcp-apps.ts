@@ -8,7 +8,7 @@ import { Effect, Option, Predicate, Schema } from "effect";
 import { createDefaultTransport } from "../../node_modules/@earendil-works/pi-coding-agent/dist/extensions/mcp/runtime.js";
 
 /**
- * MCP Apps on stock Pi (docs/plans/plugins/step4-gate.md): every MCP connection Pi opens goes
+ * MCP Apps on stock Pi (docs/operations/plugins.md): every MCP connection Pi opens goes
  * through a Ziggy transport tap. The tap advertises the UI extension, records each tool's
  * `_meta.ui`, hides tools the model may not see, and carries the view's own requests on the same
  * connection with ids Pi never uses.

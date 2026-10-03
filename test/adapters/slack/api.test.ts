@@ -174,8 +174,10 @@ describe("Slack HTTP adapter", () => {
         body: JSON.stringify({
           channel: "D123",
           ts: "2.0",
-          chunks: [{ type: "task_update", id: "tool-1", title: "read", status: "complete" }],
-          markdown_text: "hello",
+          chunks: [
+            { type: "task_update", id: "tool-1", title: "read", status: "complete" },
+            { type: "markdown_text", text: "hello" },
+          ],
         }),
       },
       {
@@ -183,8 +185,10 @@ describe("Slack HTTP adapter", () => {
         body: JSON.stringify({
           channel: "D123",
           ts: "2.0",
-          markdown_text: " world",
-          chunks: [{ type: "plan_update", title: "Done" }],
+          chunks: [
+            { type: "plan_update", title: "Done" },
+            { type: "markdown_text", text: " world" },
+          ],
         }),
       },
     ]);
