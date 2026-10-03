@@ -1,0 +1,21 @@
+{
+  "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "jsPlugins": ["../../tooling/oxlint/ziggy-plugin.mjs"],
+  "options": {
+    "reportUnusedDisableDirectives": "error"
+  },
+  "rules": {
+    "ziggy/no-chained-type-assertions": "error",
+    "ziggy/no-conditional-empty-object-spread": "error",
+    "ziggy/no-known-value-widening": "error",
+    "ziggy/no-module-mocking": "error",
+    "ziggy/no-object-parameters": "error",
+    "ziggy/no-reflect-apply": "error",
+    "ziggy/no-reflect-get": "error",
+    "ziggy/no-shape-in-symbol-names": "error",
+    "ziggy/no-unknown-returns": "error",
+    "ziggy/no-unknown-type-aliases": "error",
+    "ziggy/no-widen-then-assert": "error",
+    "ziggy/require-safety-comment-for-type-assertion": "error"
+  }
+}

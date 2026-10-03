@@ -33,8 +33,21 @@ bun test/harness/device-cli.ts connect "$PORT" "$EVIDENCE/kitchen.key" # C3: clo
 bun test/harness/device-cli.ts connect "$PORT" "$EVIDENCE/fresh.key"   # C2: closed 4401
 ```
 
+C4 needs a fixed port (configure `--port` with a free one, not `0`) and the SDK device, which
+reconnects; the raw harness device does not:
+
+```bash
+D=packages/device/bin/ziggy-device.ts
+bun $D pair "$URI" --state "$EVIDENCE/device.json" --name Kitchen --model pi-zero-2w
+bun $D run --state "$EVIDENCE/device.json" > "$EVIDENCE/run.out" 2>&1 & RUN=$!
+kill -INT $RESIDENT; wait $RESIDENT                                    # run.out: offline (1000 done)
+# start the resident again as in Launch                                # run.out: connecting … online
+Z devices revoke "$PROFILE" kitchen; wait $RUN                         # run.out: stopped (4401 revoked), exit 1
+```
+
 C5 and C6 run in `bun test test/e2e/devices.test.ts`: C5 against an in-process hub with
-millisecond timings, since the real ones take a minute. C4 waits for the S3 SDK's reconnect loop.
+millisecond timings, since the real ones take a minute. `test/e2e/device-conformance.test.ts`
+runs C1, C3, C4 and C6 through the SDK.
 
 ## Proof
 

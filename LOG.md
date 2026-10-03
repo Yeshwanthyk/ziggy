@@ -2092,3 +2092,19 @@ section "T10".
 - an in-process hub with short timings for pings and the 4408 close.
 
 `test/harness/device-cli.ts` drives the recipes from a shell. The pairing and connection recipes ran by hand in the sandbox; evidence is in `/tmp/ziggy-devices-proof/s2-20261003-134705`. C4, the device reconnect loop, waits for S3. Gotcha: a scratch `HOME` has no Keychain, so a sandbox drive must export `ZIGGY_DEVICE_KEYSTORE=file`.
+
+## 2026-10-03 — Devices S3: `@ziggy/device`
+
+**The device SDK.** `packages/device` is plain TypeScript on `node:crypto`. It has no Effect and no Ziggy imports, so a Pi can run it on its own.
+- Noise: the SDK has its own Noise XX initiator. It matches the published vector byte for byte, and a tampered message poisons the direction.
+- `ZiggyDevice`: `pair(uri)` pins the hub key and refuses a hub that proves any other key, *before* the code is sent. The code is therefore never spent on an impostor, and the test checks that.
+- After pairing, `start()` says hello, answers `ping`, `tools/list` and `tools/call` (commands added with `command(name, spec, fn)`), pings an idle hub and drops a silent one.
+- Reconnect: backoff runs 1 → 15 s with jitter. It stops for good on 4401 (revoked), 4409 (replaced) and 4426 (version).
+- When the hub refuses a request it then closes with its own code. The SDK waits for that close rather than closing first with 1000.
+- `bin/ziggy-device`: `pair` and `run` (`--commands` takes a module that adds commands). The state file holds the private key and is written 0600.
+
+**Proof.**
+- `test/e2e/device-conformance.test.ts` runs against a real resident: pair and pin, forged key, reconnect across a hub restart, revoke, replace. It passed three runs in a row.
+- `[connection]` C4 was driven by hand: `run.out` shows offline, connecting and online, then `stopped (4401 revoked)`. Evidence is in `/tmp/ziggy-devices-proof/s3-20261003-135654`.
+- Found while driving: a separate `ziggy-device chat` process with the same identity replaced the running device (4409), so that subcommand was dropped. S4 will read chat from `run`'s stdin instead.
+- Bug fixed: a link that never opened left a rejected promise with no handler.

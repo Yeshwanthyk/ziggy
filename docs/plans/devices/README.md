@@ -143,11 +143,17 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 
 ### S3 — `@ziggy/device` and the harness fake
 
-- [ ] `packages/device` (Bun/TS): connect, pair, `command(name, schema, fn)`, `chat.send`,
-  events. Command shape borrowed from musegadget's `executor`.
-- [ ] `test/harness/device.ts`: the same client driven from tests, recording every frame.
-- [ ] `bin/ziggy-device` for a Pi: `pair <code>`, `run` with a commands file.
-- Gate: conformance suite passes against the S2 hub.
+- [x] `packages/device` (`@ziggy/device`, plain TS on `node:crypto`, no Ziggy imports): its own
+  Noise initiator (checked against the published vector), frames, URI; `ZiggyDevice` with `pair`,
+  `start`, `stop`, `command(name, spec, fn)`, `send`, `abort`, and `state`, `chat`, `notify`,
+  `display`, `audio` events. It answers `ping`, `tools/list`, `tools/call`; pings when idle, drops
+  a silent hub, reconnects 1 → 15 s with jitter, and stops for good on 4401, 4409 and 4426.
+- [x] Frames for tests: the SDK's `trace` option sees every decrypted frame both ways;
+  `test/harness/device.ts` stays the raw device for protocol violations.
+- [x] `bin/ziggy-device` for a Pi: `pair '<uri>' --state <file>`, `run --state <file>
+  [--commands <module>]`; the state file is written 0600. Chat from the shell waits for S4 (it
+  will read lines on `run`'s stdin: a second process with the same identity would replace it).
+- Gate: `test/e2e/device-conformance.test.ts` against the S2 hub, plus `[connection]` C4.
 
 ### S4 — Device chat
 
@@ -226,7 +232,8 @@ Taken so slices can proceed without blocking; each can be changed later.
 | S0 | done | `bun test test/platform/noise.test.ts` (vector, both roles; tamper poisons); `bun test/platform/noise-interop.ts <muse-gadget-sdk>` → hash equal both roles |
 | S1 | done | `bun test test/devices/protocol.test.ts`: every `json zdp` example in the spec decodes strictly and re-encodes to the same text; every method is shown; bad input gets the right JSON-RPC code |
 | S2 | done | `bun test test/e2e/devices.test.ts` (devices off; pair, spent code, unknown key, reconnect and 4409, version 4426, revoke, ping and 4408); recipe run `/tmp/ziggy-devices-proof/s2-20261003-134705` |
-| S3–S12 | not started | `test/harness/device.ts` and `device-cli.ts` exist (S2 needed them); `packages/device` does not |
+| S3 | done | `bun test test/e2e/device-conformance.test.ts` (pair and pin, forged key refused before the code is sent, reconnect across a hub restart, revoke 4401, replace 4409); `bun run check:device` (vector, tamper); recipe C4 `/tmp/ziggy-devices-proof/s3-20261003-135654` |
+| S4–S12 | not started | |
 
 ## Open decisions
 

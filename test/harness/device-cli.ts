@@ -9,7 +9,7 @@
  * one JSON line per event and the close code; exits 0 if hello succeeded.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { Effect, type Schema } from "effect";
+import { Effect } from "effect";
 import { decodeZdpPairing } from "ziggy/devices/index";
 import { generateNoiseKeyPair, noiseKeyPairFromPrivate } from "ziggy/platform/noise";
 import { connectDevice } from "./device";

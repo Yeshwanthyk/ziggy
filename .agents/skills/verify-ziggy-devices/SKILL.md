@@ -77,12 +77,20 @@ the configured host. Anything on `*` or a LAN address you did not configure: sto
   <key-file> [name] [--hold ms]` or `connect <port> <key-file> [--hold ms]`; it prints one JSON
   line per event (`handshake` with `pinned`, each reply, `received`, `closed` with the code). In
   tests, `connectDevice({port, keyPair})` from `test/harness/device.ts` gives `request`,
-  `received`, `mute` and `closed`. It answers the hub's pings unless muted.
+  `received`, `mute` and `closed`. It answers the hub's pings unless muted. It never reconnects;
+  use it for protocol violations and exact frames.
+- **SDK device:** `packages/device` (`@ziggy/device`). From a shell,
+  `bun packages/device/bin/ziggy-device.ts pair '<uri>' --state <file> [--name …] [--model …]`,
+  then `run --state <file> [--commands <module>]`; `run` logs `[ziggy-device] <state> (<close>)`
+  and reconnects with backoff until revoked (4401), replaced (4409) or refused (4426). In tests,
+  `new ZiggyDevice({…, timing, trace})`; `trace` sees every decrypted frame both ways.
 - **Model:** `test/harness/provider.ts` scripts replies; use `tools(...)` to make the model call
   a `device__<id>__<cmd>` tool and `held(...)` to hold a turn for abort.
 - **CLI:** `HOME=$SCRATCH_HOME bun src/main.ts devices pair|list|revoke|rename "$PROFILE" …`.
-- **Pi (M1):** on the Pi, `ziggy-device pair <code>` then `ziggy-device run commands.ts`; the
-  resident must listen on the LAN address for this run only.
+- **Pi (M1):** on the Pi, `ziggy-device pair '<uri>' --state device.json` then
+  `ziggy-device run --state device.json --commands commands.ts`; the resident must listen on the
+  LAN address for this run only. One identity runs in one process: a second connect replaces the
+  first (4409).
 - **ESP32 board (S7):** flash `devices/esp32` with `idf.py -p <port> flash monitor`, provision
   with `ziggy devices pair --serial <port> "$PROFILE"`, drive from the board's controls. The
   serial monitor is the device-side transcript.

@@ -3,7 +3,7 @@
  * The device hub through a real resident: pairing with `ziggy devices pair`, reconnecting,
  * replacing, version refusal and revocation. Liveness runs an in-process hub with short timings.
  */
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ConfigProvider, Effect, Exit, Schema, Scope } from "effect";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
