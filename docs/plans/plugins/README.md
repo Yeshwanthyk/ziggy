@@ -270,7 +270,7 @@ console. G9 (gallery preview of an unenabled plugin) stays open. The `ext-apps` 
 not run. App-kit candidates so far: a tiny view bridge, a theme-token CSS block, the refresh helper,
 list-row rendering, an input + button add control.
 
-### Step 5 — View quality (done; T11 open)
+### Step 5 — View quality (done)
 
 Goal: views come out consistent and verified, without the author hand-rolling UI. Learned from
 lab B1–B4, the real-Linear rerun, and Executor v2 (`executor@2.0.0-beta.6` hand-written React apps
@@ -306,8 +306,8 @@ Tasks, in order:
 - [x] T9 Review, then commit Step 5 (approved; follow-ups applied).
 - [x] T10 Lab proof: rerun one brief (B3 on fake Linear, plus B4) with the kit; score consistency,
   states, phone width, first click.
-- [ ] T11 Squarey acceptance: Linear triage plugin in squarey (real key already in the shared
-  Keychain item). Must handle Triage turned off for the team.
+- [x] T11 Squarey acceptance: Linear triage plugin in squarey (real key already in the shared
+  Keychain item). Must handle Triage turned off for the team. Passed on 0.4.0 (see LOG.md).
 
 Later, not in Step 5: host-drawn confirm and form dialogs (Ziggy-only unless the spec adds
 them); declarative JSON views (only if compiled to HTML); per-Profile secret scoping (secrets
@@ -341,8 +341,6 @@ rules. A click in the plugin UI counts as user intent.
 - **Objective**: build steps 2, 4, then 3 (lab). Builder and read-only reviewer are Claude Opus 5.5
   subagents (Codex rejects `gpt-6.1-sol` on the ChatGPT account). Commit each step only after the
   reviewer approves.
-- **State**: branch `plugins` (local, not pushed); steps 1–5 committed after reviewer approval
-  (Step 3 `c7cf6115`, Step 5 `5e794031`); lab B1–B4 scored, B3 rerun read-only on real Linear,
-  T10 lab proof on the kit passed (see `plugin-lab-notes/lab.md`).
-- **First next action**: T11 squarey acceptance, after the user approves enabling
-  `plugin-authoring` in squarey and restarting its resident from this branch.
+- **State**: steps 1–5 merged to main in Yeshwanthyk/ziggy#14 and released as v0.4.0. T11
+  passed in squarey on the 0.4.0 binary.
+- **First next action**: none in Step 5. Pick from the Later list.

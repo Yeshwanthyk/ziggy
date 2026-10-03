@@ -2001,3 +2001,20 @@ section "T10".
   - No request reached api.linear.app, and smoke never called the external writes.
 - Plugin nit: the header count still includes snoozed issues.
 
+
+## Plugins T11: squarey acceptance on 0.4.0 (2026-10-03)
+
+- Merged `plugins` to main (Yeshwanthyk/ziggy#14) and tagged v0.4.0. The release workflow published
+  the darwin-arm64 binary. `ziggy update` installed it, and `plugin-authoring` was added to squarey
+  before `ziggy serve restart squarey`.
+- Brief: B3 (Linear triage board), plus "Triage may be off" and "reads only while building".
+  - Squarey built `plugins/linear-triage` from the template and kit in one user turn of about
+    10 minutes. Its `check` (build, smoke, shots) passed, and it enabled the plugin.
+  - Triage is off for both of the key's teams. The view says so, says how to turn it on, and
+    offers "Switch team…". The agent checked the full-board layout against fake issues only.
+- In a new chat, "show me my triage board" rendered the view inline. It was readable at desktop
+  width and at 375 px.
+- Safety: no Linear writes. Smoke calls reads only, and no write control was clicked.
+- Seen in passing: Slack `appendStream` / `stopStream` fail with
+  `cannot_provide_both_markdown_text_and_chunks` (0.3.1 logs, before this release). Split out as
+  its own task.
