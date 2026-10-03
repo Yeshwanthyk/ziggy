@@ -53,12 +53,20 @@ const piDocsParameterVariants = Type.Union([
   ),
 ]);
 
-// Console Go requires every tool schema to declare a top-level object type. The
-// variants are already all objects, so this redundant assertion preserves their
-// branch-specific validation while satisfying that provider contract.
+// Console Go requires every tool schema to declare a top-level object type, and Anthropic
+// keeps only its `properties` and `required`, so every branch's fields are listed flat too.
+// Validation still runs each branch.
 export const piDocsParameters = Type.Unsafe<Static<typeof piDocsParameterVariants>>({
   ...piDocsParameterVariants,
   type: "object",
+  properties: {
+    action: Type.Union([Type.Literal("list"), Type.Literal("search"), Type.Literal("read")]),
+    query: Type.String({ minLength: 1, maxLength: PI_DOCS_QUERY_MAX_CODE_POINTS }),
+    path: Type.String({ minLength: 1, maxLength: PI_DOCS_PATH_MAX_CODE_POINTS }),
+    startLine: Type.Integer({ minimum: 1, maximum: PI_DOCS_MAX_LINE }),
+    endLine: Type.Integer({ minimum: 1, maximum: PI_DOCS_MAX_LINE }),
+  },
+  required: ["action"],
 });
 
 export type PiDocsAction = Static<typeof piDocsParameters>;

@@ -10,6 +10,7 @@ import {
   createAgentSessionServices,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import { Schema } from "effect";
 import {
   PI_DOC_FILES,
   PI_DOCS_FINGERPRINT,
@@ -32,6 +33,17 @@ import {
   type PiDocDocument,
 } from "ziggy/adapters/pi/pi-docs";
 import { createProfileCoreInlineExtensions } from "ziggy/adapters/pi/profile-core-inline-extensions";
+
+// Pi's anthropic-messages provider sends only a tool schema's `properties` and `required`.
+const decodeBranchedToolSchema = Schema.decodeUnknownSync(
+  Schema.Struct({
+    properties: Schema.Record(Schema.String, Schema.Unknown),
+    required: Schema.Array(Schema.String),
+    anyOf: Schema.Array(
+      Schema.Struct({ properties: Schema.Record(Schema.String, Schema.Unknown) }),
+    ),
+  }),
+);
 
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -215,6 +227,15 @@ describe("pi docs provider schema", () => {
   test("serializes as an object-root schema for Console Go", () => {
     expect(Object.keys(piDocsParameters)).toEqual(expect.arrayContaining(["anyOf", "type"]));
     expect(JSON.stringify(piDocsParameters)).toContain('"type":"object"');
+  });
+
+  test("names every action's fields where Anthropic reads them", () => {
+    const schema = decodeBranchedToolSchema(piDocsParameters);
+
+    const fields = new Set(schema.anyOf.flatMap((branch) => Object.keys(branch.properties)));
+
+    expect(Object.keys(schema.properties).toSorted()).toEqual([...fields].toSorted());
+    expect(schema.required).toEqual(["action"]);
   });
 });
 
