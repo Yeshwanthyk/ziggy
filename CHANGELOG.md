@@ -13,16 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.1] - 2026-09-30
+## [0.4.0] - 2026-10-03
 
 ### Added
 
+- Plugins: a plugin folder with `plugin.json`, `mcp.json` servers and skills. Secrets live in the Keychain and are set with `ziggy plugin secret set`.
+- Pi MCP, codemode and tool search. Main sessions always get MCP. Specialists and automations get it only when their allowlist names it. Tool results are redacted.
+- MCP Apps views in the web UI: sandboxed views with a CSP. App-only tools can call only their own server.
+- `plugin-authoring` skill and template: a view kit, fixed loading/empty/error states, a smoke test that never calls external writes, and a headless screenshot check for contrast and overflow.
+- Web UI: image attachments, a dev component gallery, phone chat layout and a typing indicator.
+- `executor` extension 0.3.0: OAuth sign-in for the local v2 server, with the refresh token in the Keychain.
 - `executor` extension 0.2.0: Pi tools `executor_skills`, `executor_execute` and `executor_resume` over MCP to Executor v2, the local server (`executor serve`) by default and hosted via `EXECUTOR_MCP_URL`. The token comes from `EXECUTOR_API_KEY` or the Keychain item `ziggy-executor`.
 - Sign in with ChatGPT: `ziggy auth <profile> openai --type oauth` uses a ChatGPT subscription with the OpenAI provider.
 
 ### Changed
 
 - Pi packages pinned to 0.99.1.
+- Core reorganised into `profile/`, `session/`, `extensions/`, `agents/` and `memory/`. Live sessions replace the chat registry.
+
+### Removed
+
+- Ziggy's own codemode. Pi's codemode replaces it.
 
 ## [0.3.0] - 2026-09-28
 
