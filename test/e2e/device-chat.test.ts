@@ -150,3 +150,19 @@ test("T5: a model failure reaches the device as chat.error", async () => {
   });
   expect(events.some((event) => event.type === "done")).toBe(false);
 });
+
+test("V6: without speech.transcribe the hub refuses audio and keeps the link", async () => {
+  const refused = await kitchen.sendAudio(new Uint8Array(32_000)).then(
+    () => undefined,
+    (error: DeviceRpcError) => ({ code: error.code, message: error.message }),
+  );
+
+  expect(refused).toEqual({
+    code: ZdpErrorCode.notAllowed,
+    message: "chat.send: this hub has no speech-to-text; set speech.transcribe in devices.json",
+  });
+
+  server.push(text("still listening"));
+  expect(await kitchen.send("hi")).toEqual({ turn: "t1" });
+  expect(await turnEnd("t1")).toMatchObject({ type: "done", text: "still listening" });
+});

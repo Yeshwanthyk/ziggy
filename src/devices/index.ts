@@ -14,4 +14,6 @@ export * from "./protocol";
 
 export * from "./registry";
 
+export * from "./speech";
+
 export * from "./tools";

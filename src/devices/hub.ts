@@ -46,6 +46,7 @@ import {
   redeemPairingCode,
   setDeviceTools,
 } from "./registry";
+import { MAX_RECORDING_BYTES, MIN_RECORDING_BYTES, type Transcriber } from "./speech";
 
 export class DeviceHubFailed extends Schema.TaggedErrorClass<DeviceHubFailed>()("DeviceHubFailed", {
   message: Schema.String,
@@ -81,6 +82,8 @@ export interface DeviceHubOptions {
   readonly timing?: DeviceHubTiming;
   /** Serves `chat.*` to devices that declared `chat`; without it `chat.send` is refused. */
   readonly chat?: DeviceChat;
+  /** Turns a device's recorded speech into the text of a turn; without it audio is refused. */
+  readonly transcribe?: Transcriber;
   /** Where connected devices are attached so device tools can reach them. */
   readonly links?: DeviceLinksApi;
   readonly log: (message: string) => Effect.Effect<void>;
@@ -282,16 +285,21 @@ const makeChannel = (link: WebSocketLink, session: NoiseSession) =>
     return channel;
   });
 
-/** The next JSON message, answering bad ones and skipping chunks. */
-const receiveMessage = (channel: Channel): Effect.Effect<ZdpMessage, LinkDropped> =>
+/** The next frame, answering bad JSON messages. */
+const receiveFrame = (channel: Channel): Effect.Effect<ZdpFrame, LinkDropped> =>
   channel.receive.pipe(
-    Effect.flatMap((frame) =>
-      frame.kind === "message" ? Effect.succeed(frame.message) : receiveMessage(channel),
-    ),
     Effect.catchTag("ZdpInvalid", (failure) =>
       channel
         .refuse(failure.id ?? null, failure.code, failure.message)
-        .pipe(Effect.andThen(receiveMessage(channel))),
+        .pipe(Effect.andThen(receiveFrame(channel))),
+    ),
+  );
+
+/** The next JSON message, answering bad ones and skipping chunks. */
+const receiveMessage = (channel: Channel): Effect.Effect<ZdpMessage, LinkDropped> =>
+  receiveFrame(channel).pipe(
+    Effect.flatMap((frame) =>
+      frame.kind === "message" ? Effect.succeed(frame.message) : receiveMessage(channel),
     ),
   );
 
@@ -646,27 +654,20 @@ export const runDeviceHub = (
 
     /**
      * Starts a turn and says whether it was accepted. Its notifications go through `outbox` and are
-     * held until the `{turn}` reply is queued, so the device always sees the reply first.
+     * held until the `{turn}` reply is queued, so the device always sees the reply first. A turn
+     * from speech sends `chat.transcript` right after the reply.
      */
     const startTurn = (
       channel: Channel,
       outbox: Outbox,
       chat: DeviceChat,
       device: DeviceRecord,
-      request: Extract<ZdpRequest, { readonly method: "chat.send" }>,
+      requestId: Request["id"],
+      text: string,
       turn: string,
+      spoken: boolean,
     ) =>
       Effect.gen(function* () {
-        if (!("text" in request.params)) {
-          yield* channel.refuse(
-            request.id,
-            ZdpErrorCode.notAllowed,
-            "this hub does not take audio yet",
-          );
-
-          return false;
-        }
-
         const held: Array<ZdpMessage> = [];
 
         let accepted = false;
@@ -679,12 +680,12 @@ export const runDeviceHub = (
         };
 
         const refused = yield* chat
-          .start(device, request.params.text, emit)
+          .start(device, text, emit)
           .pipe(Effect.as(undefined), Effect.catchTag("DeviceChatRefused", Effect.succeed));
 
         if (refused !== undefined) {
           yield* channel.refuse(
-            request.id,
+            requestId,
             refused.reason === "busy" ? ZdpErrorCode.busy : ZdpErrorCode.internal,
             refused.message,
           );
@@ -693,7 +694,15 @@ export const runDeviceHub = (
         }
 
         return yield* Effect.sync(() => {
-          Queue.offerUnsafe(outbox, { jsonrpc: "2.0", id: request.id, result: { turn } });
+          Queue.offerUnsafe(outbox, { jsonrpc: "2.0", id: requestId, result: { turn } });
+
+          if (spoken)
+            Queue.offerUnsafe(outbox, {
+              jsonrpc: "2.0",
+              method: "chat.transcript",
+              params: { turn, text },
+            });
+
           Queue.offerAllUnsafe(outbox, held);
           accepted = true;
 
@@ -714,8 +723,113 @@ export const runDeviceHub = (
 
         let turns = 0;
 
+        const nextTurn = () => `t${turns + 1}`;
+
+        const accepted = (started: boolean) =>
+          Effect.sync(() => {
+            if (started) turns += 1;
+          });
+
+        /** The one recording being received, by its stream; a device speaks one at a time. */
+        let recording:
+          | {
+              readonly stream: number;
+              readonly requestId: Request["id"];
+              readonly parts: Array<Uint8Array>;
+              bytes: number;
+            }
+          | undefined;
+
+        /** Transcribes a finished recording and starts its turn, off the receive loop. */
+        const hear = (
+          chat: DeviceChat,
+          transcribe: Transcriber,
+          requestId: Request["id"],
+          pcm: Uint8Array,
+        ) =>
+          Effect.gen(function* () {
+            const heard = yield* transcribe(pcm).pipe(
+              Effect.map((text) => ({ text })),
+              Effect.catchTag("SpeechFailed", (failure) =>
+                Effect.succeed({ failure: failure.message }),
+              ),
+            );
+
+            if ("failure" in heard) {
+              yield* options.log(`[devices] ${device.id}: speech-to-text failed: ${heard.failure}`);
+
+              return yield* channel.refuse(
+                requestId,
+                ZdpErrorCode.internal,
+                `speech-to-text failed: ${heard.failure}`,
+              );
+            }
+
+            if (heard.text === "")
+              return yield* channel.refuse(
+                requestId,
+                ZdpErrorCode.invalidParams,
+                "no speech was heard",
+              );
+
+            yield* accepted(
+              yield* startTurn(
+                channel,
+                outbox,
+                chat,
+                device,
+                requestId,
+                heard.text,
+                nextTurn(),
+                true,
+              ),
+            );
+          }).pipe(Effect.catchTag("LinkDropped", () => Effect.void));
+
         while (true) {
-          const message = yield* receiveMessage(channel);
+          const frame = yield* receiveFrame(channel);
+
+          if (frame.kind === "chunk") {
+            // Chunks of a refused or unknown stream are dropped.
+            if (recording?.stream !== frame.stream) continue;
+
+            recording.parts.push(frame.data);
+            recording.bytes += frame.data.length;
+
+            if (recording.bytes > MAX_RECORDING_BYTES) {
+              yield* channel.refuse(
+                recording.requestId,
+                ZdpErrorCode.invalidParams,
+                "a recording may last at most 20 seconds",
+              );
+              recording = undefined;
+              continue;
+            }
+
+            if (!frame.last) continue;
+
+            const { requestId, parts, bytes } = recording;
+
+            recording = undefined;
+
+            if (bytes < MIN_RECORDING_BYTES) {
+              yield* channel.refuse(
+                requestId,
+                ZdpErrorCode.invalidParams,
+                "a recording must last at least 0.3 seconds",
+              );
+              continue;
+            }
+
+            if (chat !== undefined && options.transcribe !== undefined)
+              yield* Effect.forkChild(
+                hear(chat, options.transcribe, requestId, Buffer.concat(parts)),
+              );
+
+            continue;
+          }
+
+          const message = frame.message;
 
           if (yield* requests.settle(message)) continue;
 
@@ -742,8 +856,46 @@ export const runDeviceHub = (
                 : "this hub does not serve chat",
             );
           else if (message.method === "chat.send" && chat !== undefined) {
-            if (yield* startTurn(channel, outbox, chat, device, message, `t${turns + 1}`))
-              turns += 1;
+            const params = message.params;
+
+            if ("text" in params)
+              yield* accepted(
+                yield* startTurn(
+                  channel,
+                  outbox,
+                  chat,
+                  device,
+                  message.id,
+                  params.text,
+                  nextTurn(),
+                  false,
+                ),
+              );
+            else if (options.transcribe === undefined)
+              yield* channel.refuse(
+                message.id,
+                ZdpErrorCode.notAllowed,
+                "this hub has no speech-to-text; set speech.transcribe in devices.json",
+              );
+            else if (recording !== undefined)
+              yield* channel.refuse(
+                message.id,
+                ZdpErrorCode.busy,
+                "a recording is already arriving",
+              );
+            else if (params.audio.stream % 2 === 0)
+              yield* channel.refuse(
+                message.id,
+                ZdpErrorCode.invalidParams,
+                "a device's streams have odd ids",
+              );
+            else
+              recording = {
+                stream: params.audio.stream,
+                requestId: message.id,
+                parts: [],
+                bytes: 0,
+              };
           } else if (message.method === "chat.abort" && chat !== undefined) {
             yield* chat.abort(device);
             yield* channel.respond(message, {});

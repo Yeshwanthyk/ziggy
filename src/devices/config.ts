@@ -5,6 +5,15 @@ import { join } from "node:path";
 import { Effect, Schema } from "effect";
 import { readPhysicalFile } from "../platform/tree";
 
+/** A program run per recording: `{wav}` in an argument becomes the recording's WAV path. */
+const SpeechCommand = Schema.Struct({
+  command: Schema.NonEmptyArray(Schema.NonEmptyString),
+  /** Default 60. */
+  timeoutSeconds: Schema.optionalKey(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 600 })),
+  ),
+});
+
 export const DevicesConfig = Schema.Struct({
   version: Schema.Literal(1),
   listen: Schema.Struct({
@@ -13,6 +22,12 @@ export const DevicesConfig = Schema.Struct({
     /** `0` picks a free port. */
     port: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 65_535 })),
   }),
+  speech: Schema.optionalKey(
+    Schema.Struct({
+      /** Prints the recording's text on stdout, e.g. `whisper-cli -m <model> -nt -np -f {wav}`. */
+      transcribe: Schema.optionalKey(SpeechCommand),
+    }),
+  ),
 });
 
 export type DevicesConfig = typeof DevicesConfig.Type;

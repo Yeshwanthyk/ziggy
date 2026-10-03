@@ -87,7 +87,9 @@ the configured host. Anything on `*` or a LAN address you did not configure: sto
   [--display-dir <dir>]`; `run` logs `[ziggy-device] <state> (<close>)`, `notify …` and
   `display …` for pushes (`display image <w>x<h> <format> <n> bytes saved <dir>/display-<n>.png`
   with `--display-dir`, which writes each image as a viewable PNG, or JPEG as sent), and
-  reconnects with backoff until revoked (4401), replaced (4409) or refused (4426). In tests,
+  reconnects with backoff until revoked (4401), replaced (4409) or refused (4426). Each stdin line
+  is a chat message; `/audio <file.wav>` (16 kHz mono 16-bit) sends a recording instead, logged as
+  `chat <turn> transcript …`. In tests,
   `new ZiggyDevice({…, timing, trace})`; `trace` sees every decrypted frame both ways.
 - **Model:** `test/harness/provider.ts` scripts replies; use `tools(...)` to make the model call
   a `device__<id>__<cmd>` tool and `held(...)` to hold a turn for abort.

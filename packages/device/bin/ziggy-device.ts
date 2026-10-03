@@ -12,7 +12,9 @@
  * and each image is saved in `--display-dir` as `display-<n>.png` (or `.jpg`) when given.
  *
  * While running, each line on stdin is sent to the Profile as a chat message, and `/abort` stops
- * the running turn. The reply is logged as `chat <turn> …` lines.
+ * the running turn. `/audio <file.wav>` sends a recording instead (16 kHz mono 16-bit PCM WAV, as
+ * `say -o x.wav --data-format=LEI16@16000` writes); the hub's transcript is logged as
+ * `chat <turn> transcript …`. The reply is logged as `chat <turn> …` lines.
  */
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
@@ -225,10 +227,57 @@ const chat = (device: ZiggyDevice) => {
 
     if (text.length === 0) return;
 
-    const sent = text === "/abort" ? device.abort() : device.send(text);
+    const sent =
+      text === "/abort"
+        ? device.abort()
+        : text.startsWith("/audio ")
+          ? readWav(text.slice("/audio ".length).trim()).then((pcm) => device.sendAudio(pcm))
+          : device.send(text);
 
     sent.catch((error: Error) => log(`chat refused: ${error.message}`));
   });
+};
+
+/** The samples of a 16 kHz mono 16-bit PCM WAV file. */
+const readWav = async (path: string) => {
+  const bytes = new Uint8Array(await readFile(path));
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  const tag = (offset: number) => new TextDecoder().decode(bytes.subarray(offset, offset + 4));
+
+  if (bytes.length < 12 || tag(0) !== "RIFF" || tag(8) !== "WAVE")
+    throw new Error(`${path} is not a WAV file`);
+
+  let format: { channels: number; rate: number; bits: number; pcm: boolean } | undefined;
+
+  for (let offset = 12; offset + 8 <= bytes.length; ) {
+    const size = view.getUint32(offset + 4, true);
+
+    if (tag(offset) === "fmt ")
+      format = {
+        pcm: view.getUint16(offset + 8, true) === 1,
+        channels: view.getUint16(offset + 10, true),
+        rate: view.getUint32(offset + 12, true),
+        bits: view.getUint16(offset + 22, true),
+      };
+    else if (tag(offset) === "data") {
+      if (
+        format === undefined ||
+        !format.pcm ||
+        format.channels !== 1 ||
+        format.rate !== 16_000 ||
+        format.bits !== 16
+      )
+        throw new Error(`${path} must be 16 kHz mono 16-bit PCM`);
+
+      return bytes.subarray(offset + 8, offset + 8 + size);
+    }
+
+    offset += 8 + size + (size % 2);
+  }
+
+  throw new Error(`${path} has no audio`);
 };
 
 const loadCommands = async (device: ZiggyDevice, path: string) => {

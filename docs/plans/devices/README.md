@@ -202,9 +202,15 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 
 ### S8 — Voice in
 
-- [ ] STT adapter (local whisper.cpp or a cloud API; decision pending).
-- [ ] Binary audio frames, PTT on the device, transcript shown, reply streamed on screen.
-- Gate: `[voice]` V1–V3.
+- [x] Speech-to-text is a command the Profile names in `devices.json`
+  (`speech.transcribe.command`, `{wav}` for the recording; stdout is the transcript), run by
+  `src/adapters/bun/speech-command.ts`. Any local engine fits (whisper.cpp's `whisper-cli` is the
+  proven one); nothing leaves the machine unless the command sends it.
+- [x] The hub collects the recording's chunks (0.3–20 s, one at a time), transcribes it off the
+  receive loop, and answers `{turn}`, `chat.transcript`, then the reply. `ZiggyDevice.sendAudio`
+  and `ziggy-device`'s `/audio <file.wav>` send one.
+- [ ] PTT on the BOX-3, transcript shown on its screen (S7).
+- Gate: `[voice]` V1–V3, V5, V6.
 
 ### S9 — Spoken replies
 
@@ -245,8 +251,8 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 Taken so slices can proceed without blocking; each can be changed later.
 
 - First board: ESP32-S3-BOX-3.
-- STT/TTS: S8/S9 define an engine interface and ship a deterministic stub engine for tests; the
-  real engine (local whisper.cpp vs cloud) is plugged in once chosen.
+- STT/TTS: each engine is a command named in `devices.json`, so tests use a script and people
+  plug in whisper.cpp, `say`, piper or a cloud CLI without code changes.
 - Hardware slices (S7, S11, and the hardware parts of S8–S10) are built and checked here as far as
   the toolchain allows; flashing and on-device proof wait for a board on the desk.
 - Muse interop for S0 is proven with a one-off run against Muse's own Python Noise code, and kept
@@ -265,11 +271,13 @@ Taken so slices can proceed without blocking; each can be changed later.
 | S6 | done | `bun test test/e2e/device-push.test.ts` (U1 broadcast `device:<id>` → `notify`; U2 offline → transport retriable, unpaired → destination-missing; U3 `device_show` on a screen, error without one, chatting device listed as a destination); recipe U1–U3 and web picker `/tmp/ziggy-devices-proof/s6-20261003-142144` |
 | S12 | done | `bun test test/extensions/device-authoring.test.ts` (command names agree with `ZiggyDevice.command`; flagged names are exactly the tools the Profile skips); recipe A1–A3 `/tmp/ziggy-devices-proof/s12-20261003-143043` |
 | S10 | done (images) | `bun test test/devices/image.test.ts` (8 PNG variants equal Pillow's decode; JPEG within 4; fit letterboxes, centres, never crops; rgb565 byte order; format choice); `bun test test/e2e/device-push.test.ts` U5 (rgb565 and jpeg devices, non-image and outside-Profile refused); recipe S3, S4 `/tmp/ziggy-devices-proof/s10-20261003-144148`. MCP Apps views deferred |
-| S7–S9, S11 | not started | Order: S10, S8 and S9 software first (stub engines), then S7 and S11, which need a board and ESP-IDF |
+| S8 | done (software) | `bun test test/e2e/device-voice.test.ts` (V1–V3 a 1.5 s recording in chunks → WAV → command → `{turn}`, transcript, reply, and the transcript is the model's user text; V5 too short, too long, silent, failing engine refused without a turn) and `device-chat.test.ts` V6 (no `speech.transcribe` → -32002); recipe with `say` and whisper-cli tiny.en `/tmp/ziggy-devices-proof/s8-20261003-145555`. PTT on the board waits for S7 |
+| S7, S9, S11 | not started | Order: S9 software next, then S7 and S11, which need a board and ESP-IDF |
 
 ## Open decisions
 
-- STT: local whisper.cpp or cloud. Needed by S8.
+- STT: decided as "a command the Profile names"; whisper.cpp locally is what we prove with. A
+  default model and install path are left to the person.
 - First board: ESP32-S3-BOX-3 assumed. Needed by S7.
 - Remote access: tunnel product, if any. Not needed before M1 (LAN is enough).
 - Gadget SDK Terms: we use Meta's code under Apache-2.0 and none of their service; confirm the

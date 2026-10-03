@@ -178,8 +178,12 @@ a refused send does not use one. The conversation lives in the Profile under
 `chat.status` `state` is `thinking` or `tool` (with the tool's name). `chat.delta` carries new text
 only; `chat.done` carries the whole reply. Exactly one of `chat.done` and `chat.error` ends a turn.
 
-Voice: `chat.send` may carry `audio` instead of `text`. The device streams the recording on the
-named stream (PCM16 mono at 16 kHz, 0.3–20 s); the hub answers with the transcript before the reply.
+Voice: `chat.send` may carry `audio` instead of `text`. Right after the request, the device streams
+the recording on the named odd stream (PCM16 mono at 16 kHz, 0.3–20 s), one recording at a time.
+The hub answers once the recording is transcribed: with `{turn}`, then `chat.transcript`, then the
+turn's notifications as for text. It refuses a recording out of range or with no speech heard
+(`-32602`), a failed speech-to-text (`-32603`), and audio altogether when the Profile names no
+`speech.transcribe` (`-32002`). A refused recording starts no turn.
 
 ```json zdp
 {"jsonrpc":"2.0","id":3,"method":"chat.send","params":{"audio":{"stream":1,"format":"pcm16/16000"}}}

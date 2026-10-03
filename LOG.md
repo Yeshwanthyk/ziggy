@@ -2180,3 +2180,14 @@ section "T10".
 - `test/devices/image.test.ts`: eight PNG fixtures written by Pillow decode to exactly Pillow's RGBA; a JPEG to within 4; fitting letterboxes, centres and never crops; rgb565 byte order; format choice.
 - `test/e2e/device-push.test.ts` U5: through a real resident, an rgb565 device gets 320×240×2 bytes, black at the corner and the picture at the centre; a jpeg-only device gets a JPEG; a text file and `../outside.png` are refused.
 - `[screen]` S3 and S4 were driven by hand: a 640×360 PNG with text shown on a `ziggy-device --screen 320x240`. The saved frame is letterboxed and readable. Evidence is in `/tmp/ziggy-devices-proof/s10-20261003-144148`.
+
+## 2026-10-03 — Devices S8: voice in
+
+- A device sends speech with `chat.send {audio: {stream, format: "pcm16/16000"}}` and then streams the recording on that odd stream. The hub collects one recording at a time, refuses one under 0.3 s or over 20 s, and transcribes it off the receive loop. It answers `{turn}`, then `chat.transcript`, then the turn as for text. Silence (an empty transcript) and a failing engine are refused, and a refused recording spends no turn number.
+- Speech-to-text is a command the Profile names in `devices.json`: `speech.transcribe.command` (with `{wav}` for the recording) and an optional `timeoutSeconds` (default 60). `src/adapters/bun/speech-command.ts` writes the recording as a WAV in a temporary folder, runs the command without a shell, and caps its stdout. The trimmed stdout is the transcript. Without the setting, audio is refused with a hint. This settles the "whisper.cpp or cloud" decision: either fits, and nothing leaves the machine unless the named command sends it.
+- `@ziggy/device` gains `sendAudio(pcm)`; `ziggy-device` reads `/audio <file.wav>` on stdin.
+- Not done: push-to-talk and showing the transcript on the BOX-3 (S7).
+
+**Proof.**
+- `test/e2e/device-voice.test.ts`: through a real resident, with a script engine that prints the size of the WAV it was given, a 1.5 s recording (three chunks) becomes `{turn: t1}`, then the transcript, then the reply, and the transcript is the model's user text (V1–V3). Too short, too long, silent and failing recordings are refused and reach no model; the next recording is still t1 (V5). `device-chat.test.ts` V6: without `speech.transcribe`, -32002 and the link stays up.
+- Driven by hand with a real engine: `say` recorded "Turn on the kitchen light please." at 16 kHz and whisper-cli with `ggml-tiny.en` transcribed it exactly. The 0.1 s clip was refused first. Evidence is in `/tmp/ziggy-devices-proof/s8-20261003-145555`.

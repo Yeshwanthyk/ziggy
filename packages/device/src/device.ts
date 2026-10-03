@@ -22,6 +22,7 @@ import {
   ZdpErrorCode,
   ZdpError,
   decodeFrame,
+  encodeChunk,
   encodeMessage,
   isJsonObject,
   parsePairingUri,
@@ -245,10 +246,14 @@ interface Pending {
   readonly timer: ReturnType<typeof setTimeout>;
 }
 
+/** Recordings go out in chunks this large. */
+const AUDIO_CHUNK_BYTES = 16 * 1_024;
+
 interface Link {
   readonly hubKey: Uint8Array;
   readonly request: (method: string, params?: JsonObject) => Promise<Json>;
   readonly notify: (method: string, params?: JsonObject) => void;
+  readonly chunk: (stream: number, last: boolean, data: Uint8Array) => boolean;
   readonly closed: Promise<DeviceClosed>;
   readonly close: (code: number, reason: string) => void;
 }
@@ -468,6 +473,13 @@ const openLink = async (
     notify: (method, params) => {
       send(params === undefined ? { method } : { method, params });
     },
+    chunk: (stream, last, data) => {
+      const frame = encodeChunk(stream, last, data);
+
+      trace?.("out", decodeFrame(frame));
+
+      return sendFrame(frame);
+    },
     closed,
     close,
   };
@@ -502,6 +514,9 @@ export class ZiggyDevice {
   };
 
   readonly #streams = new Map<number, Stream>();
+
+  /** The last odd stream id this device used; devices use odd ids, the hub even ones. */
+  #lastStream = -1;
 
   #identity: DeviceIdentity | undefined;
 
@@ -635,6 +650,38 @@ export class ZiggyDevice {
   /** Starts a chat turn; the reply arrives as `chat` events. */
   async send(text: string): Promise<{ readonly turn: string }> {
     const result = await this.#request("chat.send", { text });
+
+    if (!isJsonObject(result) || typeof result.turn !== "string")
+      throw new ZdpError("the hub answered chat.send without a turn");
+
+    return { turn: result.turn };
+  }
+
+  /**
+   * Starts a chat turn from a recording: PCM16 mono at 16 kHz, 0.3–20 s. The hub transcribes it
+   * and sends `chat` events of type `transcript` before the reply.
+   */
+  async sendAudio(pcm: Uint8Array, format = "pcm16/16000"): Promise<{ readonly turn: string }> {
+    const link = this.#link;
+
+    if (this.#state !== "online" || link === undefined)
+      throw new DeviceOfflineError(`chat.send: the device is ${this.#state}`);
+
+    this.#lastStream = this.#lastStream >= 65_533 ? 1 : this.#lastStream + 2;
+
+    const stream = this.#lastStream;
+
+    // The request leaves first, then its chunks, all before anything else is sent.
+    const answered = link.request("chat.send", { audio: { stream, format } });
+
+    for (let offset = 0; offset === 0 || offset < pcm.length; offset += AUDIO_CHUNK_BYTES)
+      link.chunk(
+        stream,
+        offset + AUDIO_CHUNK_BYTES >= pcm.length,
+        pcm.subarray(offset, offset + AUDIO_CHUNK_BYTES),
+      );
+
+    const result = await answered;
 
     if (!isJsonObject(result) || typeof result.turn !== "string")
       throw new ZdpError("the hub answered chat.send without a turn");

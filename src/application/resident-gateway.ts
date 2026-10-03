@@ -5,6 +5,7 @@ import {
   inspectGatewayOwner,
   type GatewayOwnerHandle,
 } from "../adapters/bun/gateway-owner";
+import { commandTranscriber } from "../adapters/bun/speech-command";
 import {
   openUiServer,
   removeStaleUiServerProjection,
@@ -151,6 +152,8 @@ const makeLiveDevicesRuntime = (
 
       if (config === undefined) return yield* Effect.never;
 
+      const transcribe = config.speech?.transcribe;
+
       const hub = yield* runDeviceHub({
         profilePath: target.path,
         profileName: target.name,
@@ -159,6 +162,9 @@ const makeLiveDevicesRuntime = (
         chat: makeDeviceChat(target, agent, live, destinations),
         links,
         log: logError,
+        ...(transcribe && {
+          transcribe: commandTranscriber(transcribe.command, transcribe.timeoutSeconds),
+        }),
       });
 
       yield* logError(`[gateway] devices listening on ${config.listen.host}:${hub.port}`);
