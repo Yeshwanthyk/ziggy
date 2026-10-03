@@ -15,7 +15,7 @@ import {
   type UiRequestEnvelope,
 } from "../../domain/ui-gateway";
 import type { ProfileId } from "../../domain/profile-directory";
-import { badParams, boundedText, protocolFailure, toGatewayError } from "./errors";
+import { badParams, boundedText, liveFailure, protocolFailure, toGatewayError } from "./errors";
 import type { UiGatewayBranch, UiGatewayDependencies } from "./types";
 
 const decodeScoped = Schema.decodeUnknownEffect(UiProfileScopedParams, {
@@ -197,7 +197,7 @@ export const dispatchGroups = (
           config.sessions
             .list(branch.target)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause))),
-          branch.registry.destinations,
+          branch.destinations.list,
           pins
             .read(branch.target.path)
             .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause))),
@@ -268,15 +268,17 @@ export const dispatchGroups = (
           } else {
             const liveKey = pin.ref.key;
 
-            const entry = yield* branch.registry
+            const entry = yield* branch.live
               .get(liveKey)
               .pipe(
                 Effect.catch((cause) =>
-                  cause.code === "unknown_session" ? Effect.succeed(undefined) : Effect.fail(cause),
+                  cause.reason === "not-found"
+                    ? Effect.succeed(undefined)
+                    : Effect.fail(liveFailure(cause)),
                 ),
               );
 
-            if (entry?.handle.currentSession !== undefined) {
+            if (entry !== undefined) {
               const session = yield* entry.handle.currentSession.pipe(
                 Effect.mapError((cause) => toGatewayError(request.method, cause)),
               );

@@ -1,39 +1,62 @@
-# Inspect stored sessions
+# Updating bundled extensions
 
-List a Profile's stored sessions or inspect one session's metadata:
+Bundled extension code ships inside the Ziggy executable. An installed Profile copy takes
+precedence over that bundle, so updating the executable does not replace installed packages.
+
+Update one installed bundled package from the executable you are running:
 
 ```sh
-ziggy sessions list squarey
-ziggy sessions show squarey SESSION_ID
+ziggy extensions update squarey computer-workflows
 ```
 
-These commands are transcript-free. Their output is limited to paths, IDs, Pi session display names,
-lineage, timestamps, entry counts, model and thinking changes, usage, and safe terminal state. They
-never print prompts, replies, thinking, tool arguments, or tool output.
+If a managed resident (`ziggy serve install`) is running, add `--restart`:
 
-Ziggy records the display name through Pi's native `session_info` entry. Existing names and explicit
-name clears remain authoritative. A new channel or stable local route starts with its available
-semantic identity and adds a bounded first-message topic; an otherwise unnamed conversation uses
-the topic alone. One-off specialist runs include both the agent identity and task topic. The direct
-UI agent route remains one continuing session per agent; its name does not create a second routing
-identity.
+```sh
+ziggy extensions update squarey computer-workflows --restart
+```
 
-## One writer per session
+With `--restart`, Ziggy stops the resident, applies the update under the Profile's extension
+lock, and starts the resident again. Without `--restart` the update is refused while the resident
+runs. The update stages the new package and checks it through Pi before swapping it in; if a step
+fails, either the old or the new version stays applied. The updater does not drain active work,
+schedule an update, or download another executable. Close web, run, ACP, wake, and specialist
+sessions from older Ziggy builds before the first update.
 
-Each stored session has one writer at a time. The process that opens a session holds it until it
-closes or exits; separate lanes (each Slack or Discord thread, each `ui/<name>`, each automation
-run, each specialist task) have their own sessions and never contend. A second opener of the same
-session is refused instead of interleaving writes: the CLI prints "this session is open in another
-process (pid N); use the UI, or start a new session", the web UI shows the session as busy, and an
-automation delivery fails as retriable `session-held`. Retry later, use the process that holds it,
-or start a new session. `ziggy run --continue` and `--session` refuse a session the resident holds.
+## Adopt an existing installation
 
-## Resume and model in the web UI
+Installations without an update receipt are treated as untracked. To explicitly replace an
+untracked package with the executable's bundled copy and begin tracking it:
 
-The resident web UI can resume an older web conversation (`local/main` or `ui/<name>`) from its
-session picker; group, specialist, automation, and channel transcripts cannot be resumed there.
-It can also change the model and thinking level of the open session. That change applies to that
-session only; the Profile default in `settings.json` is unchanged. Resume and model changes are
-refused while a turn is streaming, and other open clients reload after either one.
+```sh
+ziggy extensions update squarey computer-workflows --adopt
+```
 
-Run `ziggy help sessions` for the version-matched command syntax and JSON options.
+Adoption is a takeover of that package directory, not proof that its previous contents came
+from Ziggy. Inspect local changes first; the previous copy is not kept after a successful update.
+Once a receipt exists, modified package contents block updates; `--adopt` does not override
+that protection.
+
+## Boundaries
+
+- Only an explicitly named, already installed optional bundled extension is updated. Required
+  packages are read from Ziggy's own cache and update with Ziggy itself.
+- Package content hashes detect changes even when the package version is unchanged.
+- The selected extension set, browser profiles, saved workflows, and human-owned Profile
+  documents are not replaced.
+- Updates that change extension-owned automation definitions are rejected in this version.
+- The swap is two renames through `<id>.old`. If it stops between them, the next session open (for
+  a selected package), `add`, or `update` restores `<id>.old` under the extension lock, so the
+  Profile runs the previous version until you rerun the update. `doctor` only reports it.
+- If the update publishes but cannot record its receipt, it warns; the next `update` sees the
+  bytes already match this build and records the receipt.
+- The new tool code and skill instructions load together when the resident restarts; `--restart`
+  does this for you.
+
+A successful update verifies package installation and loading. It does not prove that a saved
+workflow completes on a live website.
+
+## In-process lifecycle
+
+The `profile_extensions` tool manages `list`, `add`, `remove`, and `validate` inside the resident
+without Bash, a Ziggy subprocess, or `PATH` lookup. Extensions that invoke ordinary external
+commands still use the managed service `PATH` documented in [Supervise `ziggy serve`](serve.md).

@@ -29,6 +29,9 @@ import {
   type ZiggySessionModelResult,
   type ZiggySessionSummaryResult,
   type ZiggySessionRef,
+  type ZiggyAppContext,
+  type ZiggyJsonValue,
+  type ZiggyToolApp,
 } from "../../../packages/ui-sdk/src/index";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -45,6 +48,7 @@ export interface ToolActivity {
   readonly detail?: string;
   readonly failed: boolean;
   readonly phase: "start" | "update" | "end";
+  readonly app?: ZiggyToolApp;
 }
 
 export interface PinnedConversationSummary extends ConversationSummary {
@@ -174,6 +178,7 @@ export type GatewayClient = Pick<
   | "setPin"
   | "setModel"
   | "state"
+  | "uploadImage"
   | "submitPrompt"
   | "steerSession"
   | "followUp"
@@ -181,6 +186,8 @@ export type GatewayClient = Pick<
   | "watchSession"
   | "availableModels"
   | "authStatus"
+  | "callAppTool"
+  | "readAppResource"
 >;
 
 export type GatewayConnector = (input: ConnectInput) => GatewayClient;
@@ -365,6 +372,8 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const [sidebarLoading, setSidebarLoading] = useState(false);
   const [sidebarBusy, setSidebarBusy] = useState(false);
   const [selectedRef, setSelectedRef] = useState<ZiggySessionRef>();
+  // Only live web UI (`ui`) sessions can serve views; every other session is watch-only here.
+  const [uiLive, setUiLive] = useState<ReadonlySet<string>>(new Set());
   const [selectedTitle, setSelectedTitle] = useState("Ziggy");
   const [history, setHistory] = useState<ReadonlyArray<ZiggySessionHistoryEntry>>([]);
   const [historyCursor, setHistoryCursor] = useState<string>();
@@ -373,6 +382,19 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
   const [streamText, setStreamText] = useState("");
   const [tools, setTools] = useState<ReadonlyArray<ToolActivity>>([]);
   const [pendingUser, setPendingUser] = useState<string>();
+  const [pendingUserImages, setPendingUserImages] = useState<ReadonlyArray<string>>([]);
+  // What this conversation's views added with `ui/update-model-context`; sent once with the next
+  // prompt, one entry per server.
+  const [appContext, setAppContextState] = useState<ReadonlyArray<ZiggyAppContext>>([]);
+  useEffect(() => {
+    if (pendingUser === undefined) setPendingUserImages([]);
+  }, [pendingUser]);
+  useEffect(
+    () => () => {
+      for (const url of pendingUserImages) URL.revokeObjectURL(url);
+    },
+    [pendingUserImages],
+  );
   const [busy, setBusy] = useState(false);
   const [pendingInputs, setPendingInputs] = useState<
     ReadonlyArray<{
@@ -380,6 +402,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       ref: ZiggySessionRef;
       text: string;
       mode: "steer" | "queue";
+      imageCount?: number;
       occurrence: number;
     }>
   >([]);
@@ -533,6 +556,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
           detail: event.payload.detail,
           failed: event.payload.failed,
           phase: event.payload.phase,
+          ...(event.payload.app === undefined ? {} : { app: event.payload.app }),
         };
         const index = current.findIndex((tool) => tool.id === next.id);
         return index < 0
@@ -557,9 +581,9 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       return;
     }
     if (event.event === "settled") {
+      // Keep the streamed reply on screen; loadHistory clears it in the same render that adds
+      // the stored message, so the reply does not blink out and back in.
       activityActiveRef.current = false;
-      setStreamText("");
-      setTools([]);
       setBusy(false);
       void loadHistoryRef.current?.(event.session);
       return;
@@ -621,6 +645,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       setHasMoreHistory(false);
       setStreamText("");
       setTools([]);
+      setAppContextState([]);
       setPendingUser(undefined);
       activityActiveRef.current = false;
       setBusy(false);
@@ -641,6 +666,9 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
               context: { kind: "local" },
               name: conversation.ref.key.slice(3),
             });
+            // The open made it a live web UI session; don't wait for a sidebar refresh to say so.
+            const key = refKey(conversation.ref);
+            setUiLive((current) => (current.has(key) ? current : new Set([...current, key])));
           }
           await client.watchSession(conversation.ref);
         } catch (cause) {
@@ -722,6 +750,14 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       if (nextConversations !== undefined) {
         setConversations(nextConversations);
       }
+      if (sessionResult.status === "fulfilled")
+        setUiLive(
+          new Set(
+            sessionResult.value.live
+              .filter((session) => session.kind === "ui")
+              .map((session) => refKey(session.ref)),
+          ),
+        );
       setAutomationDestinations(
         destinationResult.status === "fulfilled" ? destinationResult.value : [],
       );
@@ -870,10 +906,15 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
           return;
         }
         if (nextConversations === undefined || pinResult.status !== "fulfilled") return;
+        const savedPin = pinResult.value.pins.find((pin) => sameRef(pin.ref, saved.ref));
+        const listed = nextConversations.find((candidate) => sameRef(candidate.ref, saved.ref));
+        // A pin label is the name the person gave the chat; it wins over the key-derived title.
         const conversation =
-          nextConversations.find((candidate) => sameRef(candidate.ref, saved.ref)) ??
-          pinResult.value.pins
-            .filter((pin) => sameRef(pin.ref, saved.ref))
+          (listed !== undefined && savedPin?.label !== undefined
+            ? { ...listed, title: savedPin.label }
+            : listed) ??
+          [savedPin]
+            .filter((pin) => pin !== undefined)
             .map((pin): ConversationSummary => ({
               ref: pin.ref,
               title:
@@ -2098,6 +2139,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       text: string,
       recipient?: ZiggyRecipientId,
       mode: "steer" | "queue" = "steer",
+      files: ReadonlyArray<File> = [],
     ): Promise<void> => {
       const client = clientRef.current;
       const ref = selectedRefRef.current;
@@ -2109,15 +2151,35 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
       }
       setLocalError(undefined);
       const commandId = `web-${crypto.randomUUID()}`;
-      if (busy) {
+      const images: Array<string> = [];
+      try {
+        for (const file of files) images.push(await client.uploadImage(file));
+        if (!sameRef(selectedRefRef.current, ref))
+          throw new Error("The conversation changed. Send the images again.");
+      } catch (cause) {
+        setLocalError(cause instanceof Error ? cause.message : "The image could not be uploaded.");
+        throw cause;
+      }
+      const attachments = images.length === 0 ? undefined : { images };
+      if (files.length === 0 ? busy : activityActiveRef.current) {
         const occurrence =
           history.filter((entry) => entry.kind === "user" && entry.text === text).length +
           pendingInputs.filter((input) => sameRef(ref, input.ref) && input.text === text).length +
           1;
-        setPendingInputs((current) => [...current, { id: commandId, ref, text, mode, occurrence }]);
+        setPendingInputs((current) => [
+          ...current,
+          {
+            id: commandId,
+            ref,
+            text,
+            mode,
+            occurrence,
+            ...(images.length === 0 ? {} : { imageCount: images.length }),
+          },
+        ]);
         try {
-          if (mode === "queue") await client.followUp(ref, text, commandId);
-          else await client.steerSession(ref, text, commandId);
+          if (mode === "queue") await client.followUp(ref, text, commandId, attachments);
+          else await client.steerSession(ref, text, commandId, attachments);
         } catch (cause) {
           setPendingInputs((current) => current.filter((input) => input.id !== commandId));
           setLocalError(
@@ -2127,15 +2189,26 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
         }
         return;
       }
+      setPendingUserImages(files.map((file) => URL.createObjectURL(file)));
       setPendingUser(text);
       activityActiveRef.current = true;
       setBusy(true);
+      const context = appContext.length === 0 ? undefined : appContext;
+      const promptAttachments = context === undefined ? attachments : { ...attachments, context };
       try {
         if (recipient === undefined) {
-          await client.submitPrompt(ref, text, commandId);
+          await client.submitPrompt(ref, text, commandId, promptAttachments);
         } else {
-          await client.request("prompt.submit", { ref, text, recipient, commandId });
+          await client.request("prompt.submit", {
+            ref,
+            text,
+            recipient,
+            commandId,
+            ...promptAttachments,
+          });
         }
+        if (context !== undefined)
+          setAppContextState((current) => current.filter((entry) => !context.includes(entry)));
       } catch (cause) {
         activityActiveRef.current = false;
         setBusy(false);
@@ -2150,7 +2223,45 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
         throw cause;
       }
     },
-    [busy, history, pendingInputs],
+    [appContext, busy, history, pendingInputs],
+  );
+
+  // A view is bound to the conversation it mounted in; once another one is selected, its calls
+  // fail and its context is dropped rather than reaching the newly selected session.
+  const setAppContext = useCallback((ref: ZiggySessionRef, server: string, text: string): void => {
+    if (!sameRef(selectedRefRef.current, ref)) return;
+    setAppContextState((current) => {
+      const others = current.filter((entry) => entry.server !== server);
+      return text.trim().length === 0 ? others : [...others, { server, text }].slice(-4);
+    });
+  }, []);
+
+  const callAppTool = useCallback(
+    async (
+      ref: ZiggySessionRef,
+      server: string,
+      resourceUri: string,
+      tool: string,
+      args: { readonly [key: string]: ZiggyJsonValue },
+    ): Promise<ZiggyJsonValue> => {
+      const client = clientRef.current;
+      if (client === undefined) throw new Error("Ziggy is not connected.");
+      if (!sameRef(selectedRefRef.current, ref))
+        throw new Error("This view's conversation is no longer selected.");
+      return client.callAppTool(ref, server, resourceUri, tool, args);
+    },
+    [],
+  );
+
+  const readAppResource = useCallback(
+    async (ref: ZiggySessionRef, server: string, uri: string): Promise<ZiggyJsonValue> => {
+      const client = clientRef.current;
+      if (client === undefined) throw new Error("Ziggy is not connected.");
+      if (!sameRef(selectedRefRef.current, ref))
+        throw new Error("This view's conversation is no longer selected.");
+      return client.readAppResource(ref, server, uri);
+    },
+    [],
   );
 
   const abort = useCallback(async (): Promise<void> => {
@@ -2179,7 +2290,12 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
             pinId: pin.id,
             ref: pin.ref,
             title: pin.label ?? conversation?.title ?? fallbackTitle,
-            subtitle: conversation?.subtitle ?? "Pinned conversation",
+            // A pinned chat says so whether or not its session is live right now; the main
+            // conversation and specialists keep their own subtitle.
+            subtitle:
+              conversation === undefined || conversation.subtitle === "Conversation"
+                ? "Pinned conversation"
+                : conversation.subtitle,
             active: conversation?.active ?? false,
           };
         }),
@@ -2211,6 +2327,10 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
 
   return {
     abort,
+    appContext,
+    setAppContext,
+    callAppTool,
+    readAppResource,
     agentDefinitionDetail,
     automationDetail,
     automationRuns,
@@ -2251,6 +2371,7 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     openSpecialist,
     pauseAutomation,
     pendingUser,
+    pendingUserImages,
     pinnedConversations,
     profile,
     profiles,
@@ -2264,6 +2385,8 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
     saveAgentDefinition,
     saveModelSettings,
     selectedRef,
+    /** Only a live web UI session can run an interactive view; others show a note. */
+    selectedServesViews: selectedRef?.kind === "live" && uiLive.has(refKey(selectedRef)),
     selectedTitle,
     selectConversation,
     setConversationPin,

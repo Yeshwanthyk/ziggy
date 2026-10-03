@@ -2,11 +2,10 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
     "test/**/*.test.ts",
+    "test/harness/sandbox.ts",
     "extensions/*/index.ts",
     "extensions/*/bin/**/*.{ts,mjs}",
     "extensions/*/test/**/*.test.ts",
-    "extensions/codemode/test/fixtures/mcp-server.ts",
-    "extensions/codemode/test/profile-smoke.ts",
     "clients/web/src/main.tsx",
     "clients/web/src/**/*.test.ts",
     "clients/web/src/**/*.test.tsx",
@@ -15,7 +14,9 @@
     "packages/ui-sdk/test/**/*.test.ts",
     "tooling/generate-*.mjs",
     "tooling/oxlint/*-plugin.mjs",
-    "tooling/**/*.test.ts"
+    "tooling/**/*.test.ts",
+    "test/extensions/fixtures/*.ts",
+    "src/extensions/codemode/worker.ts"
   ],
   "project": [
     "src/**/*.ts",
@@ -27,7 +28,12 @@
   "ignore": [
     "extensions/computer-use/dist/**",
     "extensions/computer-use/scripts/**",
+    "extensions/plugin-authoring/skills/plugin-authoring/template/**",
     "clients/web/src/vendor/bloub/**"
   ],
-  "include": ["files", "exports", "types"]
+  "include": [
+    "files",
+    "exports",
+    "types"
+  ]
 }

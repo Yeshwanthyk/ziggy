@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { Effect, Schema, Stream } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 import type { DiscordIngressAttachmentReference } from "../../domain/discord-ingress";
+import { withBaseUrl } from "../http-base";
 
 export const MAX_DISCORD_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -704,11 +705,16 @@ export const makeDiscordApi = (client: HttpClient.HttpClient) => ({
 
 export type DiscordApi = ReturnType<typeof makeDiscordApi>;
 
-const withLiveClient = <A, E>(use: (api: DiscordApi) => Effect.Effect<A, E>): Effect.Effect<A, E> =>
+export const DISCORD_API_URL = "https://discord.com/api/v10";
+
+const withLiveClient = <A, E>(
+  use: (api: DiscordApi) => Effect.Effect<A, E>,
+  baseUrl?: string,
+): Effect.Effect<A, E> =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
 
-    return yield* use(makeDiscordApi(client));
+    return yield* use(makeDiscordApi(withBaseUrl(client, DISCORD_API_URL, baseUrl)));
   }).pipe(Effect.provide(FetchHttpClient.layer));
 
 export const getGatewayBot = (
@@ -720,8 +726,9 @@ export const createMessage = (
   token: string,
   channelId: string,
   text: string,
+  baseUrl?: string,
 ): Effect.Effect<void, DiscordApiError> =>
-  withLiveClient((api) => api.createMessage(token, channelId, text)).pipe(Effect.asVoid);
+  withLiveClient((api) => api.createMessage(token, channelId, text), baseUrl).pipe(Effect.asVoid);
 
 export const createMessageWithReceipt = (
   token: string,

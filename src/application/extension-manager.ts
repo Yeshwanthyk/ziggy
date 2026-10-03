@@ -1,8 +1,7 @@
 import { Effect } from "effect";
-import type { ProfileExtensionsApi, ProfileExtensionListing } from "../domain/profile-extension";
-import type { ProfileTarget } from "../domain/profile";
+import type { ExtensionSelection, ExtensionsApi } from "../extensions";
 import type { TerminalInteractionFailed } from "../domain/terminal-interaction";
-import type { ProfileListing, ProfilesApi } from "./profiles";
+import { type ProfileTarget, type ProfileListing, type ProfilesApi } from "../profile";
 
 export interface ExtensionManagerChanges {
   readonly added: ReadonlyArray<string>;
@@ -15,7 +14,7 @@ export interface ExtensionManagerInteraction {
   ) => Effect.Effect<ProfileListing | undefined, TerminalInteractionFailed>;
   readonly selectExtensions: (
     profile: ProfileTarget,
-    listing: ProfileExtensionListing,
+    listing: ExtensionSelection,
   ) => Effect.Effect<ReadonlyArray<string> | undefined, TerminalInteractionFailed>;
   readonly confirmChanges: (
     profile: ProfileTarget,
@@ -41,9 +40,6 @@ export type ExtensionManagerResult =
 
 export interface ExtensionManagerOptions {
   readonly target?: ProfileTarget;
-  readonly profilesDirectory: string;
-  readonly registryPath: string;
-  readonly repositoryRoot: string;
 }
 
 const asTarget = (profile: ProfileListing): ProfileTarget => ({
@@ -66,7 +62,7 @@ const changesBetween = (
 
 export const manageExtensions = (
   profiles: ProfilesApi,
-  extensions: ProfileExtensionsApi,
+  extensions: ExtensionsApi,
   interaction: ExtensionManagerInteraction,
   options: ExtensionManagerOptions,
 ) =>
@@ -74,10 +70,7 @@ export const manageExtensions = (
     let profile = options.target;
 
     if (profile === undefined) {
-      const availableProfiles = yield* profiles.listProfiles(
-        options.profilesDirectory,
-        options.registryPath,
-      );
+      const availableProfiles = yield* profiles.list();
 
       if (availableProfiles.length === 0) return { status: "empty" } as const;
       const choice = yield* interaction.selectProfile(availableProfiles);
@@ -86,7 +79,7 @@ export const manageExtensions = (
 
     if (profile === undefined) return { status: "cancelled" } as const;
 
-    const listing = yield* extensions.listForProfile(profile.path, options.repositoryRoot);
+    const listing = yield* extensions.listForProfile(profile.path);
     const requested = yield* interaction.selectExtensions(profile, listing);
 
     if (requested === undefined) return { status: "cancelled" } as const;
@@ -101,7 +94,7 @@ export const manageExtensions = (
 
     if (confirmed !== true) return { status: "cancelled" } as const;
 
-    const result = yield* extensions.setSelected(profile, options.repositoryRoot, requested);
+    const result = yield* extensions.setSelected(profile, requested);
 
     if (!result.changed) {
       return { status: "unchanged", profile, selected: result.selected } as const;

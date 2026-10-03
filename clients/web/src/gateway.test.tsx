@@ -282,6 +282,9 @@ const makeClient = (overrides: Partial<ClientFixture> = {}) => {
     watchSession: vi.fn(async () => undefined),
     unwatchSession: vi.fn(async () => undefined),
     getSessionHistory: vi.fn(async (ref) => historyResult(ref)),
+    uploadImage: vi.fn(async () => crypto.randomUUID()),
+    callAppTool: vi.fn(async () => ({ content: [] })),
+    readAppResource: vi.fn(async () => ({ contents: [] })),
     submitPrompt: vi.fn(async () => undefined),
     steerSession: vi.fn(async () => undefined),
     followUp: vi.fn(async () => undefined),
@@ -374,6 +377,58 @@ describe("useZiggyGateway", () => {
     );
     expect(hook.result.current.streamText).toBe("Already responding");
     expect(hook.result.current.busy).toBe(true);
+  });
+
+  it("refuses a view's calls and context once its conversation is not the selected one", async () => {
+    const { client } = makeClient();
+    const hook = await connectHook(client);
+    const other = { profileId: profile.profileId, kind: "stored" as const, id: "other" };
+    await expect(
+      hook.result.current.callAppTool(other, "fixture", "ui://fixture/view.html", "app_only", {}),
+    ).rejects.toThrow("no longer selected");
+    await expect(hook.result.current.readAppResource(other, "fixture", "ui://x")).rejects.toThrow(
+      "no longer selected",
+    );
+    act(() => hook.result.current.setAppContext(other, "fixture", "stale"));
+    expect(client.callAppTool).not.toHaveBeenCalled();
+    expect(client.readAppResource).not.toHaveBeenCalled();
+    expect(hook.result.current.appContext).toEqual([]);
+
+    await hook.result.current.callAppTool(
+      mainRef,
+      "fixture",
+      "ui://fixture/view.html",
+      "app_only",
+      {},
+    );
+    act(() => hook.result.current.setAppContext(mainRef, "fixture", "fresh"));
+    expect(client.callAppTool).toHaveBeenCalledWith(
+      mainRef,
+      "fixture",
+      "ui://fixture/view.html",
+      "app_only",
+      {},
+    );
+    expect(hook.result.current.appContext).toEqual([{ server: "fixture", text: "fresh" }]);
+  });
+
+  it("serves views only in live web UI conversations", async () => {
+    const { client } = makeClient();
+    const hook = await connectHook(client);
+    expect(hook.result.current.selectedServesViews).toBe(true);
+    const select = (ref: ZiggySessionRef) =>
+      act(() =>
+        hook.result.current.selectConversation({ ref, title: "x", subtitle: "", active: false }),
+      );
+    await select({ profileId: profile.profileId, kind: "live", key: "slack/C123" });
+    expect(hook.result.current.selectedServesViews).toBe(false);
+    await select({ profileId: profile.profileId, kind: "stored", id: "past" });
+    expect(hook.result.current.selectedServesViews).toBe(false);
+    // A live ref the resident has not listed as `ui` (an ended one, say) is not assumed to be.
+    await select({ profileId: profile.profileId, kind: "live", key: "ui/ended" });
+    expect(hook.result.current.selectedServesViews).toBe(false);
+    await select(specialistRef);
+    expect(hook.result.current.selectedServesViews).toBe(true);
   });
 
   it("preserves activity replayed before and delivered during history reconciliation", async () => {
@@ -1084,6 +1139,44 @@ describe("useZiggyGateway", () => {
     );
   });
 
+  it("restores a named chat under its pin label, not its key", async () => {
+    // Stored selections pass the protocol's ref check, which needs a real Profile id.
+    const named = { ...profile, profileId: "prf_0123456789abcdef01234567" } as const;
+    const main = { profileId: named.profileId, kind: "live", key: "local/main" } as const;
+    const chatRef = { profileId: named.profileId, kind: "live", key: "ui/chat-0b1c" } as const;
+    sessionStorage.setItem(
+      `ziggy:selected:v1:${named.profileId}`,
+      JSON.stringify({ version: 1, target: { kind: "ref", ref: chatRef } }),
+    );
+    const { client } = makeClient({
+      listProfiles: vi.fn(async () => ({ profiles: [named] })),
+      currentProfile: vi.fn(async () => ({
+        profileId: named.profileId,
+        name: named.name,
+        cliTarget: "squarey",
+      })),
+      openMain: vi.fn(async () => main),
+      listSessions: vi.fn(async () => ({
+        profileId: named.profileId,
+        live: [
+          { ref: main, kind: "ui" as const, idle: true },
+          { ref: chatRef, kind: "ui" as const, idle: true },
+        ],
+        stored: [],
+      })),
+      listPins: vi.fn(async () => ({
+        profileId: named.profileId,
+        revision: 2,
+        pins: [{ id: "chat-pin", ref: chatRef, label: "B1 try", order: 0 }],
+      })),
+    });
+    vi.spyOn(client, "request").mockResolvedValue({ ref: chatRef });
+    const hook = await connectHook(client);
+    await waitFor(() => expect(hook.result.current.selectedRef).toEqual(chatRef));
+
+    expect(hook.result.current.selectedTitle).toBe("B1 try");
+  });
+
   it("uses the latest pin revision and updates automation lifecycle after acknowledged actions", async () => {
     const { client, fixture } = makeClient({
       listPins: vi.fn(async () => ({ profileId: profile.profileId, revision: 7, pins: [] })),
@@ -1411,6 +1504,12 @@ describe("useZiggyGateway", () => {
     );
     expect(hook.result.current.selectedRef).toEqual(ref);
     expect(hook.result.current.selectedTitle).toBe("Planning");
+    // The new chat serves views at once, before any sidebar refresh lists it as live.
+    expect(hook.result.current.selectedServesViews).toBe(true);
+    // Live or not, a pinned chat is labelled as pinned.
+    expect(hook.result.current.pinnedConversations).toContainEqual(
+      expect.objectContaining({ ref, title: "Planning", subtitle: "Pinned conversation" }),
+    );
     expect(fixture.openMain).toHaveBeenCalledTimes(1);
   });
 
@@ -1431,8 +1530,14 @@ describe("useZiggyGateway", () => {
       mainRef,
       "Change direction",
       expect.any(String),
+      undefined,
     );
-    expect(fixture.followUp).toHaveBeenCalledWith(mainRef, "Next task", expect.any(String));
+    expect(fixture.followUp).toHaveBeenCalledWith(
+      mainRef,
+      "Next task",
+      expect.any(String),
+      undefined,
+    );
     expect(hook.result.current.pendingInputs.map((input) => input.mode)).toEqual([
       "steer",
       "queue",
@@ -1447,6 +1552,7 @@ describe("useZiggyGateway", () => {
       commandId: "web-test",
     });
     const { client } = makeClient({
+      uploadImage: vi.fn(async () => crypto.randomUUID()),
       submitPrompt: vi.fn(async () => {
         throw outcomeUnknown;
       }),
@@ -1750,4 +1856,24 @@ it("shows the completed run after a later busy attempt was skipped", async () =>
   const hook = await connectHook(client);
   await act(async () => hook.result.current.runAutomation("morning-weather"));
   expect(hook.result.current.automationRuns["morning-weather"]?.state).toBe("completed");
+});
+
+it("uploads images before sending IDs and releases optimistic previews on unmount", async () => {
+  const id = "12345678-1234-4123-8123-123456789abc";
+  const file = new File(["fixture"], "image.png", { type: "image/png" });
+  const createUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:preview");
+  const revokeUrl = vi.spyOn(URL, "revokeObjectURL");
+  const { client, fixture } = makeClient({ uploadImage: vi.fn(async () => id) });
+  const hook = await connectHook(client);
+  await act(async () => {
+    await hook.result.current.submit("", undefined, "steer", [file]);
+  });
+  expect(fixture.uploadImage).toHaveBeenCalledWith(file);
+  expect(fixture.submitPrompt).toHaveBeenCalledWith(mainRef, "", expect.any(String), {
+    images: [id],
+  });
+  expect(hook.result.current.pendingUserImages).toEqual(["blob:preview"]);
+  expect(createUrl).toHaveBeenCalledWith(file);
+  hook.unmount();
+  expect(revokeUrl).toHaveBeenCalledWith("blob:preview");
 });

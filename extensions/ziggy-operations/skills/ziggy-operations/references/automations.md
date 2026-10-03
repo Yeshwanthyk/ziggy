@@ -63,6 +63,11 @@ or removes each target independently. It stores the existing canonical target st
 names never become delivery identity. `origin`, `all`, and targets entered through the full editor
 remain visible and removable even when they are not currently discoverable.
 
+Channel targets are `slack:channel:<id>` or `slack:channel:<id>:thread:<ts>`,
+`discord:channel:<id>`, and `telegram:chat:<id>`. A Discord thread is a channel, so
+`discord:channel:<thread id>` posts into the thread. Each gateway splits a long result into its own
+message limit and posts with the bot token from its `slack.json`, `discord.json`, or `telegram.json`.
+
 Stored Pi sessions supply conversation targets without the sidebar's display limit. Channel
 residents contribute the actual signed Telegram chat ID, Discord channel or thread ID, and Slack
 channel or thread address they observe. Slack IDs configured in `slack.json` are also choices;

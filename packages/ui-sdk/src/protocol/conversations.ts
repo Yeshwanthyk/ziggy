@@ -11,6 +11,7 @@ import {
   isSafeInteger,
   type ZiggyProfileId,
 } from "./common";
+import { isToolApp, type ZiggyAppContext, type ZiggyToolApp } from "./apps";
 
 export type ZiggyLiveSessionKey =
   | "local/main"
@@ -117,6 +118,7 @@ export interface ZiggySessionShowResult {
 
 export interface ZiggyHistoryUserEntry {
   readonly kind: "user";
+  readonly imageCount?: number;
   readonly timestamp: string;
   readonly text: string;
 }
@@ -133,6 +135,7 @@ export interface ZiggyHistoryToolEntry {
   readonly phase: "start" | "end";
   readonly toolName: string;
   readonly failed: boolean;
+  readonly app?: ZiggyToolApp;
 }
 
 export interface ZiggyHistoryAutomationResultEntry {
@@ -191,9 +194,16 @@ export interface ZiggySessionCommandParams {
   readonly commandId?: string;
 }
 
+export const isUploadId = (value: unknown): value is string =>
+  typeof value === "string" &&
+  /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(value);
+
 export interface ZiggySessionTextParams extends ZiggySessionCommandParams {
+  readonly images?: ReadonlyArray<string>;
   readonly text: string;
   readonly recipient?: ZiggyRecipientId;
+  /** Only on `prompt.submit`: what the session's views added to the model's context. */
+  readonly context?: ReadonlyArray<ZiggyAppContext>;
 }
 
 export interface ZiggyConversationRequestMap {
@@ -287,6 +297,7 @@ export interface ZiggyToolEvent {
     readonly toolName: string;
     readonly failed: boolean;
     readonly detail?: string;
+    readonly app?: ZiggyToolApp;
   };
 }
 
@@ -473,13 +484,16 @@ const isHistoryEntry = (value: unknown): value is ZiggySessionHistoryEntry => {
   if (!isRecord(value) || !isBoundedString(value.timestamp, 128)) return false;
   if (value.kind === "user" || value.kind === "assistant") {
     return (
-      hasOnlyKeys(value, ["kind", "timestamp", "text"]) &&
+      hasOnlyKeys(value, ["kind", "timestamp", "text", "imageCount"]) &&
+      (value.imageCount === undefined ||
+        (value.kind === "user" && isSafeInteger(value.imageCount) && value.imageCount > 0)) &&
       isBoundedCodePointString(value.text, 1_024, 0)
     );
   }
   if (value.kind === "tool") {
     return (
-      hasOnlyKeys(value, ["kind", "timestamp", "phase", "toolName", "failed"]) &&
+      hasOnlyKeys(value, ["kind", "timestamp", "phase", "toolName", "failed", "app"]) &&
+      (value.app === undefined || isToolApp(value.app)) &&
       (value.phase === "start" || value.phase === "end") &&
       isBoundedCodePointString(value.toolName, 48, 0) &&
       typeof value.failed === "boolean"
@@ -503,7 +517,12 @@ export const isSessionSummaryResult = (value: unknown): value is ZiggySessionSum
   hasOnlyKeys(value, ["profileId", "sessions", "truncated", "canResume", "currentSessionId"]) &&
   isProfileId(value.profileId) &&
   typeof value.canResume === "boolean" &&
-  (value.currentSessionId === null || (isBoundedString(value.currentSessionId, 256) && !value.currentSessionId.includes("/") && !value.currentSessionId.includes("\\") && !value.currentSessionId.includes("..") && !value.currentSessionId.startsWith("."))) &&
+  (value.currentSessionId === null ||
+    (isBoundedString(value.currentSessionId, 256) &&
+      !value.currentSessionId.includes("/") &&
+      !value.currentSessionId.includes("\\") &&
+      !value.currentSessionId.includes("..") &&
+      !value.currentSessionId.startsWith("."))) &&
   typeof value.truncated === "boolean" &&
   Array.isArray(value.sessions) &&
   value.sessions.length <= 32 &&
@@ -658,7 +677,8 @@ export const isGatewayEvent = (value: unknown): value is ZiggyGatewayEvent => {
   }
   if (value.event === "tool") {
     return (
-      hasOnlyKeys(payload, ["phase", "toolCallId", "toolName", "failed", "detail"]) &&
+      hasOnlyKeys(payload, ["phase", "toolCallId", "toolName", "failed", "detail", "app"]) &&
+      (payload.app === undefined || isToolApp(payload.app)) &&
       (payload.phase === "start" || payload.phase === "update" || payload.phase === "end") &&
       isBoundedString(payload.toolCallId, 256) &&
       isBoundedString(payload.toolName, 256) &&
@@ -685,7 +705,10 @@ export const isGatewayEvent = (value: unknown): value is ZiggyGatewayEvent => {
     );
   }
   if (value.event === "session-state") {
-    return hasOnlyKeys(payload, ["scope"]) && (payload.scope === "transcript" || payload.scope === "model");
+    return (
+      hasOnlyKeys(payload, ["scope"]) &&
+      (payload.scope === "transcript" || payload.scope === "model")
+    );
   }
   if (value.event === "settled") {
     return hasOnlyKeys(payload, []);

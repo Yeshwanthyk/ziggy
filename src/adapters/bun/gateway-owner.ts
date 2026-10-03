@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { lstat, open, readFile, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { Database } from "bun:sqlite";
 import { Effect, Result, Schema, Scope } from "effect";
-import { fileSystemCauseDetails } from "../fs/cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
+import { writeFileAtomic } from "../../platform/atomic-write";
+import { acquireFileLock } from "../../platform/file-lock";
 import { GatewayOwnerError, type GatewayOwnerStatus } from "../../domain/gateway";
-import type { ProfileTarget } from "../../domain/profile";
+import { type ProfileTarget } from "../../profile";
 
 const PositivePid = Schema.Int.check(Schema.isGreaterThan(0));
 
@@ -85,8 +86,7 @@ const liveRuntime: GatewayOwnerRuntime = {
 export const gatewayOwnerPath = (target: ProfileTarget): string =>
   join(target.path, ".runtime", "gateway-owner.lock");
 
-export const gatewayLeasePath = (target: ProfileTarget): string =>
-  join(target.path, ".runtime", "serve-owner.sqlite");
+const GATEWAY_LEASE_FILE = join(".runtime", "serve-owner.sqlite");
 
 const ownerError = (
   reason: GatewayOwnerError["reason"],
@@ -204,7 +204,6 @@ const publishProjection = (
   const path = gatewayOwnerPath(target);
   const ownerId = runtime.makeOwnerId();
   const acquiredAt = runtime.now().toISOString();
-  const candidate = join(dirname(path), `.gateway-owner.${ownerId}.candidate`);
   const record: GatewayOwnerRecord = { version: 1, ownerId, pid: runtime.pid, acquiredAt };
 
   return Effect.gen(function* () {
@@ -218,78 +217,27 @@ const publishProjection = (
         undefined,
         status.pid,
       );
-    yield* Effect.tryPromise({
-      try: async () => {
-        const file = await open(candidate, "wx", 0o600);
-
-        try {
-          await file.writeFile(`${JSON.stringify(record)}\n`, "utf8");
-          await file.sync();
-        } finally {
-          await file.close();
-        }
-
-        await rename(candidate, path);
-      },
-      catch: (cause) => filesystemError(path, cause),
-    });
+    yield* writeFileAtomic(path, `${JSON.stringify(record)}\n`).pipe(
+      Effect.mapError((failure) => filesystemError(path, failure.cause)),
+    );
 
     return { path, ownerId, pid: runtime.pid, acquiredAt, [leaseAuthority]: true as const };
-  }).pipe(
-    Effect.ensuring(
-      Effect.tryPromise({ try: () => unlink(candidate), catch: fileSystemCauseDetails }).pipe(
-        Effect.catch((cause) =>
-          cause.code === "ENOENT" ? Effect.void : reportCleanup(runtime, candidate, cause),
-        ),
-      ),
-    ),
-  );
+  });
 };
 
 export const acquireGatewayOwner = (
   target: ProfileTarget,
   runtime: GatewayOwnerRuntime = liveRuntime,
-): Effect.Effect<GatewayOwnerHandle, GatewayOwnerError, Scope.Scope> => {
-  const leasePath = gatewayLeasePath(target);
-
-  return Effect.gen(function* () {
-    yield* Effect.tryPromise({
-      try: () => mkdir(dirname(leasePath), { recursive: true }),
-      catch: (cause) => filesystemError(leasePath, cause),
-    });
-
-    const db = yield* Effect.acquireRelease(
-      Effect.try({
-        try: () => {
-          const opened = new Database(leasePath, { create: true, readwrite: true, strict: true });
-          opened.exec(
-            "PRAGMA busy_timeout = 0; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL;",
-          );
-
-          return opened;
-        },
-        catch: (cause) => filesystemError(leasePath, cause),
-      }),
-      (opened) =>
-        Effect.try({ try: () => opened.close(false), catch: fileSystemCauseDetails }).pipe(
-          Effect.catch((cause) => reportCleanup(runtime, leasePath, cause)),
-        ),
-    );
-
-    yield* Effect.acquireRelease(
-      Effect.try({
-        try: () => db.exec("BEGIN IMMEDIATE"),
-        catch: (cause) =>
-          ownerError("held", leasePath, `gateway already running for ${target.path}`, cause),
-      }),
-      () =>
-        Effect.try({ try: () => db.exec("ROLLBACK"), catch: fileSystemCauseDetails }).pipe(
-          Effect.catch((cause) => reportCleanup(runtime, leasePath, cause)),
-        ),
-    );
-
-    return yield* Effect.acquireRelease(publishProjection(target, runtime), (handle) =>
-      removeMatchingProjection(handle, runtime),
-    );
-  });
-};
+): Effect.Effect<GatewayOwnerHandle, GatewayOwnerError, Scope.Scope> =>
+  acquireFileLock({ root: target.path, file: GATEWAY_LEASE_FILE, waitMs: 0 }).pipe(
+    Effect.mapError((failure) =>
+      failure.reason === "held"
+        ? ownerError("held", failure.path, `gateway already running for ${target.path}`, failure)
+        : filesystemError(failure.path, failure.cause),
+    ),
+    Effect.andThen(
+      Effect.acquireRelease(publishProjection(target, runtime), (handle) =>
+        removeMatchingProjection(handle, runtime),
+      ),
+    ),
+  );

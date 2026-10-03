@@ -4,13 +4,13 @@ import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Fiber, Result } from "effect";
-import type { ProfileTarget } from "ziggy/domain/profile";
 import {
   acquireGatewayOwner,
   gatewayOwnerPath,
   inspectGatewayOwner,
   type GatewayOwnerRuntime,
 } from "ziggy/adapters/bun/gateway-owner";
+import { type ProfileTarget } from "ziggy/profile/index";
 
 const paths: Array<string> = [];
 

@@ -1,129 +1,26 @@
-import { constants } from "node:fs";
-import { lstat, open } from "node:fs/promises";
 import type {
   BeforeAgentStartEvent,
   BeforeAgentStartEventResult,
   InlineExtension,
 } from "@earendil-works/pi-coding-agent";
-import { Effect } from "effect";
-import { ProviderConfigError } from "../../domain/agent";
-import type { ProfileAgent } from "../../domain/profile";
-import { renderMemoryForPrompt, type MemoryDocument } from "../../domain/memory";
-import { fileSystemCauseDetails } from "../fs/cause";
 import { createPiDocsExtension } from "./pi-docs";
-import { createProfileAgentGuidanceExtension } from "./profile-agent-guidance";
 import { createZiggyHelpExtension } from "./ziggy-help";
 import { createSessionNamingExtension } from "./session-name";
 
-interface LoadedMemoryDocument {
-  readonly content: string;
-}
-
-const causeMessage = (cause: unknown): string =>
-  (cause instanceof Error ? cause.message : String(cause)).replace(/\s+/gu, " ").trim();
-
-const inspectMemoryFile = async (
-  document: MemoryDocument,
-): Promise<LoadedMemoryDocument | undefined> => {
-  try {
-    const status = await lstat(document.absolutePath);
-
-    if (status.isSymbolicLink() || !status.isFile()) {
-      throw new Error(`${document.absolutePath} must be a regular non-symlink memory file`);
-    }
-
-    const file = await open(document.absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-
-    try {
-      return { content: (await file.readFile()).toString("utf8") };
-    } finally {
-      await file.close();
-    }
-  } catch (cause) {
-    if (fileSystemCauseDetails(cause).code === "ENOENT") return undefined;
-    throw cause;
-  }
-};
-
-const readMemoryDocument = (
-  document: MemoryDocument,
-): Effect.Effect<LoadedMemoryDocument | undefined, unknown> =>
-  Effect.tryPromise({
-    try: () => inspectMemoryFile(document),
-    catch: (cause) => cause,
-  });
-
-const buildMemoryPrompt = (
-  profilePath: string,
-  documents: ReadonlyArray<MemoryDocument>,
-): Effect.Effect<string, ProviderConfigError> =>
-  Effect.forEach(documents, (document) =>
-    readMemoryDocument(document).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProviderConfigError({
-            profilePath,
-            operation: "read memory",
-            message: `could not read ${document.absolutePath}`,
-            cause,
-          }),
-      ),
-      Effect.map((loaded) => ({
-        document,
-        content:
-          loaded === undefined || loaded.content.trim().length === 0 ? undefined : loaded.content,
-      })),
-    ),
-  ).pipe(
-    Effect.map((loaded) => {
-      const sections = loaded.flatMap(({ document, content }) =>
-        content === undefined ? [] : [`${document.heading}\n${renderMemoryForPrompt(content)}`],
-      );
-
-      sections.push(
-        "Durable facts should be saved with the memory_write tool. Memory is capped, so keep it curated.",
-      );
-
-      return sections.join("\n\n");
-    }),
-  );
-
-const memoryReadFailurePrompt = (profilePath: string, cause: unknown): string =>
-  [
-    "PROFILE MEMORY UNAVAILABLE FOR THIS TURN.",
-    `Ziggy could not read the admitted Profile memory under ${profilePath}: ${causeMessage(cause)}`,
-    "Do not claim to remember Profile facts or call memory_write this turn. Tell the user that Profile memory is unavailable.",
-  ].join("\n");
-
-/** Refresh the admitted Profile memory without creating a session or provider request. */
-export const refreshProfileMemory = (
-  profilePath: string,
-  documents: ReadonlyArray<MemoryDocument>,
-  event: Pick<BeforeAgentStartEvent, "systemPrompt">,
-): Promise<BeforeAgentStartEventResult> => {
-  const program = buildMemoryPrompt(profilePath, documents).pipe(
-    Effect.match({
-      onFailure: (cause) => ({
-        systemPrompt: `${event.systemPrompt}\n\n${memoryReadFailurePrompt(profilePath, cause)}`,
-      }),
-      onSuccess: (memoryPrompt) => ({
-        systemPrompt: `${event.systemPrompt}\n\n${memoryPrompt}`,
-      }),
-    }),
-  );
-
-  // oxlint-disable-next-line ziggy-effect/no-effect-execution-boundary -- Pi requires a Promise-returning before_agent_start callback; this is the single adapter bridge.
-  return Effect.runPromise(program);
-};
-
-export const createProfileMemoryExtension = (
-  profilePath: string,
-  documents: ReadonlyArray<MemoryDocument>,
+/** Appends what modules contributed through the session prompt seam, reread every turn. */
+export const createContributedPromptExtension = (
+  contributed: () => Promise<ReadonlyArray<string>>,
 ): InlineExtension => ({
-  name: "ziggy-profile-memory",
+  name: "ziggy-contributed-prompt",
   hidden: true,
   factory: (pi) => {
-    pi.on("before_agent_start", (event) => refreshProfileMemory(profilePath, documents, event));
+    pi.on("before_agent_start", (event) =>
+      contributed().then((parts) =>
+        parts.length === 0
+          ? undefined
+          : { systemPrompt: [event.systemPrompt, ...parts].join("\n\n") },
+      ),
+    );
   },
 });
 
@@ -149,9 +46,7 @@ export const createEphemeralPromptContextExtension = (
 });
 
 export interface ProfileCoreInlineExtensionOptions {
-  readonly profilePath: string;
-  readonly agents: ReadonlyArray<ProfileAgent>;
-  readonly memoryDocuments: ReadonlyArray<MemoryDocument>;
+  readonly contributedPrompt: () => Promise<ReadonlyArray<string>>;
   readonly ephemeralPromptContext: () => string | undefined;
 }
 
@@ -168,15 +63,18 @@ export type ProfileCoreInlineExtensionFactory = (
 ) => ReadonlyArray<InlineExtension>;
 
 export const createProfileCoreInlineExtensions: ProfileCoreInlineExtensionFactory = ({
-  profilePath,
-  agents,
-  memoryDocuments,
+  contributedPrompt,
   ephemeralPromptContext,
 }) => [
   createPiDocsExtension(),
   createZiggyHelpExtension(),
   createSessionNamingExtension(),
-  ...(agents.length === 0 ? [] : [createProfileAgentGuidanceExtension(agents)]),
-  createProfileMemoryExtension(profilePath, memoryDocuments),
+  createContributedPromptExtension(contributedPrompt),
   createEphemeralPromptContextExtension(ephemeralPromptContext),
+];
+
+/** A Profile agent's session: only the read-only Ziggy reference tools, no Profile prompt seams. */
+export const createPersonaInlineExtensions = (): ReadonlyArray<InlineExtension> => [
+  createPiDocsExtension(),
+  createZiggyHelpExtension(),
 ];

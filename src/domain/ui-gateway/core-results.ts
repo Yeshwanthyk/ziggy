@@ -2,7 +2,8 @@ import { Schema } from "effect";
 import { AutomationTargetString } from "../automation";
 import { ProfileAgentId, ProfileAgentThinking } from "../profile";
 import { ProfileId } from "../profile-directory";
-import { SHARED_MEMORY_CAP, codePointLength, memoryEntries } from "../memory";
+import { SHARED_MEMORY_CAP, memoryEntries } from "../../memory";
+import { codePointLength } from "../../platform/text";
 import {
   boundedString,
   boundedCodePointString,
@@ -18,6 +19,8 @@ import {
   UiStoredSessionId,
   UiMethod,
   UiServerEpoch,
+  UiToolApp,
+  UiUploadId,
 } from "./fields";
 
 export const UI_METHODS = [
@@ -72,6 +75,9 @@ export const UI_METHODS = [
   "extension.add",
   "extension.remove",
   "extension.validate",
+  "plugin.secret.set",
+  "app.callTool",
+  "app.readResource",
   "pin.list",
   "pin.set",
   "pin.remove",
@@ -276,7 +282,13 @@ export type UiSessionShowResult = typeof UiSessionShowResult.Type;
 
 export const UiSessionHistoryEntry = Schema.Union([
   Schema.Struct({
-    kind: Schema.Literals(["user", "assistant"]),
+    kind: Schema.Literal("user"),
+    timestamp: boundedString("session history timestamp", 128),
+    text: boundedCodePointString("session history text", 1_024, 0),
+    imageCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("assistant"),
     timestamp: boundedString("session history timestamp", 128),
     text: boundedCodePointString("session history text", 1_024, 0),
   }),
@@ -286,6 +298,7 @@ export const UiSessionHistoryEntry = Schema.Union([
     phase: Schema.Literals(["start", "end"]),
     toolName: boundedCodePointString("session history tool name", 48),
     failed: Schema.Boolean,
+    app: Schema.optionalKey(UiToolApp),
   }),
   Schema.Struct({
     kind: Schema.Literal("automation-result"),
@@ -297,6 +310,18 @@ export const UiSessionHistoryEntry = Schema.Union([
 ]);
 
 export type UiSessionHistoryEntry = typeof UiSessionHistoryEntry.Type;
+
+/**
+ * `app.callTool` and `app.readResource`: the JSON result is too large for a frame (a view's HTML
+ * runs to hundreds of KiB), so it waits once, for this connection's owner, at `/app-content/<id>`.
+ */
+export const UiAppContentResult = Schema.Struct({
+  profileId: ProfileId,
+  contentId: UiUploadId,
+  bytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+
+export type UiAppContentResult = typeof UiAppContentResult.Type;
 
 export const UiSessionHistoryResult = Schema.Struct({
   profileId: ProfileId,

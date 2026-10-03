@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- This executable boundary reports failed smoke assertions by exit status and always removes its disposable tree. */
+/* oxlint-disable ziggy-effect/no-native-promise-ownership -- This smoke entrypoint drives local HTTP fixtures while awaiting a subprocess. */
 /* oxlint-disable ziggy-effect/no-error-constructor -- Assertion failures terminate this build/smoke executable boundary. */
 import { createHash } from "node:crypto";
 import {
@@ -12,11 +13,23 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { decodeStandaloneBuildReport, sandboxProfile } from "./standalone-executable.mjs";
+import { Schema } from "effect";
+import { startModelServer, tools } from "../test/harness/provider.ts";
 import packageJson from "../package.json" with { type: "json" };
+
+const decodeMcpRequest = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      id: Schema.optional(Schema.Union([Schema.Number, Schema.String])),
+      method: Schema.String,
+    }),
+  ),
+);
 
 const repositoryRoot = path.resolve(import.meta.dir, "..");
 
@@ -276,6 +289,8 @@ try {
   }
 
   console.log("resident_service_smoke=pass");
+  // Minimal init omits this directory; automation admission requires a physical directory.
+  mkdirSync(path.join(profilePath, "automations"), { recursive: true });
   requireSuccess(
     "extensions add",
     runExecutable(["extensions", "add", profilePath, "self-improvement"]),
@@ -316,7 +331,7 @@ try {
   if (
     doctor.exitCode !== 1 ||
     !doctor.stdout.includes("OK\tresources\t") ||
-    !doctor.stdout.includes("bundled factories, 1 Profile extension entrypoints") ||
+    !doctor.stdout.includes("1 Profile extension entrypoints") ||
     !doctor.stdout.includes(
       `OK\tpi_docs\t@earendil-works/pi-coding-agent@${report.piVersion} fingerprint=${report.piDocsFingerprint} count=${report.piDocsCount}`,
     )
@@ -332,6 +347,134 @@ try {
     !models.stdout.includes("auth\tnot configured")
   ) {
     throw new Error(`unexpected models status\n${models.stdout}`);
+  }
+
+  // The model and MCP fixture remain in this parent process; the copied binary can only
+  // read its scratch Profile. The runtime worker and wasm must come from the executable.
+  const model = startModelServer(
+    tools({
+      name: "codemode",
+      arguments: { code: 'text(await tools.mcp__fixture__echo({value:"standalone"}));' },
+    }),
+  );
+
+  let calls = 0;
+
+  const mcp = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      if (request.method !== "POST") return new Response(null, { status: 405 });
+      const rpc = decodeMcpRequest(await request.text());
+
+      if (rpc.id === undefined) return new Response(null, { status: 202 });
+      let result = {};
+
+      if (rpc.method === "initialize")
+        result = {
+          protocolVersion: "2025-11-25",
+          capabilities: { tools: {} },
+          serverInfo: { name: "fixture", version: "1" },
+        };
+
+      if (rpc.method === "tools/list")
+        result = {
+          tools: [
+            {
+              name: "echo",
+              description: "Echo fixture",
+              inputSchema: { type: "object", properties: { value: { type: "string" } } },
+            },
+          ],
+        };
+
+      if (rpc.method === "tools/call") {
+        calls++;
+        result = { content: [{ type: "text", text: "fixture:standalone" }] };
+      }
+
+      return Response.json({ jsonrpc: "2.0", id: rpc.id, result });
+    },
+  });
+
+  try {
+    writeFileSync(
+      path.join(profilePath, "settings.json"),
+      JSON.stringify({ defaultProvider: "harness", defaultModel: "harness-model" }),
+    );
+    writeFileSync(
+      path.join(profilePath, "models.json"),
+      JSON.stringify({
+        providers: {
+          harness: {
+            baseUrl: model.baseUrl,
+            api: "openai-completions",
+            apiKey: "harness-key",
+            models: [{ id: "harness-model" }],
+          },
+        },
+      }),
+    );
+    const extension = path.join(profilePath, "extensions", "mcp-probe");
+    mkdirSync(extension, { recursive: true });
+    writeFileSync(
+      path.join(extension, "package.json"),
+      JSON.stringify({
+        name: "mcp-probe",
+        description: "Standalone fixture",
+        version: "1.0.0",
+        type: "module",
+        keywords: ["pi-package"],
+        pi: { extensions: ["./index.ts"] },
+      }),
+    );
+    writeFileSync(
+      path.join(extension, "index.ts"),
+      `export default function(pi) { pi.registerMcpServer("fixture", ${JSON.stringify({ url: `http://127.0.0.1:${mcp.port}/mcp`, headers: { Authorization: "Bearer STANDALONE_AUTH_SENTINEL" }, exposure: "codemode" })}); }`,
+    );
+    writeFileSync(
+      path.join(profilePath, "extensions.json"),
+      JSON.stringify({ extensions: ["mcp-probe"] }),
+    );
+
+    const child = Bun.spawn(
+      [
+        "/usr/bin/sandbox-exec",
+        "-p",
+        sandboxProfile(deniedCheckouts, true),
+        copiedExecutable,
+        "run",
+        profilePath,
+        "Call the MCP fixture through codemode",
+      ],
+      {
+        cwd: runDirectory,
+        env: isolatedEnvironment,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 15000,
+      },
+    );
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+
+    requireSuccess("standalone codemode", { stdout, stderr, exitCode });
+
+    if (calls !== 1 || !model.toolResults(1).includes("fixture:standalone")) {
+      throw new Error(
+        `standalone codemode did not execute MCP: calls=${calls} results=${model.toolResults(1)}`,
+      );
+    }
+
+    console.log("standalone_codemode_mcp=pass");
+  } finally {
+    model.stop();
+    mcp.stop(true);
   }
 
   const finalAdjacentFiles = readdirSync(runDirectory).filter((entry) => entry !== "ziggy");

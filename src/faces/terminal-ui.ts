@@ -1,9 +1,32 @@
+import { Config, Context, Effect, Layer, Option } from "effect";
 import pc from "picocolors";
 
 export interface TerminalRenderOptions {
   readonly pretty: boolean;
   readonly colors: boolean;
   readonly columns: number;
+}
+
+/** How this process's stdout renders: pretty on a TTY unless `TERM=dumb`, colored unless `NO_COLOR`. */
+export class TerminalStyle extends Context.Service<TerminalStyle, TerminalRenderOptions>()(
+  "ziggy/TerminalStyle",
+) {
+  static readonly layer = Layer.effect(
+    TerminalStyle,
+    Effect.gen(function* () {
+      const term = yield* Config.string("TERM").pipe(Config.option);
+      const noColor = yield* Config.string("NO_COLOR").pipe(Config.option);
+
+      const stdout = yield* Effect.sync(() => ({
+        isTTY: process.stdout.isTTY === true,
+        columns: process.stdout.columns ?? 80,
+      }));
+
+      const pretty = stdout.isTTY && Option.getOrUndefined(term) !== "dumb";
+
+      return { pretty, colors: pretty && Option.isNone(noColor), columns: stdout.columns };
+    }),
+  );
 }
 
 export type TerminalColors = ReturnType<typeof pc.createColors>;

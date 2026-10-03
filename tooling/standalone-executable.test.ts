@@ -68,6 +68,7 @@ test("parses development and output flags and pins compile autoload isolation", 
   expect(compileArguments()).toEqual([
     "build",
     "src/main.ts",
+    "src/extensions/codemode/worker.ts",
     "--compile",
     `--target=${STANDALONE_TARGET}`,
     "--root=.",

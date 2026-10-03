@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "linear": {
+      "type": "streamable-http",
+      "url": "https://mcp.linear.app/mcp/readonly",
+      "headers": { "Authorization": "Bearer ${LINEAR_API_KEY}" }
+    }
+  }
+}

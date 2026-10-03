@@ -167,22 +167,22 @@ type TelegramRequestBody =
   | { offset: number; timeout: number; allowed_updates: readonly ["message"] }
   | { chat_id: number; text: string };
 
+export const TELEGRAM_API_URL = "https://api.telegram.org";
+
 const request = (
   token: string,
   operation: TelegramApiOperation,
   body: TelegramRequestBody,
+  baseUrl = TELEGRAM_API_URL,
 ): Effect.Effect<RawResponse, TelegramApiError> =>
   Effect.tryPromise({
     try: async (signal) => {
-      const response = await fetch(
-        `https://api.telegram.org/bot${encodeURIComponent(token)}/${operation}`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-          signal,
-        },
-      );
+      const response = await fetch(`${baseUrl}/bot${encodeURIComponent(token)}/${operation}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+      });
 
       return { status: response.status, body: await response.text() };
     },
@@ -232,8 +232,9 @@ export const sendMessage = (
   token: string,
   chatId: number,
   text: string,
+  baseUrl?: string,
 ): Effect.Effect<void, TelegramApiError> =>
-  request(token, "sendMessage", { chat_id: chatId, text }).pipe(
+  request(token, "sendMessage", { chat_id: chatId, text }, baseUrl).pipe(
     Effect.flatMap((response) =>
       decodeSendMessageResponse(response.body).pipe(
         Effect.mapError((cause) => invalidResponse("sendMessage", response, cause, token)),

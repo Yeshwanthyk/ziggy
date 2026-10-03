@@ -1,6 +1,4 @@
 import { Effect, Schema } from "effect";
-import type { ProviderAuthStatus } from "../../adapters/pi/auth";
-import type { KnownModel } from "../../adapters/pi/models";
 import {
   UiAuthStatusParams,
   UiGatewayError,
@@ -16,6 +14,7 @@ import {
 import type { ProfileId } from "../../domain/profile-directory";
 import type { UiGatewayBranch, UiGatewayDependencies } from "./types";
 import { badParams, boundedText, noService, protocolFailure, toGatewayError } from "./errors";
+import { type ProviderAuthStatus, type KnownModel } from "../../profile";
 
 const decodeModelStatus = Schema.decodeUnknownEffect(UiModelStatusParams, {
   onExcessProperty: "error",
@@ -136,7 +135,7 @@ export const dispatchSettings = (
         Effect.flatMap((branch) =>
           config.models === undefined
             ? Effect.fail(noService(request.method))
-            : config.models.readOnlyStatus(branch.target).pipe(
+            : config.models.status(branch.target).pipe(
                 Effect.map((status) => ({
                   profileId: branch.profileId,
                   providerId: status.providerId ?? null,
@@ -205,7 +204,7 @@ export const dispatchSettings = (
         Effect.flatMap((branch) =>
           config.auth === undefined
             ? Effect.fail(noService(request.method))
-            : config.auth.readOnlyStatus(branch.target).pipe(
+            : config.auth.status(branch.target).pipe(
                 Effect.map((providers) => ({
                   profileId: branch.profileId,
                   providers: authProviderOrder(providers).slice(0, 16).map(mapAuth),

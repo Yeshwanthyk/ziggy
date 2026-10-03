@@ -6,8 +6,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { acquireSessionLease } from "ziggy/adapters/pi/session-lease";
-import { Deferred, Effect, Exit, Fiber, Option } from "effect";
+import { Deferred, Effect, Exit, Fiber, Option, Result } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { acquireGatewayOwner } from "ziggy/adapters/bun/gateway-owner";
 import {
@@ -25,11 +24,7 @@ import {
 import { automationFileStore } from "ziggy/adapters/fs/automation-files";
 import { appendStoredAutomationResult } from "ziggy/adapters/pi/automation-result";
 import { TelegramApiError } from "ziggy/adapters/telegram/api";
-import {
-  ProviderCallError,
-  ProviderConfigError,
-  SpecialistAgentNotFound,
-} from "ziggy/domain/agent";
+import { ProviderCallError, SpecialistAgentNotFound } from "ziggy/domain/agent";
 import {
   AutomationDatabaseError,
   automationScheduleFingerprint,
@@ -37,12 +32,14 @@ import {
   validateAutomationId,
   type AutomationTargetOutcome,
 } from "ziggy/domain/automation";
-import type { ProfileTarget } from "ziggy/domain/profile";
-import { makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
+import { takeSessionLease, type ZiggyAgentApi } from "ziggy/session/index";
+import { makeChatHandle } from "../harness/chat-handle";
 import { makeAutomationDefinitions } from "ziggy/application/automation-definitions";
 import { makeAutomationScheduler } from "ziggy/application/automation-scheduler";
-import { makeChatRegistry } from "ziggy/application/chat-registry";
+import { makeLiveSessions } from "ziggy/resident/live-sessions";
 import { type AutomationCapabilities, makeAutomations } from "ziggy/application/automations";
+import { apiFailure } from "ziggy/application/delivery";
+import { ProviderConfigError, type ProfileTarget } from "ziggy/profile/index";
 
 const paths: Array<string> = [];
 
@@ -100,9 +97,7 @@ const harness = (
           session: { id: "specialist", file: join(context.sessionDirectory, "specialist.jsonl") },
         })),
       ),
-    openSpecialistChat: () =>
-      Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-    openChat: (target, context, sessionPath, mode, model) =>
+    open: ({ target, context, directory: sessionPath, session: mode, model }) =>
       Effect.sync(() => {
         events.push(`open:${target.path}:${context.kind}:${sessionPath}:${mode}`);
 
@@ -146,37 +141,12 @@ const harness = (
       Effect.sync(() => {
         events.push(`reply:${reply}`);
       }),
-    loadTelegramConfig: () =>
-      Effect.sync(() => {
-        events.push("config:telegram");
-
-        return { botToken: "t", ownerUserId: 1 };
-      }),
-    loadDiscordConfig: () =>
-      Effect.sync(() => {
-        events.push("config:discord");
-
-        return { botToken: "d", ownerUserId: "1" };
-      }),
-    loadSlackConfig: () =>
-      Effect.sync(() => {
-        events.push("config:slack");
-
-        return { botToken: "s", appToken: "a", ownerUserId: "U" };
-      }),
-    sendTelegram: (_token, id, text) =>
+    deliver: (_profile, destination, text) =>
       Effect.gen(function* () {
-        events.push(`send:telegram:${id}:${text}`);
+        events.push(`deliver:${destination.target}:${text}`);
 
-        if (options.telegramFailure !== undefined) return yield* options.telegramFailure;
-      }),
-    sendDiscord: (_token, id, text) =>
-      Effect.sync(() => {
-        events.push(`send:discord:${id}:${text}`);
-      }),
-    sendSlack: (_token, id, text, thread) =>
-      Effect.sync(() => {
-        events.push(`send:slack:${id}:${thread ?? "-"}:${text}`);
+        if (destination._tag === "telegram" && options.telegramFailure !== undefined)
+          return yield* Effect.fail(apiFailure(options.telegramFailure));
       }),
   };
 
@@ -246,7 +216,7 @@ describe("automation run", () => {
     const outcome = await run(harness(events), target);
     expect(outcome).toEqual({ kind: "executed", delivery: { kind: "resolved", targets: [] } });
     expect(events).toEqual([
-      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:fresh`,
+      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:new`,
       "prompt:Write the daily note.",
       "dispose",
       "reply:local reply",
@@ -365,7 +335,7 @@ describe("automation run", () => {
       delivery: { kind: "resolved", targets: [] },
     });
     expect(events).toEqual([
-      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:fresh`,
+      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:new`,
       "model:anthropic/claude-sonnet/high",
       "prompt:Write the daily note.",
       "dispose",
@@ -604,9 +574,9 @@ describe("automation run", () => {
         Effect.gen(function* () {
           yield* TestClock.setTime(observedAt);
           const owner = yield* acquireGatewayOwner(target);
-          const registry = yield* makeChatRegistry(target.path);
+          const live = yield* makeLiveSessions();
           const scheduler = makeAutomationScheduler({ run: () => Effect.never });
-          const fiber = yield* Effect.forkScoped(scheduler.run(target, owner, registry));
+          const fiber = yield* Effect.forkScoped(scheduler.run(target, owner, live));
 
           while (
             (yield* readAutomationStatus(target.path, observedAt)).heartbeatAtMs !== observedAt
@@ -631,7 +601,7 @@ describe("automation run", () => {
       delivery: { kind: "resolution-failed", category: "broadcasts-invalid" },
     });
     expect(events).toEqual([
-      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:fresh`,
+      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:new`,
       "prompt:Write the daily note.",
       "dispose",
       "reply:local reply",
@@ -660,13 +630,10 @@ describe("automation run", () => {
         ],
       },
     });
-    expect(events.slice(-6)).toEqual([
-      "config:slack",
-      "send:slack:C0123ABCDE:-:local reply",
-      "config:telegram",
-      "send:telegram:2:local reply",
-      "config:discord",
-      "send:discord:3:local reply",
+    expect(events.slice(-3)).toEqual([
+      "deliver:slack:channel:C0123ABCDE:local reply",
+      "deliver:telegram:chat:2:local reply",
+      "deliver:discord:channel:3:local reply",
     ]);
   });
 
@@ -740,7 +707,7 @@ describe("automation run", () => {
       (await readFile(file, "utf8")).match(/"customType":"ziggy\.automation-result"/gu),
     ).toHaveLength(1);
 
-    const release = await Effect.runPromise(acquireSessionLease(target.path, id));
+    const lease = Result.getOrThrow(takeSessionLease(target.path, id));
 
     try {
       const held = await run(harness([], { manualRunId: "manual:held" }), target);
@@ -762,7 +729,7 @@ describe("automation run", () => {
         (await readFile(file, "utf8")).match(/"customType":"ziggy\.automation-result"/gu),
       ).toHaveLength(1);
     } finally {
-      await Effect.runPromise(release);
+      lease.release();
     }
   });
 
@@ -879,7 +846,7 @@ describe("automation run", () => {
     expect(result).toBe(databaseFailure);
     expect(finishCalls).toBe(1);
     expect(events).toEqual([
-      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:fresh`,
+      `open:${target.path}:local:${join(target.path, "sessions", "automations", "daily-note")}:new`,
       "prompt:Write the daily note.",
       "dispose",
     ]);
@@ -1135,10 +1102,10 @@ describe("automation run", () => {
         ],
       },
     });
-    expect(events.filter((event) => event.startsWith("send:"))).toEqual([
-      "send:discord:1:local reply",
-      "send:telegram:2:local reply",
-      "send:slack:C0123ABCDE:-:local reply",
+    expect(events.filter((event) => event.startsWith("deliver:"))).toEqual([
+      "deliver:discord:channel:1:local reply",
+      "deliver:telegram:chat:2:local reply",
+      "deliver:slack:channel:C0123ABCDE:local reply",
     ]);
     const persisted = (await Effect.runPromise(readAutomationRuns(target.path)))[0];
     expect({

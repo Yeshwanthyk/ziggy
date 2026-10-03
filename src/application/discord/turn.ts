@@ -7,11 +7,11 @@ import type {
   DiscordIngressTerminalState,
 } from "../../domain/discord-ingress";
 import type { DiscordHealthEvent } from "../../domain/discord-health";
-import type { ProfileTarget } from "../../domain/profile";
-import { codePointLength } from "../../domain/memory";
+import { codePointLength } from "../../platform/text";
 import { automationTargetFromString } from "../../domain/automation";
-import { formatSpecialistVoice, type ZiggyAgentApi } from "../agent";
-import type { ChatRegistryApi } from "../chat-registry";
+import { formatSpecialistVoice, type ZiggyAgentApi } from "../../session";
+import type { DestinationBook } from "../../resident/destinations";
+import type { LiveSessionsApi } from "../../resident/live-sessions";
 import {
   prepareDiscordAttachmentPrompt,
   discordMessageChunks,
@@ -33,6 +33,7 @@ import type {
   DiscordIngressRuntime,
 } from "./model";
 import type { DiscordProgressUpdateState } from "./delivery";
+import { type ProfileTarget } from "../../profile";
 
 const TYPING_REFRESH_SECONDS = 8;
 
@@ -43,7 +44,8 @@ interface DiscordTurnContext {
   readonly ingressRuntime: DiscordIngressRuntime;
   readonly target: ProfileTarget;
   readonly config: DiscordGatewayConfig;
-  readonly registry: ChatRegistryApi | undefined;
+  readonly live: LiveSessionsApi | undefined;
+  readonly destinations: DestinationBook | undefined;
   readonly ingressOwnerId: string;
   readonly observe: (event: DiscordHealthEvent) => Effect.Effect<void>;
 }
@@ -55,7 +57,8 @@ export const makeDiscordTurnProcessor = ({
   ingressRuntime,
   target,
   config,
-  registry,
+  live,
+  destinations,
   ingressOwnerId,
   observe,
 }: DiscordTurnContext) => {
@@ -167,30 +170,29 @@ export const makeDiscordTurnProcessor = ({
           }
 
           if (chatState.handle === undefined) {
-            if (registry !== undefined) {
+            if (destinations !== undefined) {
               const target = automationTargetFromString(`discord:channel:${message.channelId}`);
 
               if (target !== undefined) {
                 const destination =
                   message.label === undefined ? { target } : { target, label: message.label };
 
-                yield* registry.rememberDestination(destination);
+                yield* destinations.remember(destination);
               }
             }
 
-            const open = agent.openChat(
+            const open = agent.open({
               target,
-              message.context,
-              join(target.path, "sessions", "discord", message.chatKey),
-              "continue",
-              undefined,
-              message.label === undefined ? undefined : `Discord · ${message.label}`,
-            );
+              context: message.context,
+              directory: join(target.path, "sessions", "discord", message.chatKey),
+              session: "continue",
+              name: message.label === undefined ? undefined : `Discord · ${message.label}`,
+            });
 
             chatState.handle =
-              registry === undefined
+              live === undefined
                 ? yield* open
-                : yield* registry.openAlias(`discord/${message.chatKey}`, "discord", open);
+                : yield* live.acquire(`discord/${message.chatKey}`, "discord", open);
           }
 
           const handle = chatState.handle;

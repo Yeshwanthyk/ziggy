@@ -13,24 +13,33 @@ import {
   type UiRequestEnvelope,
 } from "../domain/ui-gateway";
 import { ProfileId as ProfileIdSchema, type ProfileId } from "../domain/profile-directory";
-import { profileCliTarget } from "../domain/profile";
 import { makeProfileRuntimeDirectory } from "./profile-runtime-directory";
 import { makeCommandCache, safeFingerprint } from "./ui-gateway/command-cache";
+import { makeUiUploadStore, type UiUploadStore } from "./ui-gateway/uploads";
+import { makeUiAppContentStore, type UiAppContentStore } from "./ui-gateway/app-content";
+import { makeAppDispatcher } from "./ui-gateway/apps";
+
 import { makeSessionDispatcher } from "./ui-gateway/sessions";
 import { dispatchGroups, makeEnsureGroup } from "./ui-gateway/groups";
 import { dispatchAgents } from "./ui-gateway/management-agents";
 import type { ProfileDirectoryApi } from "./profile-directory";
 import { dispatchAutomation } from "./ui-gateway/management-automations";
 import { dispatchExtensions } from "./ui-gateway/management-extensions";
+import { dispatchPluginSecret } from "./ui-gateway/management-plugins";
 import { dispatchMemory } from "./ui-gateway/management-memory";
 import { dispatchPins } from "./ui-gateway/management-pins";
 import { dispatchSettings } from "./ui-gateway/management-settings";
 import type { UiGatewayBranch, UiGatewayDependencies } from "./ui-gateway/types";
 
+export { makeUiUploadStore, UI_IMAGE_MAX_BYTES, type UiUploadStore } from "./ui-gateway/uploads";
+
+export { makeUiAppContentStore, type UiAppContentStore } from "./ui-gateway/app-content";
+
 export type { UiGatewayDependencies } from "./ui-gateway/types";
 
 import { badParams, boundedText, protocolFailure, toGatewayError } from "./ui-gateway/errors";
 import { resultFrame, failureFrame, sendResponse } from "./ui-gateway/transport";
+import { profileCliTarget } from "../profile";
 
 const decodeEmpty = Schema.decodeUnknownEffect(UiEmptyParams, { onExcessProperty: "error" });
 
@@ -55,14 +64,17 @@ export interface UiGatewayConnection {
 }
 
 export interface UiGatewayApi {
-  readonly connect: (send: (frame: string) => void) => UiGatewayConnection;
+  readonly uploads: UiUploadStore;
+  /** Results of `app.*` requests, fetched by the same owner over HTTP. */
+  readonly appContent: UiAppContentStore;
+  readonly connect: (send: (frame: string) => void, uploadOwner?: string) => UiGatewayConnection;
 }
 
 /**
  * Composition input for a gateway shared by multiple resident Profile branches.
  *
  * Branches are deliberately supplied as a complete set at construction time. Each branch owns
- * its ChatRegistry, while the directory remains the source of Profile identity and availability.
+ * its live sessions, while the directory remains the source of Profile identity and availability.
  * The runtime directory then makes branch lookup explicit for every routed operation.
  */
 export interface SharedUiGatewayDependencies extends Omit<
@@ -138,14 +150,24 @@ export const makeUiGateway = (
       Effect.succeed(config.defaultProfile);
 
     const ensureGroup = makeEnsureGroup(groups);
+    const uploads = makeUiUploadStore();
+    const appContent = makeUiAppContentStore();
+    const dispatchApps = makeAppDispatcher(branchFor, appContent);
 
-    const dispatchSessions = makeSessionDispatcher(config, branchFor, serverEpoch, ensureGroup);
+    const dispatchSessions = makeSessionDispatcher(
+      config,
+      branchFor,
+      serverEpoch,
+      ensureGroup,
+      uploads,
+    );
 
     const dispatch = (
       request: UiRequestEnvelope,
       send: (frame: string) => void,
       subscriptions: Map<string, () => void>,
       isOpen: () => boolean,
+      uploadOwner: string,
     ): Effect.Effect<UiGatewayResult, UiGatewayError> => {
       const route = (profileId: ProfileId): Effect.Effect<UiGatewayBranch, UiGatewayError> =>
         branchFor(profileId);
@@ -240,7 +262,7 @@ export const makeUiGateway = (
             }
 
             const report = yield* config.doctor
-              .check(branch.target, config.repositoryRoot)
+              .check(branch.target)
               .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));
 
             return {
@@ -273,7 +295,10 @@ export const makeUiGateway = (
         case "session.follow-up":
         case "session.abort":
         case "prompt.submit":
-          return dispatchSessions(request, send, subscriptions, isOpen);
+          return dispatchSessions(request, send, subscriptions, isOpen, uploadOwner);
+        case "app.callTool":
+        case "app.readResource":
+          return dispatchApps(request, uploadOwner);
         case "agent.list":
         case "agent.show":
         case "agent.document":
@@ -307,6 +332,8 @@ export const makeUiGateway = (
         case "extension.remove":
         case "extension.validate":
           return dispatchExtensions(request, route, config);
+        case "plugin.secret.set":
+          return dispatchPluginSecret(request, route, config);
         case "pin.list":
         case "pin.set":
         case "pin.remove":
@@ -323,6 +350,7 @@ export const makeUiGateway = (
         send: (frame: string) => void,
         subscriptions: Map<string, () => void>,
         isOpen: () => boolean,
+        uploadOwner: string,
       ) =>
       (request: UiRequestEnvelope): Effect.Effect<void> => {
         const commandProbe = decodeCommandProbe(request.params);
@@ -333,7 +361,7 @@ export const makeUiGateway = (
             ? commandProbe.value.profileId
             : config.defaultProfile.profileId;
 
-        const run = dispatch(request, send, subscriptions, isOpen).pipe(
+        const run = dispatch(request, send, subscriptions, isOpen, uploadOwner).pipe(
           Effect.map((result) => resultFrame(request.id, result)),
           Effect.catch((cause) =>
             Effect.succeed(failureFrame(request.id, toGatewayError(request.method, cause))),
@@ -343,7 +371,7 @@ export const makeUiGateway = (
         return commandId === undefined
           ? run.pipe(Effect.flatMap((frame) => sendResponse(send, frame)))
           : runCommand(
-              `${profileId}:${commandId}`,
+              `${uploadOwner}:${profileId}:${commandId}`,
               `${request.method}:${safeFingerprint(request.params)}`,
               request.id,
               run,
@@ -357,12 +385,14 @@ export const makeUiGateway = (
       };
 
     return {
-      connect: (send) => {
+      uploads,
+      appContent,
+      connect: (send, uploadOwner = "local") => {
         const subscriptions = new Map<string, () => void>();
         let open = true;
 
         return {
-          request: requestFor(send, subscriptions, () => open),
+          request: requestFor(send, subscriptions, () => open, uploadOwner),
           close: Effect.sync(() => {
             open = false;
 

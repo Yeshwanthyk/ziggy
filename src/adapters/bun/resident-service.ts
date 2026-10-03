@@ -11,7 +11,7 @@ import {
   type ResidentServiceManager,
   type ResidentServiceWriteResult,
 } from "../../domain/resident-service";
-import { fileSystemCauseDetails } from "../fs/cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 import { launchdManagedMarker } from "./launchd-service";
 import { systemdManagedMarker } from "./systemd-service";
 

@@ -24,4 +24,5 @@ export {
   prepareDiscordAttachmentPrompt,
   discordIngressTerminalState,
   retryDiscordDelivery,
+  deliverDiscord,
 } from "./discord/delivery";

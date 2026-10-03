@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import type { MemoryDocumentView } from "../application/memory";
+import type { MemoryDocumentView } from "../memory";
 
 const MemoryListItemJson = Schema.Struct({
   scope: Schema.Literals(["shared", "person", "group"]),

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { SessionMetadata } from "ziggy/domain/session";
+import type { SessionMetadata } from "ziggy/session/index";
 import {
   renderSession,
   renderSessionJson,

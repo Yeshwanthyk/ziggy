@@ -1,111 +1,99 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-
-// Which process identity the permission answers reflect. Platforms may
-// attribute grants to a responsible parent process rather than the helper
-// executable itself.
-export type PermissionAttribution = "helper-app" | "caller";
-export type PermissionKind = "accessibility" | "screenRecording";
-
-export interface PermissionSource {
-	attribution: PermissionAttribution;
-	pid?: number;
-	parentPid?: number;
-	executablePath?: string;
-	parentPath?: string;
-	parentBundleId?: string;
-	os?: string;
+import { runProcess } from "./helper.mjs";
+const BROWSER_WINDOW_OPEN_TIMEOUT_MS = 10_000;
+const BROWSER_BUNDLE_IDS = new Set([
+    "com.apple.Safari",
+    "com.google.Chrome",
+    "org.chromium.Chromium",
+    "company.thebrowser.Browser",
+    "com.brave.Browser",
+    "com.microsoft.edgemac",
+    "com.vivaldi.Vivaldi",
+    "net.imput.helium",
+    "org.mozilla.firefox",
+]);
+const BROWSER_APP_NAMES = new Set([
+    "safari",
+    "google chrome",
+    "chrome",
+    "chromium",
+    "arc",
+    "brave browser",
+    "brave",
+    "microsoft edge",
+    "edge",
+    "vivaldi",
+    "helium",
+    "firefox",
+]);
+const CHROME_FAMILY_BUNDLE_IDS = new Set([
+    "com.google.Chrome",
+    "org.chromium.Chromium",
+    "company.thebrowser.Browser",
+    "com.brave.Browser",
+    "com.microsoft.edgemac",
+    "com.vivaldi.Vivaldi",
+    "net.imput.helium",
+]);
+const CHROME_FAMILY_APP_NAMES = new Set([
+    "google chrome",
+    "chrome",
+    "chromium",
+    "arc",
+    "brave browser",
+    "brave",
+    "microsoft edge",
+    "edge",
+    "vivaldi",
+    "helium",
+]);
+function normalizeText(value) {
+    return value.trim().toLowerCase();
 }
-
-export interface PermissionStatus {
-	accessibility: boolean;
-	screenRecording: boolean;
-	screenRecordingPreflight?: boolean;
-	source?: PermissionSource;
+function escapeAppleScriptString(value) {
+    return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
-
-interface PermissionKindCopy {
-	kind: PermissionKind;
-	openOption: string;
+function appendBrowserJavaScriptAppleEventsHint(error) {
+    const hint = [
+        "Browser JavaScript Apple Events are disabled for the target browser.",
+        "Ask the user to enable \"Allow JavaScript from Apple Events\" in the browser's developer menu, then retry the browser action.",
+    ].join(" ");
+    if (!/not allowed to send javascript commands|executing javascript through applescript is turned off|allow javascript from apple events|enable javascript from apple events/i.test(error.message) || error.message.includes(hint)) {
+        return error;
+    }
+    const enhanced = new Error(`${error.message}\n\n${hint}`);
+    enhanced.name = error.name;
+    return enhanced;
 }
-
-interface PermissionFlowCopy {
-	nonInteractiveError(helperPath: string): string;
-	prompt(status: PermissionStatus, helperPath: string, hint?: string): string;
-	incompleteError(helperPath: string): string;
-	readyMessage: string;
-	stillMissing(kinds: PermissionKind[]): string;
+export function isBrowserApp(appName, bundleId) {
+    return BROWSER_BUNDLE_IDS.has(bundleId ?? "") || BROWSER_APP_NAMES.has(normalizeText(appName));
 }
-
-export interface PermissionBridge {
-	kinds: PermissionKindCopy[];
-	copy: PermissionFlowCopy;
-	checkPermissions(signal?: AbortSignal): Promise<PermissionStatus>;
-	registerPermissions(signal?: AbortSignal): Promise<void>;
-	openPermissionPane(kind: PermissionKind, signal?: AbortSignal): Promise<void>;
-	// Platforms may cache permission answers per process, so restart before
-	// recheck lets a new grant become visible to the helper.
-	restartHelper(signal?: AbortSignal): Promise<void>;
-	permissionHint?: string;
+export function isChromeFamilyApp(appName, bundleId) {
+    return CHROME_FAMILY_BUNDLE_IDS.has(bundleId ?? "") || CHROME_FAMILY_APP_NAMES.has(normalizeText(appName));
 }
-
-function throwIfAborted(signal?: AbortSignal): void {
-	if (signal?.aborted) throw new Error("Operation aborted.");
+function scriptForBrowserOpenLocation(target, url) {
+    const appTarget = target.bundleId
+        ? `application id "${escapeAppleScriptString(target.bundleId)}"`
+        : `application "${escapeAppleScriptString(target.appName)}"`;
+    const escapedUrl = escapeAppleScriptString(url);
+    const normalizedName = normalizeText(target.appName);
+    if (target.bundleId === "com.apple.Safari" || normalizedName === "safari") {
+        return [`tell ${appTarget} to set URL of front document to "${escapedUrl}"`];
+    }
+    if (isChromeFamilyApp(target.appName, target.bundleId)) {
+        return [`tell ${appTarget} to set URL of active tab of front window to "${escapedUrl}"`];
+    }
+    return undefined;
 }
-
-function granted(status: PermissionStatus, kind: PermissionKind): boolean {
-	return status[kind] === true;
-}
-
-function allGranted(status: PermissionStatus, kinds: PermissionKindCopy[]): boolean {
-	return kinds.every(({ kind }) => granted(status, kind));
-}
-
-function missingKinds(status: PermissionStatus, kinds: PermissionKindCopy[]): PermissionKind[] {
-	return kinds.flatMap(({ kind }) => granted(status, kind) ? [] : [kind]);
-}
-
-export async function ensurePermissions(
-	ctx: ExtensionContext,
-	bridge: PermissionBridge,
-	helperPath: string,
-	signal?: AbortSignal,
-): Promise<PermissionStatus> {
-	let status = await bridge.checkPermissions(signal);
-	if (allGranted(status, bridge.kinds)) return status;
-
-	if (!ctx.hasUI) throw new Error(bridge.copy.nonInteractiveError(helperPath));
-
-	// Register before prompting so platform settings panes can already list
-	// the helper and the user only has to enable existing entries.
-	await bridge.registerPermissions(signal).catch(() => undefined);
-
-	while (!allGranted(status, bridge.kinds)) {
-		throwIfAborted(signal);
-
-		const missing = missingKinds(status, bridge.kinds);
-		const options = bridge.kinds
-			.filter(({ kind }) => missing.includes(kind))
-			.map(({ openOption }) => openOption);
-		options.push("Recheck (restarts helper)", "Cancel");
-
-		const choice = await ctx.ui.select(bridge.copy.prompt(status, helperPath, bridge.permissionHint), options, { signal });
-		if (!choice || choice === "Cancel") throw new Error(bridge.copy.incompleteError(helperPath));
-
-		const selected = bridge.kinds.find(({ openOption }) => choice === openOption);
-		if (selected) await bridge.openPermissionPane(selected.kind, signal);
-
-		if (choice.startsWith("Recheck")) {
-			// Restart first: permission decisions can be cached by a running
-			// helper process and remain stale after the user grants access.
-			await bridge.restartHelper(signal);
-			status = await bridge.checkPermissions(signal);
-			if (allGranted(status, bridge.kinds)) {
-				ctx.ui.notify(bridge.copy.readyMessage, "info");
-			} else {
-				ctx.ui.notify(bridge.copy.stillMissing(missingKinds(status, bridge.kinds)), "warning");
-			}
-		}
-	}
-
-	return status;
+export async function openBrowserLocationWithAppleScript(target, url, signal) {
+    const script = scriptForBrowserOpenLocation(target, url);
+    if (!script)
+        return false;
+    const args = script.flatMap((line) => ["-e", line]);
+    try {
+        await runProcess("osascript", args, BROWSER_WINDOW_OPEN_TIMEOUT_MS, signal);
+        return true;
+    }
+    catch (error) {
+        throw appendBrowserJavaScriptAppleEventsHint(error instanceof Error ? error : new Error(String(error)));
+    }
 }

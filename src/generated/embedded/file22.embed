@@ -1,191 +1,195 @@
-import { defineTool } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { ensureComputerUseSetup, executeAct, executeEvaluateBrowser, executeCloseBrowser, executeExpandUi, executeInspectUi, executeLaunchBrowser, executeFind, executeNavigateBrowser, executeObserve, executeReadText, executeSearchUi, executeWaitFor, reconstructStateFromBranch, shutdownComputerUseSession, } from "../src/bridge.mjs";
-import { getLoadedComputerUseConfig, loadComputerUseConfig } from "../src/config.mjs";
-const stateId = Type.String({ description: "Required state id owning every @e ref used by this operation" });
-const point = { x: Type.Number(), y: Type.Number() };
-const mouseButton = Type.Optional(Type.Union([Type.Literal("left"), Type.Literal("right"), Type.Literal("middle")]));
-const clickByRef = Type.Object({ action: Type.Literal("click"), ref: Type.String(), button: mouseButton, clickCount: Type.Optional(Type.Number({ minimum: 1, maximum: 3 })) });
-const clickByPoint = Type.Object({ action: Type.Literal("click"), ...point, button: mouseButton, clickCount: Type.Optional(Type.Number({ minimum: 1, maximum: 3 })) });
-const uiAction = Type.Union([
-    Type.Object({ action: Type.Literal("press"), ref: Type.String({ description: "Actionable outline ref" }) }),
-    clickByRef,
-    clickByPoint,
-    Type.Object({ action: Type.Literal("setText"), ref: Type.String({ description: "Editable outline ref" }), text: Type.String() }),
-    Type.Object({ action: Type.Literal("typeText"), ref: Type.Optional(Type.String({ description: "Omit after a click to type into the focus established by that click" })), text: Type.String() }),
-    Type.Object({ action: Type.Literal("keypress"), ref: Type.Optional(Type.String({ description: "Omit to send keys to the focused control" })), keys: Type.Array(Type.String(), { minItems: 1 }) }),
-    Type.Object({ action: Type.Literal("scroll"), ref: Type.Optional(Type.String()), scrollX: Type.Optional(Type.Number()), scrollY: Type.Optional(Type.Number()) }),
-    Type.Object({ action: Type.Literal("drag"), path: Type.Array(Type.Object(point), { minItems: 2 }) }),
-    Type.Object({ action: Type.Literal("moveMouse"), ...point }),
-]);
-const conditionProperties = {
-    ref: Type.Optional(Type.String({ description: "Specific @e ref to test", maxLength: 128 })),
-    scopeRef: Type.Optional(Type.String({ description: "Restrict matching to this @e subtree", maxLength: 128 })),
-    text: Type.Optional(Type.String({ description: "Text that must match", maxLength: 512 })),
-    role: Type.Optional(Type.String({ description: "Exact normalized role", maxLength: 128 })),
-    value: Type.Optional(Type.String({ description: "Exact normalized value; normally pair with ref" })),
-    until: Type.Optional(Type.Union([Type.Literal("present"), Type.Literal("absent")], { description: "Desired condition, default present" })),
-    timeoutMs: Type.Optional(Type.Number({ description: "Maximum wait, default 10000ms", minimum: 100, maximum: 60000 })),
-};
-const findTool = defineTool({
-    name: "find_roots",
-    label: "Find Roots",
-    description: "Find a bounded, ranked set of controllable UI roots with refs, geometry, and focus state.",
-    promptSnippet: "Find a target root before observe_ui when needed.",
-    parameters: Type.Object({
-        text: Type.Optional(Type.String({ description: "Ranked app or title text", maxLength: 256 })),
-        app: Type.Optional(Type.String({ description: "Exact normalized app name", maxLength: 256 })),
-        bundleId: Type.Optional(Type.String({ description: "Exact bundle id" })),
-        pid: Type.Optional(Type.Number({ description: "Exact process id" })),
-        kind: Type.Optional(Type.Union([Type.Literal("window"), Type.Literal("menu"), Type.Literal("sheet"), Type.Literal("popover"), Type.Literal("dialog"), Type.Literal("browser_page")], { description: "Exact root kind" })),
-    }),
-    execute: executeFind,
-});
-const observeTool = defineTool({
-    name: "observe_ui",
-    label: "Observe UI",
-    description: "Capture the current/frontmost root or one exact @r root and return a bounded UI outline.",
-    promptSnippet: "Primary UI observation tool. Follow with search_ui, expand_ui, inspect_ui, or act_ui.",
-    promptGuidelines: [
-        "Use mode=semantic to skip OCR and images, visual to force them, and fused for automatic selection.",
-        "Use @e outline refs from observe_ui/search_ui for act_ui; pictureOnly refs are coordinate-only and blocked by UI-tree-only policy.",
-    ],
-    parameters: Type.Object({
-        root: Type.Optional(Type.String({ description: "Exact @r ref issued by find_roots" })),
-        mode: Type.Optional(Type.Union([Type.Literal("semantic"), Type.Literal("visual"), Type.Literal("fused")], { description: "Observation mode, default fused" })),
-    }),
-    execute: executeObserve,
-});
-const searchUiTool = defineTool({
-    name: "search_ui",
-    label: "Search UI",
-    description: "Return a bounded, deterministically ranked search of the cached outline. At least one predicate is required.",
-    promptSnippet: "Find targets not shown in the compact observe_ui output; refine broad searches instead of paging matches.",
-    parameters: Type.Object({
-        text: Type.Optional(Type.String({ description: "Human-readable text or label", maxLength: 256 })),
-        role: Type.Optional(Type.String({ description: "Exact normalized role, e.g. button", maxLength: 128 })),
-        capability: Type.Optional(Type.String({ description: "Exact capability, e.g. press", maxLength: 128 })),
-        stateId,
-    }),
-    execute: executeSearchUi,
-});
-const expandUiTool = defineTool({
-    name: "expand_ui",
-    label: "Expand UI",
-    description: "Unfold bounded local outline context for one @e ref.",
-    promptSnippet: "Expand a specific ref instead of dumping unrelated UI.",
-    parameters: Type.Object({ ref: Type.String(), depth: Type.Optional(Type.Number({ minimum: 1, maximum: 8, description: "Subtree depth, default 3" })), stateId }),
-    execute: executeExpandUi,
-});
-const inspectUiTool = defineTool({
-    name: "inspect_ui",
-    label: "Inspect UI",
-    description: "Inspect one exact outline ref with fields, geometry, capabilities, and annotations.",
-    promptSnippet: "Use when a target's evidence or provenance matters.",
-    parameters: Type.Object({ ref: Type.String(), stateId }),
-    execute: executeInspectUi,
-});
-const actTool = defineTool({
-    name: "act_ui",
-    label: "Act",
-    description: "Perform one or more precisely targeted checked actions and return the successor state.",
-    promptSnippet: "Pass dependent click/type steps together and use expect for observable completion.",
-    promptGuidelines: ["After clicking an editable region, omit ref from typeText/keypress so input follows the established focus."],
-    parameters: Type.Object({ stateId, expect: Type.Optional(Type.Object(conditionProperties)), actions: Type.Array(uiAction, { minItems: 1, maxItems: 20 }) }),
-    execute: executeAct,
-});
-const readTextTool = defineTool({
-    name: "read_text",
-    label: "Read Text",
-    description: "Read a fixed-size page from an @e UI ref or immutable @o truncated-output ref.",
-    promptSnippet: "Use @e with its stateId; @o continuation refs don't need stateId.",
-    parameters: Type.Object({ ref: Type.String(), offset: Type.Optional(Type.Number({ minimum: 0 })), stateId: Type.Optional(stateId) }),
-    execute: executeReadText,
-});
-const waitForTool = defineTool({
-    name: "wait_for",
-    label: "Wait For",
-    description: "Wait for one scoped UI condition and return the successor state.",
-    promptSnippet: "Use after asynchronous UI changes instead of polling observe_ui.",
-    parameters: Type.Object({ ...conditionProperties, stateId }),
-    execute: executeWaitFor,
-});
-const launchBrowserTool = defineTool({
-    name: "launch_browser",
-    label: "Launch Browser Context",
-    description: "Launch the configured Pi-managed CDP browser and return an observed browser-page state.",
-    promptSnippet: "Use for browser work that needs a managed CDP context.",
-    promptGuidelines: ["Prefer curl through bash when the page is directly fetchable."],
-    parameters: Type.Object({
-        url: Type.Optional(Type.String({ maxLength: 8192 })),
-        profile: Type.Optional(Type.String({ pattern: "^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$" })),
-        mode: Type.Optional(Type.Union([Type.Literal("headed"), Type.Literal("background")])),
-    }),
-    execute: executeLaunchBrowser,
-});
-const closeBrowserTool = defineTool({
-    name: "close_browser",
-    label: "Close Browser Context",
-    description: "Gracefully close the Pi-managed CDP browser and wait for its process to exit.",
-    promptSnippet: "Close a managed browser before reopening the same persistent profile in another mode.",
-    parameters: Type.Object({
-        profile: Type.Optional(Type.String({ pattern: "^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$" })),
-    }),
-    execute: executeCloseBrowser,
-});
-const navigateBrowserTool = defineTool({
-    name: "navigate_browser",
-    label: "Navigate Browser",
-    description: "Navigate an observed CDP browser-page state to an HTTP(S) URL.",
-    promptSnippet: "Native browser windows use act_ui; this tool is CDP-only.",
-    parameters: Type.Object({ url: Type.String({ maxLength: 8192 }), stateId }),
-    execute: executeNavigateBrowser,
-});
-const evaluateBrowserTool = defineTool({
-    name: "evaluate_browser",
-    label: "Evaluate Browser",
-    description: "Evaluate targeted JavaScript in a CDP browser-page state; returned output is strictly bounded.",
-    promptSnippet: "Prefer observe/search/read; return selected fields, aggregates, or bounded slices.",
-    parameters: Type.Object({ stateId, expression: Type.String({ maxLength: 65_536 }) }),
-    execute: executeEvaluateBrowser,
-});
-function formatConfigStatus() {
-    const loaded = getLoadedComputerUseConfig();
-    return [
-        "pi-computer-use configuration",
-        `browser_use: ${loaded.config.browser_use ? "enabled" : "disabled"}`,
-        `managed_browser: ${loaded.config.managed_browser}`,
-        `headless: ${loaded.config.headless ? "enabled" : "disabled"}`,
-        `cursor_overlay: ${loaded.config.cursor_overlay ? "enabled" : "disabled"}`,
-        "",
-        "Sources:",
-        ...loaded.sources.map((source) => `- ${source.path}: ${source.error ? `error: ${source.error}` : source.exists ? "loaded" : "not found"}`),
-        `- env overrides: ${Object.keys(loaded.env).join(", ") || "none"}`,
-    ].join("\n");
+import { nodeByRef, outlineNodeLabel, type Outline, type OutlineNode } from "./outline.mts";
+
+interface NoteRegion {
+	key: string;
+	label: string;
+	status: "seen" | "changed" | "never-looked";
+	detail?: string;
 }
-export default function computerUseExtension(pi) {
-    for (const tool of [findTool, observeTool, searchUiTool, expandUiTool, inspectUiTool, actTool, readTextTool, waitForTool, launchBrowserTool, closeBrowserTool, navigateBrowserTool, evaluateBrowserTool])
-        pi.registerTool(tool);
-    pi.registerCommand("computer-use", {
-        description: "Show pi-computer-use configuration",
-        handler: async (_args, ctx) => {
-            loadComputerUseConfig(ctx.cwd);
-            ctx.ui.notify(formatConfigStatus(), "info");
-        },
-    });
-    pi.on("session_start", async (_event, ctx) => {
-        loadComputerUseConfig(ctx.cwd);
-        reconstructStateFromBranch(ctx);
-        if (!ctx.hasUI)
-            return;
-        try {
-            await ensureComputerUseSetup(ctx);
-        }
-        catch (error) {
-            ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
-        }
-    });
-    pi.on("session_shutdown", async () => {
-        await shutdownComputerUseSession();
-    });
+
+export interface WindowNote {
+	windowRef: string;
+	title: string;
+	pairing: "exact" | "high" | "low";
+	lastLookId?: string;
+	regions: NoteRegion[];
+}
+
+interface NoteWindowInput {
+	windowRef?: string;
+	title: string;
+	pairing?: "exact" | "high" | "low";
+	pairingScore?: number;
+}
+
+interface NoteRefreshOutcome {
+	window: NoteWindowInput;
+	windowChanged?: boolean;
+	newWindowLabel?: string;
+	rootDelta?: Array<{ change: string; kind: string; title?: string; ref?: string }>;
+}
+
+function normalizedLabel(value: string): string {
+	return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function nodeLabel(node: OutlineNode): string {
+	return outlineNodeLabel(node) || node.role || node.ref;
+}
+
+function regionKey(node: OutlineNode): string {
+	return `${node.role || "AXUnknown"}:${node.identifier || normalizedLabel(nodeLabel(node)) || node.ref}`;
+}
+
+function regionLabel(node: OutlineNode): string {
+	const label = nodeLabel(node);
+	return normalizedLabel(label) || normalizedLabel(node.role) || node.ref;
+}
+
+function topLevelRegions(outline: Outline): Array<{ node: OutlineNode; key: string; label: string }> {
+	const nodes = outline.root.children.length ? outline.root.children : [outline.root];
+	return nodes.map((node) => ({ node, key: regionKey(node), label: regionLabel(node) }));
+}
+
+function topLevelAncestor(node: OutlineNode, outline: Outline): OutlineNode {
+	let current = node;
+	while (current.parent && current.parent !== outline.root) current = current.parent;
+	return current;
+}
+
+function uniqueRegions(regions: NoteRegion[]): NoteRegion[] {
+	const seen = new Set<string>();
+	const output: NoteRegion[] = [];
+	for (const region of regions) {
+		const dedupeKey = `${region.key}:${region.status}:${region.detail ?? ""}`;
+		if (seen.has(dedupeKey)) continue;
+		seen.add(dedupeKey);
+		output.push(region);
+	}
+	return output;
+}
+
+function frontierRegions(outline: Outline, topLevels: Array<{ node: OutlineNode; key: string; label: string }>): NoteRegion[] {
+	const output: NoteRegion[] = [];
+	for (const node of outline.nodes) {
+		if (node.scrollExtent && node.scrollExtent.seen < node.scrollExtent.total) {
+			const ancestor = topLevelAncestor(node, outline);
+			const top = topLevels.find((candidate) => candidate.node === ancestor);
+			output.push({
+				key: `${top?.key ?? regionKey(ancestor)}:scroll:${node.ref}`,
+				label: top?.label ?? regionLabel(ancestor),
+				status: "never-looked",
+				detail: `${node.scrollExtent.total} rows, ${node.scrollExtent.seen} seen`,
+			});
+		}
+		if (node.truncated) {
+			const ancestor = topLevelAncestor(node, outline);
+			const top = topLevels.find((candidate) => candidate.node === ancestor);
+			output.push({
+				key: `${top?.key ?? regionKey(ancestor)}:truncated:${node.ref}`,
+				label: top?.label ?? regionLabel(ancestor),
+				status: "never-looked",
+				detail: "subtree not walked",
+			});
+		}
+	}
+	return output;
+}
+
+export function noteFromLook(prev: WindowNote | undefined, outline: Outline, window: NoteWindowInput): WindowNote {
+	const topLevels = topLevelRegions(outline);
+	const currentKeys = new Set(topLevels.map((region) => region.key));
+	const regions: NoteRegion[] = topLevels.map((region) => ({
+		key: region.key,
+		label: region.label,
+		status: "seen",
+	}));
+
+	if (prev) {
+		for (const old of prev.regions) {
+			if (old.status === "never-looked") continue;
+			if (!currentKeys.has(old.key)) {
+				regions.push({ ...old, status: "changed", detail: "not matched in latest look" });
+			}
+		}
+	}
+
+	if (!window.windowRef || window.pairingScore === Number.NEGATIVE_INFINITY) {
+		regions.push({
+			key: "window:unpaired",
+			label: "window capture",
+			status: "never-looked",
+			detail: "AX window without capture pairing",
+		});
+	}
+
+	regions.push(...frontierRegions(outline, topLevels));
+
+	return {
+		windowRef: window.windowRef ?? "(unpaired)",
+		title: window.title,
+		pairing: window.pairing ?? "low",
+		lastLookId: outline.lookId,
+		regions: uniqueRegions(regions),
+	};
+}
+
+export function noteAfterAct(prev: WindowNote | undefined, targetRef: string | undefined, outline: Outline, refreshOutcome: NoteRefreshOutcome): WindowNote {
+	const note = noteFromLook(prev, outline, refreshOutcome.window);
+	if (targetRef) {
+		const target = nodeByRef(outline, targetRef);
+		if (target) {
+			const ancestor = topLevelAncestor(target, outline);
+			const key = regionKey(ancestor);
+			const region = note.regions.find((candidate) => candidate.key === key);
+			if (region) {
+				region.status = "changed";
+				region.detail = "acted here";
+			} else {
+				note.regions.unshift({ key, label: regionLabel(ancestor), status: "changed", detail: "acted here" });
+			}
+		}
+	}
+	for (const delta of refreshOutcome.rootDelta ?? []) {
+		note.regions.unshift({
+			key: `root:${delta.change}:${delta.ref ?? delta.kind}:${delta.title ?? ""}`,
+			label: `${delta.kind}${delta.title ? ` ${delta.title}` : ""}`,
+			status: delta.change === "closed" ? "changed" : "never-looked",
+			detail: `root ${delta.change}`,
+		});
+	}
+	if (refreshOutcome.windowChanged) {
+		for (const region of note.regions) {
+			if (region.status === "seen") region.status = "changed";
+		}
+		note.regions.push({
+			key: `window:changed:${note.lastLookId ?? "unknown"}`,
+			label: refreshOutcome.newWindowLabel ?? "new sheet/window",
+			status: "never-looked",
+			detail: "appeared after act",
+		});
+	}
+	return { ...note, regions: uniqueRegions(note.regions) };
+}
+
+export function noteRegionKeyForRef(outline: Outline, ref: string): string | undefined {
+	const node = nodeByRef(outline, ref);
+	return node ? regionKey(topLevelAncestor(node, outline)) : undefined;
+}
+
+export function renderNote(note: WindowNote | undefined): string {
+	if (!note) return "";
+	const looked = note.lastLookId ? "looked just now" : "not looked";
+	const lines = [`note ${note.windowRef} ${JSON.stringify(note.title.slice(0, 512))} (pairing ${note.pairing}, ${looked})`];
+	const visible = note.regions.slice(0, 64);
+	for (const region of visible) {
+		const detail = region.detail ? `   (${region.detail.slice(0, 256)})` : "";
+		lines.push(`  ${region.label.slice(0, 512).padEnd(14, " ")} ${region.status}${detail}`);
+	}
+	if (note.regions.length > visible.length) lines.push(`  … ${note.regions.length - visible.length} more note regions; use search_ui or expand_ui`);
+	const encoded = new TextEncoder().encode(lines.join("\n"));
+	if (encoded.byteLength <= 8 * 1024) return new TextDecoder().decode(encoded);
+	let end = 8 * 1024;
+	while (end > 0 && (encoded[end] & 0xc0) === 0x80) end -= 1;
+	return `${new TextDecoder().decode(encoded.subarray(0, end))}\n… note byte budget reached`;
 }

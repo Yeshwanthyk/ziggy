@@ -1,23 +1,23 @@
-import type { Effect } from "effect";
-import type { ProfileExtensionHealthListing } from "../../adapters/pi/profile-extension-preflight";
-import type { ProviderAuthStatus } from "../../adapters/pi/auth";
-import type { KnownModel } from "../../adapters/pi/models";
 import type { UiGroupStore, UiPinStore } from "../../adapters/fs/ui-state";
-import type { ProfileExtensionsApi, ProfileExtensionError } from "../../domain/profile-extension";
-import type { ProfileTarget } from "../../domain/profile";
+import type { ExtensionsApi, PluginSecretsApi } from "../../extensions";
 import type { ProfileId } from "../../domain/profile-directory";
 import type { ResidentProfileBranch } from "../profile-runtime-directory";
-import type { ProfileAgentsApi } from "../profile-agents";
-import type { ModelsApi } from "../models";
-import type { AuthApi } from "../auth";
+import type { ProfileAgentsApi } from "../../agents";
 import type { DoctorApi } from "../doctor";
 import type { AutomationDefinitionsApi } from "../automation-definitions";
 import type { AutomationSchedulerApi } from "../automation-scheduler";
 import type { AutomationsApi } from "../automations";
-import type { MemoryApi } from "../memory";
-import type { SessionsApi } from "../sessions";
-import type { ZiggyAgentApi } from "../agent";
-import type { ChatRegistryApi } from "../chat-registry";
+import type { MemoryApi } from "../../memory";
+import type { SessionsApi } from "../../session";
+import type { ZiggyAgentApi } from "../../session";
+import type { LiveSessionsApi } from "../../resident/live-sessions";
+import {
+  type ProviderAuthStatus,
+  type KnownModel,
+  type ProfileTarget,
+  type ModelsApi,
+  type AuthApi,
+} from "../../profile";
 
 export type UiGatewayBranch = ResidentProfileBranch;
 
@@ -26,17 +26,11 @@ export interface UiGatewayDependencies {
   readonly defaultProfile: UiGatewayBranch;
   readonly profileDirectory?: import("../profile-directory").ProfileDirectoryApi;
   readonly runtimeDirectory?: import("../profile-runtime-directory").ProfileRuntimeDirectoryApi;
-  readonly repositoryRoot: string;
   /** Directory that bare Profile names resolve under; enables short CLI targets. */
   readonly profilesDirectory?: string | undefined;
   readonly sessions: SessionsApi;
   readonly agent: ZiggyAgentApi;
-  readonly profileExtensions: ProfileExtensionsApi;
-  readonly extensionHealth: (
-    profilePath: string,
-    repositoryRoot: string,
-    extensions: ProfileExtensionsApi,
-  ) => Effect.Effect<ProfileExtensionHealthListing, ProfileExtensionError>;
+  readonly profileExtensions: ExtensionsApi;
   readonly profileAgents?: ProfileAgentsApi;
   readonly models?: ModelsApi;
   readonly auth?: AuthApi;
@@ -45,6 +39,8 @@ export interface UiGatewayDependencies {
   readonly automationScheduler?: AutomationSchedulerApi;
   readonly automations?: AutomationsApi;
   readonly memory?: MemoryApi;
+  /** Writes plugin `${NAME}` values; the gateway never returns or logs them. */
+  readonly pluginSecrets?: Pick<PluginSecretsApi, "set">;
   readonly pins?: UiPinStore;
   readonly groups?: UiGroupStore;
 }
@@ -55,7 +51,7 @@ export interface UiGatewayDependencies {
 export type UiGatewayCapabilityTypes = {
   readonly profileId: ProfileId;
   readonly target: ProfileTarget;
-  readonly registry: ChatRegistryApi;
+  readonly live: LiveSessionsApi;
   readonly model?: KnownModel;
   readonly auth?: ProviderAuthStatus;
 };

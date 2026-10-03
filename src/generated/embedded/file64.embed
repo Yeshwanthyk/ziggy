@@ -1,136 +1,65 @@
-import { parseLookResponse } from "../../outline.mjs";
-import { toBoolean, toFiniteNumber, toOptionalString } from "../coerce.mjs";
-import { WINDOWS_HELPER_PROTOCOL_VERSION, windowsHelper } from "./helper.mjs";
-import { assertPlatformArchitecture } from "../architecture.mjs";
-function normalizedProcessName(appName) {
-    return appName.toLowerCase().replace(/\.exe$/i, "");
-}
-function classifyBrowser(appName) {
-    switch (normalizedProcessName(appName)) {
-        case "chrome":
-        case "chromium":
-            return "chrome";
-        case "msedge":
-        case "edge":
-            return "edge";
-        case "brave":
-        case "brave-browser":
-            return "brave";
-        case "firefox":
-            return "firefox";
-        case "vivaldi":
-            return "vivaldi";
-        case "opera":
-        case "opera_gx":
-            return "opera";
-        default:
-            return false;
-    }
-}
-function parseFramePoints(raw) {
-    const frame = raw?.framePoints ?? raw?.bounds ?? {};
-    return {
-        x: toFiniteNumber(frame.x, 0),
-        y: toFiniteNumber(frame.y, 0),
-        w: Math.max(1, toFiniteNumber(frame.w ?? frame.width, 1)),
-        h: Math.max(1, toFiniteNumber(frame.h ?? frame.height, 1)),
-    };
-}
-function parseRootKind(raw) {
-    return raw === "menu" || raw === "dialog" || raw === "popover" || raw === "window" ? raw : "window";
-}
-function parseRoots(result) {
-    const array = Array.isArray(result) ? result : result?.roots;
-    if (!Array.isArray(array))
-        return [];
-    return array.map((raw, index) => {
-        return {
-            kind: parseRootKind(raw?.kind),
-            rootRef: toOptionalString(raw?.rootRef ?? raw?.windowRef ?? raw?.ref),
-            windowRef: toOptionalString(raw?.windowRef ?? raw?.rootRef ?? raw?.ref),
-            windowId: Number.isFinite(raw?.windowId) ? Math.trunc(raw.windowId) : undefined,
-            pid: Number.isFinite(raw?.pid) ? Math.trunc(raw.pid) : undefined,
-            appName: toOptionalString(raw?.appName ?? raw?.processName),
-            bundleId: toOptionalString(raw?.bundleId),
-            title: toOptionalString(raw?.title) ?? "",
-            role: toOptionalString(raw?.role),
-            subrole: toOptionalString(raw?.subrole),
-            zOrder: Math.trunc(toFiniteNumber(raw?.zOrder, index)),
-            framePoints: parseFramePoints(raw),
-            scaleFactor: Math.max(1, toFiniteNumber(raw?.scaleFactor, 1)),
-            isOnscreen: raw?.isOnscreen === undefined ? true : toBoolean(raw?.isOnscreen),
-            isFocused: toBoolean(raw?.isFocused),
-            isMinimized: toBoolean(raw?.isMinimized),
-            isMain: toBoolean(raw?.isMain ?? raw?.isFocused),
-            isModal: toBoolean(raw?.isModal),
-            metadata: raw?.metadata,
-        };
-    });
-}
-function appsFromRoots(roots) {
-    const seen = new Set();
-    return roots.flatMap((root) => {
-        if (!root.pid || seen.has(root.pid))
-            return [];
-        seen.add(root.pid);
-        return [{ appName: root.appName ?? "Unknown", bundleId: root.bundleId, pid: root.pid, isFrontmost: root.isFocused }];
-    });
-}
-function helperAction(request) {
-    if (!("focus" in request.target))
-        return { ...request };
-    return { ...request, target: request.target.focus, params: { ...request.params, preserveFocus: true } };
-}
-async function ensureReady(_ctx, state, signal) {
-    await windowsHelper.ensureInstalled(signal);
-    const diagnostics = await windowsHelper.command("diagnostics", {}, { signal, timeoutMs: 5_000 });
-    if (diagnostics?.protocolVersion !== WINDOWS_HELPER_PROTOCOL_VERSION) {
-        throw new Error(`Windows helper protocol mismatch: expected ${WINDOWS_HELPER_PROTOCOL_VERSION}, got ${diagnostics?.protocolVersion ?? "unknown"}. Restart Pi to use the installed helper.`);
-    }
-    assertPlatformArchitecture("Windows", diagnostics);
-    return { ...state, lastPermissionCheckAt: Date.now(), helperDiagnostics: diagnostics };
-}
-export const windowsBackend = {
-    name: "windows",
-    shutdown() { windowsHelper.dispose(); },
-    ensureReady,
-    async listApps(signal) {
-        return appsFromRoots(parseRoots(await windowsHelper.command("listRoots", {}, { signal })));
-    },
-    async listRoots(query, signal) {
-        const roots = parseRoots(await windowsHelper.command("listRoots", Number.isFinite(query.pid) ? { pid: Math.trunc(query.pid) } : {}, { signal }));
-        const title = query.title?.trim().toLowerCase();
-        return title ? roots.filter((root) => root.title.trim().toLowerCase().includes(title)) : roots;
-    },
-    async getFrontmost(signal) {
-        const roots = parseRoots(await windowsHelper.command("listRoots", {}, { signal }));
-        const focused = roots.find((root) => root.isFocused) ?? roots[0];
-        if (!focused?.pid)
-            throw new Error("No frontmost window was available.");
-        return { appName: focused.appName ?? "Unknown", bundleId: focused.bundleId, pid: focused.pid, windowTitle: focused.title, windowId: focused.windowId, rootRef: focused.rootRef };
-    },
-    async focusWindow(target, signal) {
-        return await windowsHelper.command("focusWindow", { ...target }, { signal });
-    },
-    async observe(request, options) {
-        return parseLookResponse(await windowsHelper.command("look", { ...request.target, baseLookId: request.baseLookId, maxDimension: request.maxDimension, readText: request.readText, scopeRef: request.scopeRef, includeImage: request.includeImage }, options));
-    },
-    async act(request, options) {
-        return await windowsHelper.command("act", helperAction(request), options);
-    },
-    async actBatch(requests, options) {
-        return await windowsHelper.command("actBatch", { actions: requests.map(helperAction) }, options);
-    },
-    async readText(args, options) {
-        return await windowsHelper.command("uiaReadText", { ...args }, options);
-    },
-    async waitFor(args, options) {
-        return await windowsHelper.command("uiaWaitFor", { ...args }, options);
-    },
-    isBrowserApp(appName) { return classifyBrowser(appName) !== false; },
-    isChromeFamilyApp(appName) { return classifyBrowser(appName) === "chrome" || classifyBrowser(appName) === "edge" || classifyBrowser(appName) === "brave"; },
-    async openBrowserLocation(target, url, signal) {
-        await windowsHelper.command("openBrowserLocation", { ...target, url }, { signal, timeoutMs: 10_000 });
-        return true;
-    },
-};
+# Linux support
+
+Linux uses the same root/state/ref navigation architecture as macOS and Windows. Its per-user Rust helper uses AT-SPI2 semantics first. In an X11 session it can enrich those semantics with EWMH window state, X11 capture, and guarded XTEST physical input.
+
+## Setup
+
+Run Pi as the same user and inside the same graphical session as the target applications. The session needs a working D-Bus and AT-SPI2 accessibility bus, and applications must export useful accessibility interfaces. A normal install places the helper at:
+
+```text
+~/.pi/agent/helpers/pi-computer-use/linux-bridge
+```
+
+The upstream [AT-SPI development guide](https://gnome.pages.gitlab.gnome.org/at-spi2-core/devel-docs/index.html) describes the accessibility stack. Containers, system services, `sudo`, and unrelated SSH sessions do not automatically inherit the graphical user's bus.
+
+## Capability matrix
+
+| Capability | X11 | Wayland | Delivery |
+| --- | --- | --- | --- |
+| Discover accessible roots | Yes; EWMH enriches geometry, stacking, focus, and minimized state | Yes, when exported | AT-SPI2, plus EWMH on X11 |
+| Press/click an actionable ref | Capability-gated | Capability-gated | AT-SPI `Action` |
+| Replace editable text | Capability-gated | Capability-gated | AT-SPI `EditableText` |
+| Read/wait on accessible text | Capability-gated | Capability-gated | AT-SPI `Text`/snapshots |
+| Screenshot/visual observation | Yes | No | XComposite PNG; `GetImage` fallback may be stale or obscured |
+| Coordinate pointer, keyboard, scroll, and drag | Non-headless only | No | XTEST after semantic delivery is unavailable/insufficient |
+| Force focus | Non-headless only | No | EWMH `_NET_ACTIVE_WINDOW` |
+| Managed Chromium pages | Yes | Yes | Loopback CDP |
+| Open a URL | Yes | Yes | `xdg-open` |
+
+“Capability-gated” means the target must export the corresponding AT-SPI interface. X11 physical fallback reports an `unknown` outcome unless later observation or a postcondition verifies the result. Capture prefers XComposite so covered windows can still be read; the `GetImage` fallback explicitly warns that pixels may be stale or obscured.
+
+## Background and headless guarantees
+
+Linux always attempts AT-SPI semantics first. Semantic delivery does not request compositor focus or inject global input; background delivery is not invisible execution, because an application may still update its visible window.
+
+With `headless: true` or the `ax_only`/`background` delivery policy, the helper never invokes XTEST or EWMH focus. Unsupported semantic input fails closed. With non-headless `default` or `foreground` policy on X11, actions may fall back to global XTEST input and focus may use EWMH. Those operations can move the real pointer, type into the focused application, and interfere with the user's session. Native Wayland has no such physical fallback.
+
+Managed CDP actions also avoid desktop focus, but `launch_browser` starts a normal visible browser; this project's `headless` option is an input-delivery policy, not Chromium's `--headless` switch.
+
+## Wayland portal boundary
+
+The standardized [ScreenCast portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html) can expose user-selected streams through PipeWire. The [RemoteDesktop portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html) can negotiate input devices and may return restore tokens when the desktop grants persistence. Starting a session normally invokes compositor-owned selection/consent, and backend support varies.
+
+On Wayland, diagnostics performs only a read-only property probe and reports the RemoteDesktop and ScreenCast interface versions plus advertised device, source, and cursor-mode bitmasks. It does not create a portal request or session and cannot display a chooser.
+
+There is no portal session, PipeWire frame, input dispatch, or restore-token implementation. Installing a portal backend therefore does not enable Wayland capture or input.
+
+## Security boundaries
+
+- The helper is a local stdin/stdout child process and opens no helper network listener.
+- It can inspect applications exposed on the current user's AT-SPI bus; run only trusted agents and extensions in that session.
+- Password-role values are omitted and explicit reads are rejected, though application mislabeling remains possible.
+- On X11, capture can read window pixels and non-headless physical fallback can control the global pointer/keyboard and request focus. These are broad desktop capabilities; strict headless/background policy blocks XTEST and focus, but does not make AT-SPI or requested X11 observation private.
+- On Wayland, portal diagnostics are read-only; capture and input are not implemented.
+- CDP is separate and gives local processes that can reach its loopback port powerful page access. `launch_browser` uses a fresh non-default temporary profile, matching modern Chrome's [remote-debugging security policy](https://developer.chrome.com/blog/remote-debugging-port), rather than the user's normal profile.
+
+## Browser discovery
+
+`launch_browser` searches common Chrome/Chromium or Helium locations and `PATH`. For an AppImage or custom install, set an authoritative executable override:
+
+```bash
+PI_COMPUTER_USE_CHROME_EXECUTABLE=/absolute/path/to/chrome
+PI_COMPUTER_USE_HELIUM_EXECUTABLE=/absolute/path/to/helium.AppImage
+```
+
+Manual CDP launches must use a non-default `--user-data-dir` together with `--remote-debugging-port`; set `PI_COMPUTER_USE_CDP_PORT` to that loopback port.

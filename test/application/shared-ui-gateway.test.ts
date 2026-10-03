@@ -2,25 +2,21 @@
 /* oxlint-disable ziggy-effect/no-native-promise-ownership -- Bun test callbacks are Promise-shaped */
 import { expect, test } from "bun:test";
 import { Effect, Result, Schema } from "effect";
-import {
-  makeChatHandle,
-  type ChatEvent,
-  type ChatHandle,
-  type ZiggyAgentApi,
-} from "ziggy/application/agent";
-import { makeChatRegistry } from "ziggy/application/chat-registry";
+import { type ChatEvent, type ChatHandle, type ZiggyAgentApi } from "ziggy/session/index";
+import { makeChatHandle } from "../harness/chat-handle";
+import { makeLiveSessions } from "ziggy/resident/live-sessions";
+import { makeDestinationBook } from "ziggy/resident/destinations";
 import { makeSharedUiGateway } from "ziggy/application/ui-gateway";
-import type { SessionsApi } from "ziggy/application/sessions";
 import type {
   ProfileDirectoryApi,
   ProfileDirectoryEntry,
 } from "ziggy/application/profile-directory";
 import { stableProfileId } from "ziggy/application/profile-directory";
-import { SessionNotFound } from "ziggy/domain/session";
+import { SessionNotFound, type SessionsApi } from "ziggy/session/index";
 import { UiEventFrame, UiResponseFrame } from "ziggy/domain/ui-gateway";
-import type { ProfileTarget } from "ziggy/domain/profile";
-import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
+import type { ExtensionsApi } from "ziggy/extensions/index";
 import { UnknownProfile } from "ziggy/domain/profile-directory";
+import { type ProfileTarget } from "ziggy/profile/index";
 
 const alphaTarget = { path: "/private/alpha", name: "Alpha" } satisfies ProfileTarget;
 
@@ -79,26 +75,29 @@ const makeSessions = (): SessionsApi => ({
   held: () => Effect.succeed(false),
   list: () => Effect.succeed([]),
   show: (_target, reference) => Effect.fail(new SessionNotFound({ reference, message: "missing" })),
-  resolve: (_target, reference) =>
+  locate: (_target, reference) =>
+    Effect.fail(new SessionNotFound({ reference, message: "missing" })),
+  history: (_target, reference) =>
     Effect.fail(new SessionNotFound({ reference, message: "missing" })),
 });
 
-const makeExtensions = (): ProfileExtensionsApi => ({
+const makeExtensions = (): ExtensionsApi => ({
   list: () => Effect.succeed([]),
   show: () => Effect.never,
-  listForProfile: () => Effect.succeed({ available: [], selected: [] }),
-  add: (_target, _repositoryRoot, id) =>
-    Effect.succeed({ id, profilePath: "", changed: true, selected: true }),
-  remove: (_target, _repositoryRoot, id) =>
-    Effect.succeed({ id, profilePath: "", changed: true, selected: false }),
+  listForProfile: () => Effect.succeed({ available: [], selected: [], required: [] }),
+  add: (_target, id) =>
+    Effect.succeed({ id, profilePath: "", changed: true, selected: true, automations: [] }),
+  remove: (_target, id) =>
+    Effect.succeed({ id, profilePath: "", changed: true, selected: false, automations: [] }),
   setSelected: () => Effect.never,
   validate: () =>
     Effect.succeed({
       selected: [],
       preflight: { extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 },
     }),
-  prepareRuntime: () => Effect.never,
-  activateRuntime: () => Effect.never,
+  health: () =>
+    Effect.succeed({ listing: { available: [], selected: [], required: [] }, skipped: [] }),
+  update: () => Effect.never,
 });
 
 const eventFrames = (frames: ReadonlyArray<string>) =>
@@ -140,32 +139,40 @@ test("shared UI gateway isolates two Profile branches and watch streams", async 
 
   const agent: ZiggyAgentApi = {
     runOnce: () => Effect.succeed(0),
-    openChat: (target) => {
+    open: ({ target }) => {
       openedPaths.push(target.path);
       const handle = handles.get(target.path);
 
       return handle === undefined ? Effect.never : Effect.succeed(handle);
     },
-    openSpecialistChat: () => Effect.succeed(alphaHandle),
     runSpecialist: () => Effect.succeed({ answer: "", session: { id: "child", file: "child" } }),
   };
 
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const alphaRegistry = yield* makeChatRegistry();
-        const betaRegistry = yield* makeChatRegistry();
+        const alphaLive = yield* makeLiveSessions();
+        const betaLive = yield* makeLiveSessions();
+
+        const alpha = {
+          profileId: alphaId,
+          target: alphaTarget,
+          live: alphaLive,
+          destinations: makeDestinationBook(),
+        };
 
         const gateway = yield* makeSharedUiGateway({
           profileDirectory: makeDirectory(),
-          defaultProfile: { profileId: alphaId, target: alphaTarget, registry: alphaRegistry },
+          defaultProfile: alpha,
           branches: [
-            { profileId: alphaId, target: alphaTarget, registry: alphaRegistry },
-            { profileId: betaId, target: betaTarget, registry: betaRegistry },
+            alpha,
+            {
+              profileId: betaId,
+              target: betaTarget,
+              live: betaLive,
+              destinations: makeDestinationBook(),
+            },
           ],
-          repositoryRoot: "/private/repository",
-          extensionHealth: () =>
-            Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
           sessions: makeSessions(),
           agent,
           profileExtensions: makeExtensions(),

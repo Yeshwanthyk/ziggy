@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline";
-import type { AuthEvent, AuthInteraction, AuthPrompt } from "../pi/auth";
+import { type AuthEvent, type AuthInteraction, type AuthPrompt } from "../../profile";
 
 const throwIfAborted = (signal: AbortSignal | undefined): void => {
   if (signal?.aborted === true) {

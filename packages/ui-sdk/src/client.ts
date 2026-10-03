@@ -1,3 +1,6 @@
+import { decodeJson, isRecord, type ZiggyJsonValue } from "./protocol/common";
+import type { ZiggyAppContentResult } from "./protocol/apps";
+import { isUploadId } from "./protocol/conversations";
 import {
   createZiggyConnection,
   type ZiggyConnectionOptions,
@@ -18,6 +21,7 @@ import {
   type ZiggyConversationContext,
   type ZiggySessionHistoryResult,
   type ZiggySessionRef,
+  type ZiggySessionTextParams,
   type ZiggySessionListResult,
   type ZiggySessionModelResult,
   type ZiggySessionSummaryResult,
@@ -52,6 +56,7 @@ import type {
   ZiggyExtensionListResult,
   ZiggyExtensionMutationResult,
   ZiggyExtensionValidationResult,
+  ZiggyPluginSecretSetResult,
 } from "./protocol/extensions";
 import type { ZiggyMemoryListResult, ZiggyMemoryShowResult } from "./protocol/memory";
 import type { ZiggyMemoryPath } from "./protocol/memory";
@@ -68,7 +73,21 @@ import type {
 } from "./protocol/profiles";
 import type { ZiggySystemCapabilitiesResult } from "./protocol/common";
 
-export interface ConnectZiggyOptions extends ZiggyConnectionOptions {}
+export interface ConnectZiggyOptions extends ZiggyConnectionOptions {
+  readonly httpBaseUrl?: string;
+}
+
+/** `context` is accepted on `prompt.submit` only. */
+export type ZiggyPromptAttachments = Pick<ZiggySessionTextParams, "images" | "context">;
+
+const promptParams = (ref: ZiggySessionRef, text: string, commandId?: string, attachments?: ZiggyPromptAttachments): ZiggySessionTextParams => {
+  const params = commandId === undefined ? { ref, text } : { ref, text, commandId };
+  const withImages =
+    attachments?.images === undefined ? params : { ...params, images: attachments.images };
+  return attachments?.context === undefined
+    ? withImages
+    : { ...withImages, context: attachments.context };
+};
 
 interface MutableModelSetParams {
   profileId: ZiggyProfileId;
@@ -156,9 +175,35 @@ export interface ZiggyGatewayClient {
   watchSession(ref: ZiggySessionRef, cursor?: ZiggyEventCursor): Promise<void>;
   unwatchSession(ref: ZiggySessionRef): Promise<void>;
   closeSession(ref: ZiggySessionRef, commandId?: string): Promise<void>;
-  submitPrompt(ref: ZiggySessionRef, text: string, commandId?: string): Promise<void>;
-  steerSession(ref: ZiggySessionRef, text: string, commandId?: string): Promise<void>;
-  followUp(ref: ZiggySessionRef, text: string, commandId?: string): Promise<void>;
+  uploadImage(file: Blob): Promise<string>;
+  /** A view's call to one of its own server's tools; the server enforces ownership and visibility. */
+  callAppTool(
+    ref: ZiggySessionRef,
+    server: string,
+    resourceUri: string,
+    tool: string,
+    args?: { readonly [key: string]: ZiggyJsonValue },
+  ): Promise<ZiggyJsonValue>;
+  /** A view resource (`ui://`) declared by one of the server's tools, as the MCP result. */
+  readAppResource(ref: ZiggySessionRef, server: string, uri: string): Promise<ZiggyJsonValue>;
+  submitPrompt(
+    ref: ZiggySessionRef,
+    text: string,
+    commandId?: string,
+    attachments?: ZiggyPromptAttachments,
+  ): Promise<void>;
+  steerSession(
+    ref: ZiggySessionRef,
+    text: string,
+    commandId?: string,
+    attachments?: ZiggyPromptAttachments,
+  ): Promise<void>;
+  followUp(
+    ref: ZiggySessionRef,
+    text: string,
+    commandId?: string,
+    attachments?: ZiggyPromptAttachments,
+  ): Promise<void>;
   abortSession(ref: ZiggySessionRef, commandId?: string): Promise<void>;
   listAgents(profileId: ZiggyProfileId): Promise<ZiggyAgentListResult>;
   showAgent(profileId: ZiggyProfileId, agentId: string): Promise<ZiggyAgentShowResult>;
@@ -249,6 +294,12 @@ export interface ZiggyGatewayClient {
     commandId?: string,
   ): Promise<ZiggyExtensionMutationResult>;
   validateExtensions(profileId: ZiggyProfileId): Promise<ZiggyExtensionValidationResult>;
+  /** Store a plugin `${NAME}` in the resident's Keychain; the value is never returned. */
+  setPluginSecret(
+    profileId: ZiggyProfileId,
+    name: string,
+    value: string,
+  ): Promise<ZiggyPluginSecretSetResult>;
   listPins(profileId: ZiggyProfileId): Promise<ZiggyPinListResult>;
   setPin(
     profileId: ZiggyProfileId,
@@ -272,6 +323,28 @@ export interface ZiggyGatewayClient {
 
 export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient => {
   const connection = createZiggyConnection(options);
+
+  /** An HTTP request to the gateway that rendered the socket URL, with its bearer token. */
+  const httpRequest = (path: string) => {
+    const socketUrl = new URL(options.url);
+    const base = new URL(options.httpBaseUrl ?? options.url);
+    if (base.protocol === "ws:") base.protocol = "http:";
+    if (base.protocol === "wss:") base.protocol = "https:";
+    const token = options.token ?? socketUrl.searchParams.get("token");
+    const headers = new Headers();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    return { url: new URL(path, base), headers };
+  };
+
+  /** App results wait once at `/app-content/<id>` for this connection's owner. */
+  const appContent = async (result: ZiggyAppContentResult): Promise<ZiggyJsonValue> => {
+    const { url, headers } = httpRequest(`/app-content/${result.contentId}`);
+    const response = await fetch(url, { credentials: "include", headers });
+    if (!response.ok) throw new Error("The view's MCP result is no longer available.");
+    const value = decodeJson(await response.text());
+    if (value === undefined) throw new Error("Invalid view MCP result.");
+    return value;
+  };
   const client: ZiggyGatewayClient = {
     get state() {
       return connection.state;
@@ -323,26 +396,53 @@ export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient =
       connection
         .request("session.close", commandId === undefined ? { ref } : { ref, commandId })
         .then(() => undefined),
-    submitPrompt: (ref, text, commandId) =>
+    uploadImage: async (file) => {
+      const { url, headers } = httpRequest("/uploads");
+      headers.set("Content-Type", file.type);
+      const response = await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        headers,
+        body: file,
+      });
+      if (!response.ok) {
+        throw new Error(
+          response.status === 413
+            ? "Images must be 5 MiB or smaller."
+            : response.status === 415
+              ? "Use a valid PNG, JPEG, GIF or WebP image."
+              : response.status === 401
+                ? "Reconnect to Ziggy before attaching images."
+                : "The image could not be uploaded.",
+        );
+      }
+      const result = decodeJson(await response.text());
+      if (!isRecord(result) || Object.keys(result).length !== 1 || !isUploadId(result.id))
+        throw new Error("Invalid image upload response.");
+      return result.id;
+    },
+    callAppTool: async (ref, server, resourceUri, tool, args) =>
+      appContent(
+        await connection.request(
+          "app.callTool",
+          args === undefined
+            ? { ref, server, resourceUri, tool }
+            : { ref, server, resourceUri, tool, arguments: args },
+        ),
+      ),
+    readAppResource: async (ref, server, uri) =>
+      appContent(await connection.request("app.readResource", { ref, server, uri })),
+    submitPrompt: (ref, text, commandId, attachments) =>
       connection
-        .request(
-          "prompt.submit",
-          commandId === undefined ? { ref, text } : { ref, text, commandId },
-        )
+        .request("prompt.submit", promptParams(ref, text, commandId, attachments))
         .then(() => undefined),
-    steerSession: (ref, text, commandId) =>
+    steerSession: (ref, text, commandId, attachments) =>
       connection
-        .request(
-          "session.steer",
-          commandId === undefined ? { ref, text } : { ref, text, commandId },
-        )
+        .request("session.steer", promptParams(ref, text, commandId, attachments))
         .then(() => undefined),
-    followUp: (ref, text, commandId) =>
+    followUp: (ref, text, commandId, attachments) =>
       connection
-        .request(
-          "session.follow-up",
-          commandId === undefined ? { ref, text } : { ref, text, commandId },
-        )
+        .request("session.follow-up", promptParams(ref, text, commandId, attachments))
         .then(() => undefined),
     abortSession: (ref, commandId) =>
       connection
@@ -449,6 +549,8 @@ export const connectZiggy = (options: ConnectZiggyOptions): ZiggyGatewayClient =
       return connection.request("extension.remove", { profileId, id, commandId });
     },
     validateExtensions: (profileId) => connection.request("extension.validate", { profileId }),
+    setPluginSecret: (profileId, name, value) =>
+      connection.request("plugin.secret.set", { profileId, name, value }),
     listPins: (profileId) => connection.request("pin.list", { profileId }),
     setPin: (profileId, pin, expectedRevision, commandId) => {
       const params: MutablePinSetParams = { profileId, pin, expectedRevision, commandId };

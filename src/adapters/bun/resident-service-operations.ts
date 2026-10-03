@@ -1,4 +1,4 @@
-import { homedir, userInfo } from "node:os";
+import { userInfo } from "node:os";
 import { dirname } from "node:path";
 import { Duration, Effect, Layer, Result } from "effect";
 import {
@@ -26,10 +26,10 @@ import {
   systemdLogsCommand,
   systemdMainPidCommand,
 } from "./systemd-service";
+import { ZiggyPaths, type ZiggyPathsApi } from "../../platform/paths";
 import { validateGatewayProfile } from "../fs/gateway-config";
 import { readDiscordHealth } from "../fs/discord-health";
 import { readSlackHealth } from "../fs/slack-health";
-import type { ProfileTarget } from "../../domain/profile";
 import {
   deriveResidentServiceIdentity,
   type ResidentServiceDefinition,
@@ -39,7 +39,7 @@ import {
   AutomationScheduler,
   type AutomationSchedulerApi,
 } from "../../application/automation-scheduler";
-import { ResidentGateway, type ResidentGatewayApi } from "../../application/resident-gateway";
+import { inspectGatewayOwner } from "./gateway-owner";
 
 import {
   ResidentServiceOperations,
@@ -47,7 +47,8 @@ import {
   residentReady,
 } from "../../application/resident-service";
 import type { ResidentSupervisorStatus } from "../../application/resident-service";
-import type { GatewayOwnerStatus } from "../../domain/gateway";
+import type { GatewayOwnerError, GatewayOwnerStatus } from "../../domain/gateway";
+import { type ProfileTarget } from "../../profile";
 
 export const managerFor = (
   platform: NodeJS.Platform,
@@ -133,12 +134,12 @@ export interface ResidentServiceRuntime {
   readonly sleep: (milliseconds: number) => Effect.Effect<void>;
 }
 
-const liveRuntime: ResidentServiceRuntime = {
+const liveRuntime = (paths: ZiggyPathsApi): ResidentServiceRuntime => ({
   platform: process.platform,
   executablePath: process.execPath,
   mainPath: Bun.main,
-  home: homedir(),
-  ziggyHome: process.env.ZIGGY_HOME ?? `${homedir()}/.ziggy`,
+  home: paths.homedir,
+  ziggyHome: paths.ziggyHome,
   uid: process.getuid?.() ?? userInfo().uid,
   user: process.env.USER ?? userInfo().username,
   commands: residentPlatformCommands,
@@ -147,7 +148,7 @@ const liveRuntime: ResidentServiceRuntime = {
   removeDefinition: removeManagedDefinition,
   ensureDirectory: ensureResidentServiceDirectory,
   sleep: (milliseconds) => Effect.sleep(Duration.millis(milliseconds)),
-};
+});
 
 const definitionFor = (
   target: ProfileTarget,
@@ -271,10 +272,13 @@ const startDefinition = (
     }
   });
 
+/** Who owns the Profile's gateway lease right now. */
+type InspectOwner = (target: ProfileTarget) => Effect.Effect<GatewayOwnerStatus, GatewayOwnerError>;
+
 const waitForReady = (
   target: ProfileTarget,
   definition: ResidentServiceDefinition,
-  gateway: ResidentGatewayApi,
+  inspectOwner: InspectOwner,
   runtime: ResidentServiceRuntime,
   previous?: GatewayOwnerStatus,
 ) =>
@@ -284,7 +288,7 @@ const waitForReady = (
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const [supervisor, owner] = yield* Effect.all([
         inspectSupervisor(definition, runtime).pipe(Effect.result),
-        gateway.status(target).pipe(Effect.result),
+        inspectOwner(target).pipe(Effect.result),
       ]);
 
       if (Result.isSuccess(owner)) observed = owner.success;
@@ -308,7 +312,7 @@ const waitForReady = (
 const waitForStopped = (
   target: ProfileTarget,
   definition: ResidentServiceDefinition,
-  gateway: ResidentGatewayApi,
+  inspectOwner: InspectOwner,
   runtime: ResidentServiceRuntime,
 ) =>
   Effect.gen(function* () {
@@ -317,7 +321,7 @@ const waitForStopped = (
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const [supervisor, owner] = yield* Effect.all([
         inspectSupervisor(definition, runtime).pipe(Effect.result),
-        gateway.status(target).pipe(Effect.result),
+        inspectOwner(target).pipe(Effect.result),
       ]);
 
       if (Result.isSuccess(owner)) observed = owner.success;
@@ -339,9 +343,9 @@ const waitForStopped = (
   });
 
 export const makeResidentService = (
-  gateway: ResidentGatewayApi,
+  inspectOwner: InspectOwner,
   scheduler: AutomationSchedulerApi,
-  runtime: ResidentServiceRuntime = liveRuntime,
+  runtime: ResidentServiceRuntime,
 ): ResidentServiceApi => {
   const lifecycleBase = (definition: ResidentServiceDefinition) => ({
     manager: definition.manager,
@@ -357,7 +361,7 @@ export const makeResidentService = (
       yield* validateGatewayProfile(target);
       const definition = yield* definitionFor(target, runtime, true);
       yield* startDefinition(definition, runtime, "start");
-      const readiness = yield* waitForReady(target, definition, gateway, runtime);
+      const readiness = yield* waitForReady(target, definition, inspectOwner, runtime);
 
       return {
         action: "start" as const,
@@ -413,7 +417,7 @@ export const makeResidentService = (
         }
 
         yield* startDefinition(definition, runtime, "start");
-        const readiness = yield* waitForReady(target, definition, gateway, runtime);
+        const readiness = yield* waitForReady(target, definition, inspectOwner, runtime);
 
         return {
           action: "install" as const,
@@ -443,7 +447,7 @@ export const makeResidentService = (
           }
         }
 
-        const readiness = yield* waitForStopped(target, definition, gateway, runtime);
+        const readiness = yield* waitForStopped(target, definition, inspectOwner, runtime);
 
         return {
           action: "stop" as const,
@@ -457,12 +461,12 @@ export const makeResidentService = (
         yield* validateGatewayProfile(target);
         const definition = yield* definitionFor(target, runtime, true);
 
-        const previous = yield* gateway
-          .status(target)
-          .pipe(Effect.orElseSucceed(() => ({ _tag: "stopped" as const, path: definition.path })));
+        const previous = yield* inspectOwner(target).pipe(
+          Effect.orElseSucceed(() => ({ _tag: "stopped" as const, path: definition.path })),
+        );
 
         yield* startDefinition(definition, runtime, "restart");
-        const readiness = yield* waitForReady(target, definition, gateway, runtime, previous);
+        const readiness = yield* waitForReady(target, definition, inspectOwner, runtime, previous);
 
         return {
           action: "restart" as const,
@@ -518,6 +522,7 @@ export const makeResidentService = (
 
         return { manager: definition.manager, ...result };
       }),
+    owner: inspectOwner,
     status: (target) =>
       Effect.gen(function* () {
         const definitionResult = yield* definitionFor(target, runtime, false).pipe(Effect.result);
@@ -535,7 +540,7 @@ export const makeResidentService = (
                   : "unsupported",
             managed: Result.fail(failure),
             supervisor: Result.fail(failure),
-            process: yield* gateway.status(target).pipe(Effect.result),
+            process: yield* inspectOwner(target).pipe(Effect.result),
             scheduler: yield* scheduler.status(target).pipe(Effect.result),
             discord: yield* readDiscordHealth(target.path, Date.now()).pipe(Effect.result),
             slack: yield* readSlackHealth(target.path, Date.now()).pipe(Effect.result),
@@ -548,7 +553,7 @@ export const makeResidentService = (
           [
             runtime.inspectDefinition(definition).pipe(Effect.result),
             inspectSupervisor(definition, runtime).pipe(Effect.result),
-            gateway.status(target).pipe(Effect.result),
+            inspectOwner(target).pipe(Effect.result),
             scheduler.status(target).pipe(Effect.result),
             readDiscordHealth(target.path, Date.now()).pipe(Effect.result),
             readSlackHealth(target.path, Date.now()).pipe(Effect.result),
@@ -573,6 +578,13 @@ export const makeResidentService = (
 export const ResidentServiceOperationsLive = Layer.effect(
   ResidentServiceOperations,
   Effect.gen(function* () {
-    return makeResidentService(yield* ResidentGateway, yield* AutomationScheduler);
+    const paths = yield* ZiggyPaths;
+    const runtime = yield* Effect.sync(() => liveRuntime(paths));
+
+    return makeResidentService(
+      (target) => inspectGatewayOwner(target),
+      yield* AutomationScheduler,
+      runtime,
+    );
   }),
 );

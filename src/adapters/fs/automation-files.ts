@@ -12,8 +12,8 @@ import {
   AutomationProjectionError,
   type AutomationId,
 } from "../../domain/automation";
-import type { ProfileTarget } from "../../domain/profile";
-import { fileSystemCauseDetails } from "./cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
+import { type ProfileTarget } from "../../profile";
 
 export type AutomationLifecycle = "active" | "paused";
 

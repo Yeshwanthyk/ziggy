@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { InlineExtension, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import { codePointLength } from "../../domain/memory";
+import { codePointLength } from "../../platform/text";
 import {
   PI_DOC_FILES,
   PI_DOCS_FINGERPRINT,

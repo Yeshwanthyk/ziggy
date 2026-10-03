@@ -9,14 +9,10 @@ import {
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
 import { Deferred, Effect, Schema } from "effect";
-import {
-  makeChatHandle,
-  type ChatHandle,
-  type ChatPromptOptions,
-  type ZiggyAgentApi,
-} from "ziggy/application/agent";
-import type { ModelsApi } from "ziggy/application/models";
+import { type ChatHandle, type ChatPromptOptions, type ZiggyAgentApi } from "ziggy/session/index";
+import { makeChatHandle } from "../harness/chat-handle";
 import { makeAcpAgent } from "ziggy/faces/acp";
+import { type ModelsApi } from "ziggy/profile/index";
 
 const target = { path: "/profile", name: "Profile" } as const;
 
@@ -46,22 +42,15 @@ const decodeNewSessionWithModels = Schema.decodeUnknownSync(
   }),
 );
 
-const stubAgent = (openChat: ZiggyAgentApi["openChat"]): ZiggyAgentApi => ({
+const stubAgent = (open: ZiggyAgentApi["open"]): ZiggyAgentApi => ({
   runOnce: () => Effect.never,
-  openChat,
-  openSpecialistChat: () => Effect.never,
+  open,
   runSpecialist: () => Effect.never,
 });
 
 const stubModels: ModelsApi = {
+  check: () => Effect.never,
   status: () =>
-    Effect.succeed({
-      providerId: "openai",
-      modelId: "gpt-5",
-      thinking: "high",
-      authConfigured: true,
-    }),
-  readOnlyStatus: () =>
     Effect.succeed({
       providerId: "openai",
       modelId: "gpt-5",
@@ -121,7 +110,7 @@ test("ACP v1 NDJSON initializes, opens a local session, and streams ordered text
         const app = yield* makeAcpAgent(
           target,
           false,
-          stubAgent((_target, context, directory, mode) => {
+          stubAgent(({ context, directory, session: mode }) => {
             opened = { context: context.kind, directory, mode };
 
             return Effect.succeed(handle);
@@ -180,13 +169,13 @@ test("ACP v1 NDJSON initializes, opens a local session, and streams ordered text
   expect(result.initialized).toEqual({
     protocolVersion: 1,
     agentCapabilities: {},
-    agentInfo: { name: "ziggy", title: "Ziggy", version: "0.3.0" },
+    agentInfo: { name: "ziggy", title: "Ziggy", version: "0.4.0" },
   });
   expect(result.prompted).toEqual({ stopReason: "end_turn" });
   expect(opened).toEqual({
     context: "local",
     directory: `/profile/sessions/acp/${result.session.sessionId}`,
-    mode: "fresh",
+    mode: "new",
   });
   expect(promptText).toBe(
     "Review this\n\nResource: spec\nURI: file:///workspace/spec.md\nDescription: the specification",
@@ -212,7 +201,7 @@ test("ACP rejects unsupported session and prompt inputs and isolates shared memo
         const app = yield* makeAcpAgent(
           target,
           true,
-          stubAgent((_target, context) => {
+          stubAgent(({ context }) => {
             groupId = context.kind === "group" ? context.groupId : undefined;
 
             return Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("ok") }));
@@ -261,13 +250,25 @@ test("ACP rejects unsupported session and prompt inputs and isolates shared memo
 });
 
 test("ACP session/new announces auth-configured models and session/set_model validates them", async () => {
+  const applied: Array<string> = [];
+
+  const handle = makeChatHandle({
+    prompt: () => Effect.succeed("ok"),
+    setModel: (providerId, modelId) =>
+      Effect.sync(() => {
+        applied.push(`${providerId}/${modelId}`);
+
+        return { providerId, modelId, thinking: "low" as const };
+      }),
+  });
+
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const app = yield* makeAcpAgent(
           target,
           false,
-          stubAgent(() => Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("ok") }))),
+          stubAgent(() => Effect.succeed(handle)),
           stubModels,
         );
 
@@ -297,6 +298,7 @@ test("ACP session/new announces auth-configured models and session/set_model val
             });
 
             expect(accepted).toEqual({});
+            expect(applied).toEqual(["openai/gpt-5"]);
             await expect(
               agentContext.request("session/set_model", {
                 sessionId: session.sessionId,
@@ -327,8 +329,7 @@ test("ACP routes sessions to a specialist when --agent is set", async () => {
           false,
           {
             runOnce: () => Effect.never,
-            openChat: () => Effect.never,
-            openSpecialistChat: (target, agentId) =>
+            open: ({ target, agent: agentId }) =>
               Effect.sync(() => {
                 opened.push(`${target.name}:${agentId}`);
 
@@ -409,24 +410,24 @@ test("ACP cancellation aborts the active handle and resolves the prompt as cance
 
 test("ACP stdio keeps incidental runtime logs off protocol stdout", async () => {
   const faceUrl = new URL("../../src/faces/acp.ts", import.meta.url).href;
+  const handleUrl = new URL("../harness/chat-handle.ts", import.meta.url).href;
 
   const script = `
     import { Effect } from "effect";
-    import { makeChatHandle } from "ziggy/application/agent";
+    import { makeChatHandle } from ${JSON.stringify(handleUrl)};
     import { runAcp } from ${JSON.stringify(faceUrl)};
     const handle = makeChatHandle({ prompt: () => Effect.succeed("ok") });
     const agent = {
       runOnce: () => Effect.never,
-      openChat: () => Effect.sync(() => {
+      open: () => Effect.sync(() => {
         console.log("incidental open log");
         return handle;
       }),
-      openSpecialistChat: () => Effect.never,
       runSpecialist: () => Effect.never,
     };
     const models = {
       status: () => Effect.succeed({ providerId: "openai", modelId: "gpt-5", thinking: "high", authConfigured: true }),
-      readOnlyStatus: () => Effect.succeed({ providerId: "openai", modelId: "gpt-5", thinking: "high", authConfigured: true }),
+      status: () => Effect.succeed({ providerId: "openai", modelId: "gpt-5", thinking: "high", authConfigured: true }),
       list: () => Effect.succeed([{ providerId: "openai", modelId: "gpt-5", name: "GPT-5", thinkingLevels: ["medium", "high"] }]),
       available: () => Effect.succeed([{ providerId: "openai", modelId: "gpt-5", name: "GPT-5", thinkingLevels: ["medium", "high"] }]),
       set: () => Effect.succeed({ providerId: "openai", modelId: "gpt-5", thinking: "high" }),

@@ -151,7 +151,7 @@ export type UiAutomationRunCommandResult = typeof UiAutomationRunCommandResult.T
 
 const UiExtensionDescription = boundedString("extension description", 512, 0);
 
-const UiExtensionChoiceKind = Schema.Literals(["skill", "code", "skill+code", "remote"]);
+const UiExtensionChoiceKind = Schema.Literals(["skill", "code", "skill+code", "plugin", "remote"]);
 
 const UiExtensionChoiceSource = Schema.Literals(["bundled", "remote-approved", "profile"]);
 
@@ -199,6 +199,13 @@ export const UiExtensionMutationResult = Schema.Struct({
 });
 
 export type UiExtensionMutationResult = typeof UiExtensionMutationResult.Type;
+
+/** Never carries the value. */
+export const UiPluginSecretSetResult = Schema.Struct({
+  profileId: ProfileId,
+  name: boundedString("plugin secret name", 128),
+  stored: Schema.Literal(true),
+});
 
 export const UiExtensionValidationResult = Schema.Struct({
   profileId: ProfileId,

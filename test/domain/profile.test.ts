@@ -4,26 +4,23 @@ import { Effect, Predicate, Result, Schema } from "effect";
 import {
   parseLeadingProfileAgentMention,
   prepareProfileAgentPrompt,
-  profileCliTarget,
   ProfileAgent,
-  resolveProfilesDirectory,
-  resolveProfilesRegistry,
-  resolveProfileTarget,
-  resolveZiggyHome,
 } from "ziggy/domain/profile";
+import { ZiggyPaths } from "ziggy/platform/paths";
+import { profileCliTarget, resolveProfileTarget } from "ziggy/profile/index";
 
 const decodeProfileAgent = Schema.decodeUnknownEffect(ProfileAgent);
 
 test("Profile targets resolve names through Ziggy home and explicit paths through cwd", () => {
-  const options = {
+  const options = ZiggyPaths.make({
     cwd: "/workspace/current",
     homedir: "/Users/test",
     ziggyHome: "../ziggy-home",
-  };
+  });
 
-  expect(resolveZiggyHome(options)).toBe("/workspace/ziggy-home");
-  expect(resolveProfilesDirectory(options)).toBe("/workspace/ziggy-home/profiles");
-  expect(resolveProfilesRegistry(options)).toBe("/workspace/ziggy-home/profiles.list");
+  expect(options.ziggyHome).toBe("/workspace/ziggy-home");
+  expect(options.profilesDirectory).toBe("/workspace/ziggy-home/profiles");
+  expect(options.profilesRegistry).toBe("/workspace/ziggy-home/profiles.list");
   expect(resolveProfileTarget("buddy", options)).toEqual({
     path: "/workspace/ziggy-home/profiles/buddy",
     name: "Buddy",
@@ -39,9 +36,9 @@ test("Profile targets resolve names through Ziggy home and explicit paths throug
 });
 
 test("Profile targets default to ~/.ziggy and preserve current-directory entry", () => {
-  const options = { cwd: "/workspace/current", homedir: "/Users/test" };
+  const options = ZiggyPaths.make({ cwd: "/workspace/current", homedir: "/Users/test" });
 
-  expect(resolveZiggyHome(options)).toBe("/Users/test/.ziggy");
+  expect(options.ziggyHome).toBe("/Users/test/.ziggy");
   expect(resolveProfileTarget(".", options)).toEqual({
     path: "/workspace/current",
     name: "Current",
@@ -49,8 +46,8 @@ test("Profile targets default to ~/.ziggy and preserve current-directory entry",
 });
 
 test("Profile CLI targets round-trip to the exact Profile path", () => {
-  const options = { cwd: "/workspace/current", homedir: "/Users/test" };
-  const profiles = resolveProfilesDirectory(options);
+  const options = ZiggyPaths.make({ cwd: "/workspace/current", homedir: "/Users/test" });
+  const profiles = options.profilesDirectory;
 
   const roundTrip = (profilePath: string) =>
     resolveProfileTarget(profileCliTarget(profilePath, profiles), options).path;

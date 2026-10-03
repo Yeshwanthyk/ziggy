@@ -36,8 +36,8 @@ import {
   type SlackHealthEvent,
 } from "../../domain/slack-health";
 import { automationTargetFromString } from "../../domain/automation";
-import { ZiggyAgent, type ZiggyAgentApi } from "../agent";
-import type { ChatRegistryApi } from "../chat-registry";
+import { ZiggyAgent, type ZiggyAgentApi } from "../../session";
+import type { LiveSessionsApi } from "../../resident/live-sessions";
 import { uniqueSlackStatusTargets } from "./delivery";
 import {
   classifySlackCommand,
@@ -63,18 +63,15 @@ const MAX_PENDING_TURNS_PER_CHAT = 8;
 
 const BUSY_MESSAGE = "This conversation is busy. Please try again later.";
 
-const disposeChats = (
-  chats: Map<string, ChatState>,
-  registry?: ChatRegistryApi,
-): Effect.Effect<void> =>
+const disposeChats = (chats: Map<string, ChatState>, live?: LiveSessionsApi): Effect.Effect<void> =>
   Effect.forEach(
     [...chats.entries()],
     ([chatKey, state]) =>
       state.handle === undefined
         ? Effect.void
-        : (registry === undefined
+        : (live === undefined
             ? state.handle.dispose
-            : registry.closeAlias(`slack/${chatKey}`, state.handle)
+            : live.release(`slack/${chatKey}`, state.handle)
           ).pipe(
             Effect.catch((failure) =>
               Effect.sync(() => {
@@ -155,7 +152,7 @@ export const makeSlackGateway = (
   healthRuntime: SlackHealthRuntime = silentSlackHealthRuntime,
   ingressRuntime: SlackIngressRuntime = volatileSlackIngressRuntime,
 ): SlackGatewayApi => ({
-  runLoop: (target, config, registry) =>
+  runLoop: (target, config, live, destinations) =>
     Effect.scoped(
       Effect.gen(function* () {
         const ingressOwnerId = randomUUID();
@@ -205,7 +202,7 @@ export const makeSlackGateway = (
         let reactionsAvailable = true;
 
         const rememberChannel = (channel: string): Effect.Effect<void> =>
-          registry === undefined
+          destinations === undefined
             ? Effect.void
             : Effect.gen(function* () {
                 const target = automationTargetFromString(`slack:channel:${channel}`);
@@ -217,7 +214,7 @@ export const makeSlackGateway = (
                 const destination =
                   knownLabel === undefined ? { target } : { target, label: knownLabel };
 
-                yield* registry.rememberDestination(destination);
+                yield* destinations.remember(destination);
 
                 if (transport.getConversation === undefined || channelLookups.has(channel)) return;
 
@@ -234,7 +231,7 @@ export const makeSlackGateway = (
                 if (label.length === 0) return;
 
                 channelLabels.set(channel, label);
-                yield* registry.rememberDestination({
+                yield* destinations.remember({
                   target,
                   label,
                 });
@@ -309,7 +306,7 @@ export const makeSlackGateway = (
                   Effect.logWarning("Slack socket close failed", { failure }),
                 ),
               ),
-              disposeChats(chats, registry),
+              disposeChats(chats, live),
             ],
             { concurrency: "unbounded", discard: true },
           ).pipe(Effect.andThen(observe({ _tag: "stopped", atMs: healthRuntime.now() }))),
@@ -363,7 +360,7 @@ export const makeSlackGateway = (
           ingressRuntime,
           target,
           config,
-          registry,
+          live,
           ingressOwnerId,
           botUserId: bot.userId,
           channelLabels,
@@ -381,7 +378,7 @@ export const makeSlackGateway = (
           Effect.gen(function* () {
             yield* rememberChannel(message.channel);
 
-            if (registry !== undefined && message.context.kind === "group") {
+            if (destinations !== undefined && message.context.kind === "group") {
               const threadTs = message.statusThreadTs;
               const channelLabel = channelLabels.get(message.channel);
 
@@ -395,7 +392,7 @@ export const makeSlackGateway = (
                     ? { target }
                     : { target, label: `${channelLabel} · thread` };
 
-                yield* registry.rememberDestination(destination);
+                yield* destinations.remember(destination);
               }
             }
 

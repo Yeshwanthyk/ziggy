@@ -1,15 +1,13 @@
 import { join } from "node:path";
 import { Deferred, Duration, Effect, Exit, Queue, Result } from "effect";
 import type { SlackApiError } from "../../adapters/slack/api";
-import { codePointLength } from "../../domain/memory";
+import { codePointLength } from "../../platform/text";
 import type { SlackGatewayConfig } from "../../domain/slack";
 import type { SlackHealthEvent } from "../../domain/slack-health";
-import type { ProfileTarget } from "../../domain/profile";
-import type { ZiggyAgentError } from "../../domain/agent";
-import type { UiGatewayError } from "../../domain/ui-gateway";
+import type { ProfileSpecialistError } from "../../domain/agent";
 import type { SlackIngressDatabaseError } from "../../domain/slack-ingress";
-import { formatSpecialistVoice, type ZiggyAgentApi } from "../agent";
-import type { ChatRegistryApi } from "../chat-registry";
+import { formatSpecialistVoice, type ZiggyAgentApi } from "../../session";
+import type { LiveSessionRefused, LiveSessionsApi } from "../../resident/live-sessions";
 import { slackTaskTitle } from "../slack-tool-progress";
 import { makeTurnProgress } from "./progress";
 import { slackReplyThreadTs } from "./intake";
@@ -35,6 +33,7 @@ import type {
   SlackIngressRuntime,
   SlackTransport,
 } from "./model";
+import { type ProfileTarget } from "../../profile";
 
 const HEARTBEAT_SECONDS = 30;
 
@@ -45,7 +44,7 @@ interface SlackTurnContext {
   readonly ingressRuntime: SlackIngressRuntime;
   readonly target: ProfileTarget;
   readonly config: SlackGatewayConfig;
-  readonly registry: ChatRegistryApi | undefined;
+  readonly live: LiveSessionsApi | undefined;
   readonly ingressOwnerId: string;
   readonly botUserId: string;
   readonly channelLabels: Map<string, string>;
@@ -62,7 +61,7 @@ export const makeSlackTurnProcessor =
     ingressRuntime,
     target,
     config,
-    registry,
+    live,
     ingressOwnerId,
     botUserId,
     channelLabels,
@@ -311,21 +310,20 @@ export const makeSlackTurnProcessor =
               let handle = chatState.handle;
 
               if (handle === undefined) {
-                const open = agent.openChat(
+                const label = channelLabels.get(message.channel);
+
+                const open = agent.open({
                   target,
-                  message.context,
-                  join(target.path, "sessions", "slack", message.chatKey),
-                  "continue",
-                  undefined,
-                  channelLabels.get(message.channel) === undefined
-                    ? undefined
-                    : `Slack · ${channelLabels.get(message.channel)}`,
-                );
+                  context: message.context,
+                  directory: join(target.path, "sessions", "slack", message.chatKey),
+                  session: "continue",
+                  name: label === undefined ? undefined : `Slack · ${label}`,
+                });
 
                 handle =
-                  registry === undefined
+                  live === undefined
                     ? yield* open
-                    : yield* registry.openAlias(`slack/${message.chatKey}`, "slack", open);
+                    : yield* live.acquire(`slack/${message.chatKey}`, "slack", open);
                 chatState.handle = handle;
               }
 
@@ -598,8 +596,13 @@ export const makeSlackTurnProcessor =
 
       yield* work.pipe(
         Effect.catch(
-          (failure: ZiggyAgentError | SlackApiError | SlackIngressDatabaseError | UiGatewayError) =>
-            Effect.logError(`[slack] ${message.chatKey} failed`, { failure }),
+          (
+            failure:
+              | ProfileSpecialistError
+              | SlackApiError
+              | SlackIngressDatabaseError
+              | LiveSessionRefused,
+          ) => Effect.logError(`[slack] ${message.chatKey} failed`, { failure }),
         ),
       );
     });

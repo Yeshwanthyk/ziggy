@@ -1,297 +1,147 @@
-import { spawn } from "node:child_process";
-import { constants as fsConstants } from "node:fs";
-import { access, mkdir, realpath } from "node:fs/promises";
-import net from "node:net";
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { toBoolean, toFiniteNumber, toOptionalString } from "../coerce.mts";
-import type { PlatformDiagnostics } from "../types.mts";
-import { resolveMacosHelperAppPath } from "./helper-path.mjs";
-
-const COMMAND_TIMEOUT_MS = 15_000;
-const HELPER_PROTOCOL_VERSION = 6;
-const HELPER_SETUP_TIMEOUT_MS = 60_000;
-
-export const HELPER_BUNDLE_ID = "com.injaneity.pi-computer-use";
-export const HELPER_APP_PATH = resolveMacosHelperAppPath();
-export const HELPER_APP_EXECUTABLE_PATH = path.join(HELPER_APP_PATH, "Contents", "MacOS", "bridge");
-const DEFAULT_HELPER_SOCKET_PATH = path.join(os.homedir(), "Library", "Caches", "pi-computer-use", "bridge.sock");
-export const HELPER_SOCKET_PATH = process.env.PI_CU_SOCKET_PATH ?? DEFAULT_HELPER_SOCKET_PATH;
-const usingExternalHelperSocket = HELPER_SOCKET_PATH !== DEFAULT_HELPER_SOCKET_PATH;
-
-const PACKAGE_ROOT = path.resolve(
-	path.dirname(fileURLToPath(import.meta.url)),
-	"..",
-	"..",
-	"..",
-	"..",
-);
-const SETUP_HELPER_SCRIPT = path.join(PACKAGE_ROOT, "scripts", "setup-helper.mjs");
-
-export class HelperTransportError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = "HelperTransportError";
-	}
+import { serializeOutlineNode } from "./outline.mjs";
+function numericRef(ref) {
+    const match = /^@e(\d+)$/.exec(ref);
+    return match ? Number(match[1]) : 0;
 }
-
-export class HelperCommandError extends Error {
-	readonly code?: string;
-
-	constructor(message: string, code?: string) {
-		super(message);
-		this.name = "HelperCommandError";
-		this.code = code;
-	}
+function rebuildIndexes(outline) {
+    outline.nodes = [];
+    outline.refToWireRef = new Map();
+    outline.wireRefToRef = new Map();
+    const queue = [outline.root];
+    while (queue.length > 0) {
+        const node = queue.shift();
+        outline.nodes.push(node);
+        if (node.wireRef) {
+            outline.refToWireRef.set(node.ref, node.wireRef);
+            outline.wireRefToRef.set(node.wireRef, node.ref);
+        }
+        queue.push(...node.children);
+    }
 }
-
-function throwIfAborted(signal?: AbortSignal): void {
-	if (signal?.aborted) throw new Error("Operation aborted.");
+function structuralToken(node) {
+    return [node.role, node.subrole, node.identifier, node.title, node.description].map((value) => value.trim().toLowerCase()).join("|");
 }
-
-async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-	throwIfAborted(signal);
-	await new Promise<void>((resolve, reject) => {
-		const timer = setTimeout(resolve, ms);
-		const onAbort = () => {
-			clearTimeout(timer);
-			reject(new Error("Operation aborted."));
-		};
-		signal?.addEventListener("abort", onAbort, { once: true });
-	}).finally(() => signal?.throwIfAborted?.());
+function structuralKey(node) {
+    const parts = [];
+    let current = node;
+    while (current) {
+        const token = structuralToken(current);
+        const siblings = current.parent?.children ?? [current];
+        const peers = siblings.filter((candidate) => structuralToken(candidate) === token);
+        parts.unshift(`${token}#${Math.max(0, peers.indexOf(current))}`);
+        current = current.parent;
+    }
+    return parts.join(">");
 }
-
-async function isExecutable(filePath: string): Promise<boolean> {
-	try {
-		await access(filePath, fsConstants.X_OK);
-		return true;
-	} catch {
-		return false;
-	}
+/** Preserve public refs only when native or structural identity is unambiguous. */
+export function stabilizeRefs(base, next) {
+    if (!base)
+        return next;
+    const reserved = new Set();
+    const assigned = new Set();
+    const byWireRef = new Map(base.nodes.filter((node) => node.wireRef).map((node) => [node.wireRef, node.ref]));
+    const structuralGroups = new Map();
+    for (const node of base.nodes) {
+        const key = structuralKey(node);
+        structuralGroups.set(key, [...(structuralGroups.get(key) ?? []), node]);
+    }
+    let nextIndex = Math.max(0, ...base.nodes.map((node) => numericRef(node.ref))) + 1;
+    for (const node of next.nodes) {
+        const wireStable = node.wireRef ? byWireRef.get(node.wireRef) : undefined;
+        const structuralMatches = structuralGroups.get(structuralKey(node)) ?? [];
+        const stable = wireStable ?? (structuralMatches.length === 1 ? structuralMatches[0].ref : undefined);
+        if (stable && !reserved.has(stable)) {
+            node.ref = stable;
+            reserved.add(stable);
+            assigned.add(node);
+        }
+    }
+    for (const node of next.nodes) {
+        if (assigned.has(node))
+            continue;
+        while (reserved.has(`@e${nextIndex}`))
+            nextIndex += 1;
+        node.ref = `@e${nextIndex++}`;
+        reserved.add(node.ref);
+    }
+    rebuildIndexes(next);
+    return next;
 }
-
-async function isResolvedHelperExecutable(filePath?: string): Promise<boolean> {
-	if (!filePath) return true;
-	const [actualPath, expectedPath] = await Promise.all([
-		realpath(filePath).catch(() => path.resolve(filePath)),
-		realpath(HELPER_APP_EXECUTABLE_PATH).catch(() => path.resolve(HELPER_APP_EXECUTABLE_PATH)),
-	]);
-	return actualPath === expectedPath;
+function comparable(node) {
+    const { children: _children, ...fields } = serializeOutlineNode(node);
+    return {
+        ...fields,
+        rect: fields.rect ? { x: Math.round(fields.rect.x), y: Math.round(fields.rect.y), w: Math.round(fields.rect.w), h: Math.round(fields.rect.h) } : undefined,
+        text: fields.text.map((item) => ({ string: item.string, confidence: Math.round(item.confidence * 100) / 100 })),
+    };
 }
-
-export async function runProcess(
-	command: string,
-	args: string[],
-	timeoutMs: number,
-	signal?: AbortSignal,
-	env?: NodeJS.ProcessEnv,
-): Promise<void> {
-	throwIfAborted(signal);
-
-	await new Promise<void>((resolve, reject) => {
-		const child = spawn(command, args, {
-			stdio: ["ignore", "pipe", "pipe"],
-			env,
-		});
-
-		let stderr = "";
-		let stdout = "";
-
-		const timer = setTimeout(() => {
-			child.kill("SIGTERM");
-			cleanup();
-			reject(new Error(`Command timed out after ${timeoutMs}ms: ${command} ${args.join(" ")}`));
-		}, timeoutMs);
-
-		const onAbort = () => {
-			child.kill("SIGTERM");
-			cleanup();
-			reject(new Error("Operation aborted."));
-		};
-
-		const cleanup = () => {
-			clearTimeout(timer);
-			signal?.removeEventListener("abort", onAbort);
-		};
-
-		child.stdout.on("data", (chunk) => {
-			stdout += String(chunk);
-		});
-
-		child.stderr.on("data", (chunk) => {
-			stderr += String(chunk);
-		});
-
-		child.on("error", (error) => {
-			cleanup();
-			reject(error);
-		});
-
-		child.on("close", (code) => {
-			cleanup();
-			if (code === 0) {
-				resolve();
-				return;
-			}
-			const output = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
-			reject(new Error(`Command failed (${code}): ${command} ${args.join(" ")}\n${output}`.trim()));
-		});
-
-		signal?.addEventListener("abort", onAbort, { once: true });
-	});
+function changedFields(base, next) {
+    const before = comparable(base);
+    const after = comparable(next);
+    const fields = {};
+    for (const key of Object.keys(after)) {
+        if (key === "ref" || key === "wireRef")
+            continue;
+        if (JSON.stringify(before[key]) !== JSON.stringify(after[key]))
+            fields[key] = after[key];
+    }
+    return fields;
 }
-
-export class MacosHelperClient {
-	private daemonAvailable = false;
-	private requestSequence = 0;
-	private diagnosticsCache?: PlatformDiagnostics;
-
-	get diagnostics(): PlatformDiagnostics | undefined {
-		return this.diagnosticsCache;
-	}
-
-	async ensureInstalled(signal?: AbortSignal): Promise<void> {
-		if (usingExternalHelperSocket) return;
-		// Installation is a deployment/repair operation, not part of every new
-		// agent process's hot path. Protocol compatibility is checked against the
-		// live daemon immediately afterwards.
-		if (await isExecutable(HELPER_APP_EXECUTABLE_PATH)) {
-			return;
-		}
-
-		// Re-enter Electron and Bun standalone hosts as their JavaScript runtimes.
-		await runProcess(process.execPath, [SETUP_HELPER_SCRIPT, "--runtime"], HELPER_SETUP_TIMEOUT_MS, signal, {
-			...process.env,
-			ELECTRON_RUN_AS_NODE: "1",
-			BUN_BE_BUN: "1",
-		});
-
-		if (!(await isExecutable(HELPER_APP_EXECUTABLE_PATH))) {
-			throw new Error(`Failed to install pi-computer-use helper app at ${HELPER_APP_PATH}.`);
-		}
-	}
-
-	async launchDaemon(signal?: AbortSignal): Promise<void> {
-		if (usingExternalHelperSocket) throw new HelperTransportError(`External helper socket is unavailable at ${HELPER_SOCKET_PATH}.`);
-		await mkdir(path.dirname(HELPER_SOCKET_PATH), { recursive: true });
-		// Open the resolved bundle directly so a legacy system-wide copy with the
-		// same bundle id cannot win LaunchServices resolution.
-		await runProcess("open", ["-n", "-g", HELPER_APP_PATH, "--args", "serve", "--socket", HELPER_SOCKET_PATH], COMMAND_TIMEOUT_MS, signal);
-	}
-
-	async daemonCommand<T>(cmd: string, args: Record<string, unknown>, timeoutMs: number, signal?: AbortSignal): Promise<T> {
-		return await new Promise<T>((resolve, reject) => {
-			const id = `req_${++this.requestSequence}`;
-			const socket = net.createConnection(HELPER_SOCKET_PATH);
-			let buffer = "";
-			const timer = setTimeout(() => { socket.destroy(); reject(new HelperTransportError(`Daemon command '${cmd}' timed out after ${timeoutMs}ms.`)); }, timeoutMs);
-			const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", onAbort); };
-			const onAbort = () => { socket.destroy(); cleanup(); reject(new Error("Operation aborted.")); };
-			signal?.addEventListener("abort", onAbort, { once: true });
-			socket.setEncoding("utf8");
-			socket.on("connect", () => socket.write(`${JSON.stringify({ id, cmd, ...args })}\n`));
-			socket.on("data", (chunk) => {
-				buffer += chunk;
-				const newline = buffer.indexOf("\n");
-				if (newline < 0) return;
-				cleanup();
-				socket.end();
-				try {
-					const parsed = JSON.parse(buffer.slice(0, newline));
-					if (parsed.ok === true) resolve(parsed.result as T);
-					else reject(new HelperCommandError(parsed?.error?.message ?? `Daemon command '${cmd}' failed.`, parsed?.error?.code));
-				} catch (error) {
-					reject(error);
-				}
-			});
-			socket.on("error", (error) => { cleanup(); reject(new HelperTransportError(error.message)); });
-		});
-	}
-
-	async ensureDaemon(signal?: AbortSignal): Promise<boolean> {
-		if (this.daemonAvailable) return true;
-		try {
-			await this.daemonCommand("diagnostics", {}, 1_000, signal);
-			this.daemonAvailable = true;
-			return true;
-		} catch {}
-		await this.launchDaemon(signal).catch(() => undefined);
-		for (let index = 0; index < 30; index += 1) {
-			try {
-				await this.daemonCommand("diagnostics", {}, 1_000, signal);
-				this.daemonAvailable = true;
-				return true;
-			} catch {
-				await sleep(100, signal);
-			}
-		}
-		return false;
-	}
-
-	async command<T>(cmd: string, args: Record<string, unknown> = {}, options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<T> {
-		const timeoutMs = options?.timeoutMs ?? COMMAND_TIMEOUT_MS;
-		if (!(await this.ensureDaemon(options?.signal))) {
-			throw new HelperTransportError(`pi-computer-use helper app daemon is unavailable at ${HELPER_APP_PATH}.`);
-		}
-		try {
-			return await this.daemonCommand<T>(cmd, args, timeoutMs, options?.signal);
-		} catch (error) {
-			this.daemonAvailable = false;
-			throw error instanceof Error ? error : new Error(String(error));
-		}
-	}
-
-	async restart(signal?: AbortSignal): Promise<void> {
-		await this.command("shutdown", {}, { signal, timeoutMs: 2_000 }).catch(() => undefined);
-		this.daemonAvailable = false;
-		await sleep(400, signal);
-		if (!(await this.ensureDaemon(signal))) {
-			throw new Error(`pi-computer-use helper did not come back after restart. Helper app: ${HELPER_APP_PATH}`);
-		}
-	}
-
-	async diagnosticsCommand(signal?: AbortSignal): Promise<PlatformDiagnostics> {
-		const result = await this.command<any>("diagnostics", {}, { signal });
-		const diagnostics = {
-			protocolVersion: Math.trunc(toFiniteNumber(result?.protocolVersion, 0)),
-			architectureVersion: Math.trunc(toFiniteNumber(result?.architectureVersion, 0)),
-			invariants: Array.isArray(result?.invariants) ? result.invariants.filter((value: unknown): value is string => typeof value === "string") : [],
-			pid: Math.trunc(toFiniteNumber(result?.pid, 0)),
-			parentPid: Math.trunc(toFiniteNumber(result?.parentPid, 0)) || undefined,
-			parentAppName: toOptionalString(result?.parentAppName),
-			parentBundleId: toOptionalString(result?.parentBundleId),
-			parentPath: toOptionalString(result?.parentPath),
-			executablePath: toOptionalString(result?.executablePath),
-			os: toOptionalString(result?.macOS),
-			arch: toOptionalString(result?.arch),
-			accessibility: toBoolean(result?.accessibility),
-			screenRecording: toBoolean(result?.screenRecording),
-		};
-		this.diagnosticsCache = diagnostics;
-		return diagnostics;
-	}
-
-	async ensureProtocol(signal?: AbortSignal): Promise<PlatformDiagnostics> {
-		let diagnostics = await this.diagnosticsCommand(signal);
-		const executableMatches = await isResolvedHelperExecutable(diagnostics.executablePath);
-		if (diagnostics.protocolVersion === HELPER_PROTOCOL_VERSION && executableMatches) return diagnostics;
-
-		// The helper daemon outlives Pi, so restarting/reloading Pi alone does not
-		// replace a stale daemon or one launched from the legacy system location.
-		// Stop it through the backwards-compatible command channel and relaunch
-		// the exact app bundle that ensureInstalled() resolved.
-		await this.restart(signal);
-		diagnostics = await this.diagnosticsCommand(signal);
-		const relaunchedExecutableMatches = await isResolvedHelperExecutable(diagnostics.executablePath);
-		if (diagnostics.protocolVersion !== HELPER_PROTOCOL_VERSION || !relaunchedExecutableMatches) {
-			this.daemonAvailable = false;
-			throw new Error(
-				`pi-computer-use helper mismatch after relaunch: expected protocol ${HELPER_PROTOCOL_VERSION} and executable ${HELPER_APP_EXECUTABLE_PATH}; got protocol ${diagnostics.protocolVersion} and executable ${diagnostics.executablePath ?? "unknown"}. Reinstall or rebuild the helper app at ${HELPER_APP_PATH}.`,
-			);
-		}
-		return diagnostics;
-	}
+function refPath(node) {
+    const refs = [];
+    let current = node;
+    while (current) {
+        refs.unshift(current.ref);
+        current = current.parent;
+    }
+    return refs;
 }
-
-export const macosHelper = new MacosHelperClient();
+export function changesBetween(base, next) {
+    if (base.root.role !== next.root.role || base.root.subrole !== next.root.subrole) {
+        return { changes: [], changedNodeCount: next.nodes.length, fullNodeCount: next.nodes.length, useFullView: true, reason: "root_replaced" };
+    }
+    const before = new Map(base.nodes.map((node) => [node.ref, node]));
+    const after = new Map(next.nodes.map((node) => [node.ref, node]));
+    const changes = [];
+    for (const node of next.nodes) {
+        const previous = before.get(node.ref);
+        if (!previous)
+            changes.push({ type: "added", ref: node.ref, parent: node.parent?.ref, node: { ...serializeOutlineNode(node), children: [] } });
+        else {
+            const fields = changedFields(previous, node);
+            if (Object.keys(fields).length > 0)
+                changes.push({ type: "updated", ref: node.ref, path: refPath(node), fields });
+        }
+    }
+    for (const node of base.nodes)
+        if (!after.has(node.ref))
+            changes.push({ type: "removed", ref: node.ref, parent: node.parent?.ref });
+    const identityConfidence = next.nodes.length === 0 ? 1 : next.nodes.filter((node) => before.has(node.ref)).length / next.nodes.length;
+    const changeRatio = changes.length / Math.max(1, Math.max(base.nodes.length, next.nodes.length));
+    const identityLow = next.nodes.length > 8 && identityConfidence < 0.4;
+    const overBudget = changes.length > 100 || (changes.length > 20 && changeRatio > 0.65);
+    return {
+        changes,
+        changedNodeCount: changes.length,
+        fullNodeCount: next.nodes.length,
+        useFullView: identityLow || overBudget,
+        reason: identityLow ? "identity_confidence_low" : overBudget ? "change_budget_exceeded" : undefined,
+    };
+}
+function label(node) {
+    return node.title || node.description || node.value || node.identifier || node.text.map((item) => item.string).join(" ").trim() || node.role || "node";
+}
+export function renderChanges(changes) {
+    return changes.map((change) => {
+        if (change.type === "added")
+            return `+ ${change.ref}${change.parent ? ` under ${change.parent}` : ""} ${JSON.stringify(label(change.node))}`;
+        if (change.type === "removed")
+            return `- ${change.ref}${change.parent ? ` from ${change.parent}` : ""}`;
+        const fields = Object.entries(change.fields).filter(([key]) => !["rect", "text", "actions"].includes(key)).slice(0, 6).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(", ");
+        const supplemental = [
+            change.fields.text ? `text=${JSON.stringify(change.fields.text.map((item) => item.string))}` : undefined,
+            change.fields.actions ? `actions=${JSON.stringify(change.fields.actions)}` : undefined,
+        ].filter(Boolean).join(", ");
+        return `~ ${change.ref} (${change.path.join(" > ")}) ${[fields, supplemental].filter(Boolean).join(", ") || "changed"}`;
+    }).join("\n");
+}

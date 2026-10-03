@@ -43,7 +43,7 @@ import fileZiggyResources from "../../../../tooling/pi-docs/ziggy-resources.md" 
 
 export const PI_DOCS_PACKAGE = "@earendil-works/pi-coding-agent";
 export const PI_DOCS_VERSION = "0.99.1";
-export const PI_DOCS_FINGERPRINT = "9703d47e19b0ec069fc42222b14002189d60e4abdf6c190d57aa2cd4f1ee1ec4";
+export const PI_DOCS_FINGERPRINT = "09efee079f98b9cbc5f02058dad04acc522ea44186b60e47924ab47225bfa127";
 
 export const PI_DOC_FILES = new Map<string, string>([
   ["README.md", fileReadme],

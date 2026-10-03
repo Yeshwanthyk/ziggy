@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { Effect } from "effect";
-import { ProviderCallError, ProviderConfigError } from "../../domain/agent";
+import { ProviderCallError } from "../../domain/agent";
+import { ProviderConfigError } from "../../profile";
 
 const runtimeFailureHint = (cause: unknown): string => {
   if (!(cause instanceof Error)) return "check Profile extension diagnostics with ziggy doctor";

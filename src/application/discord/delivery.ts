@@ -1,13 +1,18 @@
 import { Duration, Effect, Result } from "effect";
-import { codePointLength } from "../../domain/memory";
+import { codePointLength } from "../../platform/text";
 import type { DiscordIngressTerminalState } from "../../domain/discord-ingress";
 import {
+  createMessage,
   DISCORD_IMAGE_MIME_TYPES,
   type DiscordApiError,
   isDiscordAttachmentUrl,
   MAX_DISCORD_IMAGE_BYTES,
   type DiscordImageContent,
 } from "../../adapters/discord/api";
+import type { ProfileTarget } from "../../profile";
+import { apiFailure, chatApiUrl, configurationFailure, type DeliveryFailure } from "../delivery";
+import type { GatewayTarget } from "../delivery";
+import { loadDiscordGatewayConfig } from "./intake";
 import type {
   DiscordIngressPayload,
   DiscordIngressAttachmentReference,
@@ -245,4 +250,23 @@ export const retryDiscordFeedback = <A>(
       yield* Effect.sleep(Duration.millis(delayMs));
       attempt += 1;
     }
+  });
+
+/** Post `text` to a Discord channel in Discord-sized chunks. A thread is a channel id. */
+export const deliverDiscord = (
+  profile: ProfileTarget,
+  target: Extract<GatewayTarget, { readonly _tag: "discord" }>,
+  text: string,
+): Effect.Effect<void, DeliveryFailure> =>
+  Effect.gen(function* () {
+    const config = yield* loadDiscordGatewayConfig(profile).pipe(
+      Effect.mapError(() => configurationFailure),
+    );
+
+    const baseUrl = yield* chatApiUrl("ZIGGY_DISCORD_API_URL");
+
+    for (const chunk of discordMessageChunks(text))
+      yield* createMessage(config.botToken, target.channelId, chunk, baseUrl).pipe(
+        Effect.mapError(apiFailure),
+      );
   });

@@ -7,14 +7,22 @@ import {
   type TelegramApiError,
   type TelegramUpdate,
 } from "../adapters/telegram/api";
-import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "./agent";
-import type { ZiggyAgentError } from "../domain/agent";
-import { codePointLength, type ChatContext } from "../domain/memory";
-import type { ProfileTarget } from "../domain/profile";
+import { ZiggyAgent, formatSpecialistVoice, type ChatHandle, type ZiggyAgentApi } from "../session";
+import type { ProfileSpecialistError } from "../domain/agent";
+import { codePointLength } from "../platform/text";
+import type { ChatContext } from "../session";
 import type { TelegramGatewayConfig } from "../domain/telegram";
-import type { ChatRegistryApi } from "./chat-registry";
-import type { UiGatewayError } from "../domain/ui-gateway";
+import type { DestinationBook } from "../resident/destinations";
+import type { LiveSessionRefused, LiveSessionsApi } from "../resident/live-sessions";
+import {
+  apiFailure,
+  chatApiUrl,
+  configurationFailure,
+  type DeliveryFailure,
+  type GatewayTarget,
+} from "./delivery";
 import { automationTargetFromString } from "../domain/automation";
+import { type ProfileTarget } from "../profile";
 
 const TELEGRAM_LONG_POLL_SECONDS = 30;
 
@@ -45,7 +53,8 @@ export interface GatewayApi {
   readonly runLoop: (
     target: ProfileTarget,
     config: TelegramGatewayConfig,
-    registry?: ChatRegistryApi,
+    live?: LiveSessionsApi,
+    destinations?: DestinationBook,
   ) => Effect.Effect<never, GatewayError>;
 }
 
@@ -137,6 +146,25 @@ export const telegramMessageChunks = (text: string): ReadonlyArray<string> => {
   return chunks;
 };
 
+/** Post `text` to a Telegram chat in Telegram-sized chunks. */
+export const deliverTelegram = (
+  profile: ProfileTarget,
+  target: Extract<GatewayTarget, { readonly _tag: "telegram" }>,
+  text: string,
+): Effect.Effect<void, DeliveryFailure> =>
+  Effect.gen(function* () {
+    const config = yield* loadGatewayConfig(profile).pipe(
+      Effect.mapError(() => configurationFailure),
+    );
+
+    const baseUrl = yield* chatApiUrl("ZIGGY_TELEGRAM_API_URL");
+
+    for (const chunk of telegramMessageChunks(text))
+      yield* sendMessage(config.botToken, target.chatId, chunk, baseUrl).pipe(
+        Effect.mapError(apiFailure),
+      );
+  });
+
 export const nextTelegramOffset = (updates: ReadonlyArray<TelegramUpdate>, fallback = 0): number =>
   updates.reduce((nextOffset, update) => Math.max(nextOffset, update.update_id + 1), fallback);
 
@@ -175,18 +203,15 @@ const retryTelegram = <A>(
     }
   });
 
-const disposeChats = (
-  chats: Map<string, ChatState>,
-  registry?: ChatRegistryApi,
-): Effect.Effect<void> =>
+const disposeChats = (chats: Map<string, ChatState>, live?: LiveSessionsApi): Effect.Effect<void> =>
   Effect.forEach(
     [...chats.entries()],
     ([chatKey, state]) =>
       state.handle === undefined
         ? Effect.void
-        : (registry === undefined
+        : (live === undefined
             ? state.handle.dispose
-            : registry.closeAlias(`telegram/${chatKey}`, state.handle)
+            : live.release(`telegram/${chatKey}`, state.handle)
           ).pipe(
             Effect.catch((failure) =>
               Effect.sync(() => {
@@ -206,11 +231,11 @@ export const makeTelegramGateway = (
   agent: ZiggyAgentApi,
   transport: TelegramTransport = liveTelegramTransport,
 ): GatewayApi => ({
-  runLoop: (target, config, registry) =>
+  runLoop: (target, config, live, destinations) =>
     Effect.scoped(
       Effect.gen(function* () {
         const chats = new Map<string, ChatState>();
-        yield* Effect.addFinalizer(() => disposeChats(chats, registry));
+        yield* Effect.addFinalizer(() => disposeChats(chats, live));
 
         const processMessage = (message: InboundMessage) => {
           let state = chats.get(message.chatKey);
@@ -224,31 +249,30 @@ export const makeTelegramGateway = (
 
           return chatState.semaphore.withPermit(
             Effect.gen(function* () {
-              if (registry !== undefined) {
+              if (destinations !== undefined) {
                 const target = automationTargetFromString(`telegram:chat:${message.chatId}`);
 
                 if (target !== undefined) {
                   const destination =
                     message.label === undefined ? { target } : { target, label: message.label };
 
-                  yield* registry.rememberDestination(destination);
+                  yield* destinations.remember(destination);
                 }
               }
 
               if (chatState.handle === undefined) {
-                const open = agent.openChat(
+                const open = agent.open({
                   target,
-                  message.context,
-                  join(target.path, "sessions", "telegram", message.chatKey),
-                  "continue",
-                  undefined,
-                  message.label === undefined ? undefined : `Telegram · ${message.label}`,
-                );
+                  context: message.context,
+                  directory: join(target.path, "sessions", "telegram", message.chatKey),
+                  session: "continue",
+                  name: message.label === undefined ? undefined : `Telegram · ${message.label}`,
+                });
 
                 chatState.handle =
-                  registry === undefined
+                  live === undefined
                     ? yield* open
-                    : yield* registry.openAlias(`telegram/${message.chatKey}`, "telegram", open);
+                    : yield* live.acquire(`telegram/${message.chatKey}`, "telegram", open);
               }
 
               const handle = chatState.handle;
@@ -309,10 +333,11 @@ export const makeTelegramGateway = (
                 `[gateway] ${message.chatKey} in:${codePointLength(message.text)} out:${codePointLength(reply)} chars`,
               );
             }).pipe(
-              Effect.catch((failure: ZiggyAgentError | TelegramApiError | UiGatewayError) =>
-                Effect.sync(() => {
-                  console.error(`[gateway] ${message.chatKey} failed: ${failure.message}`);
-                }),
+              Effect.catch(
+                (failure: ProfileSpecialistError | TelegramApiError | LiveSessionRefused) =>
+                  Effect.sync(() => {
+                    console.error(`[gateway] ${message.chatKey} failed: ${failure.message}`);
+                  }),
               ),
             ),
           );

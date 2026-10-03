@@ -3,6 +3,7 @@ import {
   UiGatewayError,
   type UiExtensionFailure as UiExtensionFailureValue,
 } from "../../domain/ui-gateway";
+import type { LiveSessionRefused } from "../../resident/live-sessions";
 
 export const boundedText = (
   value: string,
@@ -70,6 +71,24 @@ export const protocolFailure = (
 
   return new UiGatewayError({ code, message: bounded });
 };
+
+const LIVE_REFUSAL_CODES = {
+  "not-found": "unknown_session",
+  "watch-only": "watch_only",
+  capacity: "capacity_exceeded",
+  busy: "session_busy",
+  "replay-gap": "replay_gap",
+  "open-failed": "internal",
+} as const satisfies Record<LiveSessionRefused["reason"], UiGatewayError["code"]>;
+
+export const liveFailure = (refusal: LiveSessionRefused): UiGatewayError =>
+  refusal.reason === "open-failed" && Predicate.isTagged(refusal.cause, "SessionHeld")
+    ? protocolFailure(
+        "session_busy",
+        "This session is held by another process; close it there or start a new session",
+        refusal.cause,
+      )
+    : protocolFailure(LIVE_REFUSAL_CODES[refusal.reason], refusal.message, refusal.cause);
 
 export const badParams = (method: string, cause: unknown): UiGatewayError =>
   protocolFailure("bad_params", `invalid params for ${method}`, cause);

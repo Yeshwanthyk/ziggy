@@ -8,6 +8,7 @@
  */
 
 import type { ZiggyAgentRequestMap, ZiggyAgentResultMap } from "./agents";
+import type { ZiggyAppRequestMap, ZiggyAppResultMap } from "./apps";
 import type { ZiggyAutomationRequestMap, ZiggyAutomationResultMap } from "./automations";
 import type {
   ZiggyConversationRequestMap,
@@ -97,6 +98,7 @@ export interface ZiggyRequestMap
     ZiggyAutomationRequestMap,
     ZiggyMemoryRequestMap,
     ZiggyExtensionRequestMap,
+    ZiggyAppRequestMap,
     ZiggyGroupRequestMap,
     ZiggyNavigationRequestMap {
   readonly ping: Record<string, never>;
@@ -111,6 +113,7 @@ export interface ZiggyResultMap
     ZiggyAutomationResultMap,
     ZiggyMemoryResultMap,
     ZiggyExtensionResultMap,
+    ZiggyAppResultMap,
     ZiggyGroupResultMap,
     ZiggyNavigationResultMap {
   readonly ping: ZiggyPingResult;
@@ -242,6 +245,9 @@ export const ZIGGY_METHODS: ReadonlyArray<ZiggyMethod> = [
   "extension.add",
   "extension.remove",
   "extension.validate",
+  "plugin.secret.set",
+  "app.callTool",
+  "app.readResource",
   "pin.list",
   "pin.set",
   "pin.remove",
@@ -420,7 +426,7 @@ export type ZiggyJsonValue =
   | ReadonlyArray<ZiggyJsonValue>
   | { readonly [key: string]: ZiggyJsonValue };
 
-const isJsonValue = (value: unknown): value is ZiggyJsonValue => {
+export const isJsonValue = (value: unknown): value is ZiggyJsonValue => {
   if (value === null || typeof value === "boolean" || typeof value === "string") return true;
   if (typeof value === "number") return Number.isFinite(value);
   if (Array.isArray(value)) return value.every(isJsonValue);

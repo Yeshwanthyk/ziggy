@@ -10,7 +10,7 @@ import {
   type UiRequestEnvelope,
 } from "../../domain/ui-gateway";
 
-import { memoryDocumentFromRelativePath } from "../../domain/memory";
+import { documentFromRelativePath } from "../../memory";
 
 import type { ProfileId } from "../../domain/profile-directory";
 import type { UiGatewayBranch, UiGatewayDependencies } from "./types";
@@ -65,7 +65,7 @@ export const dispatchMemory = (
         Effect.flatMap((params) =>
           route(params.profileId).pipe(
             Effect.flatMap((branch) => {
-              const document = memoryDocumentFromRelativePath(branch.target.path, params.path);
+              const document = documentFromRelativePath(branch.target.path, params.path);
 
               return document === undefined
                 ? Effect.fail(badParams(request.method, "unknown logical memory path"))

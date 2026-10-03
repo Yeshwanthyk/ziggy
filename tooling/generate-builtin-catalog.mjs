@@ -29,6 +29,15 @@ const REQUIRED_PACKAGE_IDS = new Set(["extension-authoring", "pi-packages", "zig
 
 const skipNames = new Set(["node_modules", ".git", "test", "tests", "tsconfig.json"]);
 
+// Build output, screenshots and lockfile of the plugin template when someone builds it in place.
+const pluginTemplate = "extensions/plugin-authoring/skills/plugin-authoring/template";
+
+const skipPaths = new Set([
+  `${pluginTemplate}/dist`,
+  `${pluginTemplate}/shots`,
+  `${pluginTemplate}/bun.lock`,
+]);
+
 const operationsReferenceNames = [
   "automations",
   "discord",
@@ -130,6 +139,7 @@ const walkFiles = (root) => {
   return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
     if (
       skipNames.has(entry.name) ||
+      skipPaths.has(relative(repositoryRoot, join(root, entry.name)).split(sep).join("/")) ||
       entry.name.endsWith(".test.ts") ||
       entry.name.startsWith(".")
     ) {

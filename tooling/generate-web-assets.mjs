@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Generator assertion failures terminate this tooling boundary. */
 /* oxlint-disable ziggy-effect/no-error-constructor -- Generator assertion failures terminate this tooling boundary. */
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const repositoryRoot = path.resolve(import.meta.dir, "..");
@@ -16,11 +16,20 @@ const files = [
   "index.embed",
   "ziggy-prism.webp",
   "assets/app.js",
+  "assets/app-view.js",
   "assets/index.css",
   "assets/prism-hero-wide-1440.webp",
   "assets/prism-hero-wide-768.webp",
   "assets/prism-tile-square-320.webp",
 ];
+
+// The resident serves only the listed files, so a new Vite chunk must be listed here and in
+// src/adapters/bun/web-assets.ts, or the browser gets a 404 for it.
+const unlisted = readdirSync(path.join(sourceRoot, "assets"))
+  .map((name) => `assets/${name}`)
+  .filter((relative) => !files.includes(relative));
+
+if (unlisted.length > 0) throw new Error(`built web assets not listed: ${unlisted.join(", ")}`);
 
 for (const relative of files) {
   const source = path.join(sourceRoot, relative);

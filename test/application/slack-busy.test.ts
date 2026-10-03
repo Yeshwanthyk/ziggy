@@ -2,7 +2,8 @@
 import { expect, test } from "bun:test";
 import { Deferred, Effect } from "effect";
 import { ChatNotStreaming } from "ziggy/domain/agent";
-import { makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
+import { type ZiggyAgentApi } from "ziggy/session/index";
+import { makeChatHandle } from "../harness/chat-handle";
 import {
   makeSlackGateway,
   type SlackTransport,
@@ -63,8 +64,7 @@ for (const scenario of [
           runOnce: () => Effect.succeed(0),
           runSpecialist: () =>
             Effect.succeed({ answer: "unused", session: { id: "unused", file: "/unused" } }),
-          openSpecialistChat: () => Effect.succeed(handle),
-          openChat: () => Effect.succeed(handle),
+          open: () => Effect.succeed(handle),
         };
 
         const transport: SlackTransport = {

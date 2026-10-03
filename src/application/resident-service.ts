@@ -1,5 +1,4 @@
 import { Context, Effect, Layer, Result } from "effect";
-import type { ProfileNotInitialized } from "../domain/agent";
 import type { AutomationProjectionError, AutomationStatusProjection } from "../domain/automation";
 import type { GatewayConfigError, GatewayOwnerError, GatewayOwnerStatus } from "../domain/gateway";
 import type {
@@ -7,13 +6,13 @@ import type {
   DiscordHealthProjectionError,
 } from "../domain/discord-health";
 import type { SlackHealthProjection, SlackHealthProjectionError } from "../domain/slack-health";
-import type { ProfileTarget } from "../domain/profile";
 import {
   type ResidentServiceDefinitionState,
   ResidentServiceError,
   type ResidentServiceManager,
   type ResidentServiceWriteResult,
 } from "../domain/resident-service";
+import { type ProfileNotInitialized, type ProfileTarget } from "../profile";
 
 export type ResidentSupervisorStatus =
   | { readonly state: "running"; readonly pid?: number }
@@ -80,6 +79,8 @@ export interface ResidentServiceApi {
     follow: boolean,
   ) => Effect.Effect<ResidentLogsResult, ResidentServiceError>;
   readonly status: (target: ProfileTarget) => Effect.Effect<ResidentServiceStatus>;
+  /** Whether a resident owns the Profile right now, managed or not. */
+  readonly owner: (target: ProfileTarget) => Effect.Effect<GatewayOwnerStatus, GatewayOwnerError>;
 }
 
 export class ResidentService extends Context.Service<ResidentService, ResidentServiceApi>()(

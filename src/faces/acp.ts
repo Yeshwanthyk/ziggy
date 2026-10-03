@@ -14,9 +14,9 @@ import {
 } from "@agentclientprotocol/sdk";
 import { Effect, Queue, Result, Schema, Semaphore, type Scope } from "effect";
 import packageJson from "../../package.json" with { type: "json" };
-import type { ChatHandle, ChatProgressEvent, ZiggyAgentApi } from "../application/agent";
-import type { ModelsApi } from "../application/models";
-import type { ProfileTarget } from "../domain/profile";
+import type { ChatHandle, ChatProgressEvent, ZiggyAgentApi } from "../session";
+import { localSpecialistSessionDirectory } from "../agents";
+import { type ModelsApi, type ProfileTarget } from "../profile";
 
 /** Buzz/ACP unstable session-model state (SessionModelState). */
 interface AcpSessionModelState {
@@ -39,7 +39,6 @@ interface AcpTurn {
 
 interface AcpSession {
   readonly handle: ChatHandle;
-  modelOverride: { readonly providerId: string; readonly modelId: string } | undefined;
   active: AcpTurn | undefined;
 }
 
@@ -248,13 +247,21 @@ export const makeAcpAgent = (
             yield* Effect.uninterruptibleMask((restore) =>
               restore(
                 (specialAgent === undefined
-                  ? agentApi.openChat(
+                  ? agentApi.open({
                       target,
-                      shared ? { kind: "group", groupId: `acp-${sessionId}` } : { kind: "local" },
-                      join(target.path, "sessions", "acp", sessionId),
-                      "fresh",
-                    )
-                  : agentApi.openSpecialistChat(target, specialAgent)
+                      context: shared
+                        ? { kind: "group", groupId: `acp-${sessionId}` }
+                        : { kind: "local" },
+                      directory: join(target.path, "sessions", "acp", sessionId),
+                      session: "new",
+                    })
+                  : agentApi.open({
+                      target,
+                      context: { kind: "local" },
+                      directory: localSpecialistSessionDirectory(target.path, specialAgent),
+                      session: "continue",
+                      agent: specialAgent,
+                    })
                 ).pipe(
                   Effect.mapError(() =>
                     RequestError.internalError(
@@ -271,7 +278,6 @@ export const makeAcpAgent = (
                     Effect.sync(() =>
                       sessions.set(sessionId, {
                         handle,
-                        modelOverride: undefined,
                         active: undefined,
                       }),
                     ),
@@ -281,7 +287,7 @@ export const makeAcpAgent = (
             );
 
             const status = yield* models
-              .readOnlyStatus(target)
+              .status(target)
               .pipe(
                 Effect.mapError((cause) =>
                   modelError(cause, "could not resolve the session model"),
@@ -335,19 +341,23 @@ export const makeAcpAgent = (
                 return yield* Effect.fail(invalidParams(`unknown session model ${params.modelId}`));
               }
 
-              yield* statePermit.withPermit(
-                Effect.gen(function* () {
-                  const session = sessions.get(params.sessionId);
-
-                  if (session === undefined) {
-                    return yield* Effect.fail(invalidParams("unknown ACP session"));
-                  }
-
-                  session.modelOverride = { providerId, modelId };
-
-                  return session;
-                }),
+              const session = yield* statePermit.withPermit(
+                Effect.sync(() => sessions.get(params.sessionId)),
               );
+
+              if (session === undefined) {
+                return yield* Effect.fail(invalidParams("unknown ACP session"));
+              }
+
+              yield* session.handle
+                .setModel(providerId, modelId)
+                .pipe(
+                  Effect.mapError((cause) =>
+                    cause._tag === "SessionBusy"
+                      ? RequestError.invalidRequest(undefined, "ACP session has an active prompt")
+                      : modelError(cause, "could not set the session model"),
+                  ),
+                );
 
               return {};
             }),

@@ -6,6 +6,7 @@
     "extensions/computer-use/dist/**",
     "extensions/computer-use/native/**",
     "extensions/computer-use/scripts/**",
+    "extensions/plugin-authoring/skills/plugin-authoring/template/**",
     "vendor/effect/**",
     "src/generated/**",
     "src/adapters/pi/generated/**"
@@ -31,6 +32,7 @@
     "ziggy-effect/no-ts-nocheck": "error",
     "ziggy-effect/no-unsupported-effect-api": "error",
     "ziggy-effect/prefer-yield-tagged-error": "error",
+    "ziggy/import-boundaries": "error",
     "ziggy/no-chained-type-assertions": "error",
     "ziggy/no-conditional-empty-object-spread": "error",
     "ziggy/no-known-value-widening": "error",

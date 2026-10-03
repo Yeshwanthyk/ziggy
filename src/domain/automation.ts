@@ -364,6 +364,7 @@ const AutomationRunFailureCategory = Schema.Literals([
   "ProfileExtensionPreflightFailed",
   "ProfileExtensionLockFailed",
   "ProfileExtensionRollbackFailed",
+  "ExtensionLoadFailed",
   "ProfileAgentInvalid",
   "ProfileAgentMentionInvalid",
   "SpecialistAgentNotFound",
@@ -421,6 +422,7 @@ const executionFailureCategories: ReadonlySet<string> = new Set([
   "ProfileExtensionPreflightFailed",
   "ProfileExtensionLockFailed",
   "ProfileExtensionRollbackFailed",
+  "ExtensionLoadFailed",
   "ProfileAgentInvalid",
   "ProfileAgentMentionInvalid",
   "SpecialistAgentNotFound",
@@ -679,6 +681,11 @@ export const parseAutomationFile = (
 
     if (Result.isFailure(cron))
       return yield* invalid(filePath, `invalid automation ${id}: invalid cron`, cron.failure);
+
+    // A cron can parse and still never fire (`0 0 31 2 *`); `Cron.next` then throws.
+    if (Result.isFailure(Result.try(() => Cron.next(cron.success, new Date(0)))))
+      return yield* invalid(filePath, `invalid automation ${id}: cron never fires`);
+
     const broadcast = yield* parseBroadcast(id, filePath, decoded.broadcast);
 
     const origin =
@@ -713,3 +720,23 @@ export const parseAutomationFile = (
       ),
     };
   });
+
+/** The Pi `custom_message` a delivered automation result is stored as. */
+export const AUTOMATION_RESULT_CUSTOM_TYPE = "ziggy.automation-result";
+
+export const AutomationResultDetails = Schema.Struct({
+  automationId: Schema.String.check(
+    Schema.makeFilter((value) => /^[a-z0-9-]{1,80}$/u.test(value), {
+      expected: "a bounded lowercase kebab-case automation id",
+    }),
+  ),
+  runId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  targetSessionId: Schema.String.check(
+    Schema.makeFilter(
+      (value) => value.length <= 128 && /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u.test(value),
+      { expected: "a canonical 1-128 character Pi session id" },
+    ),
+  ),
+});
+
+export type AutomationResultDetails = typeof AutomationResultDetails.Type;

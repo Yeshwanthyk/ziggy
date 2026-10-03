@@ -7,19 +7,11 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Effect } from "effect";
 import { expect, test } from "bun:test";
-import type { AuthApi } from "ziggy/application/auth";
-import type { ExtensionArchiveClientApi } from "ziggy/adapters/github/extension-catalog";
-import { makeProfileExtensionPreflight } from "ziggy/adapters/pi/profile-extension-preflight";
-import { makeProfileExtensions } from "ziggy/application/profile-extensions";
 import { makeDoctor } from "ziggy/application/doctor";
 import { makeDoctorChecks } from "ziggy/adapters/pi/doctor-checks";
-import type { ModelsApi } from "ziggy/application/models";
 import { renderDoctor } from "ziggy/faces/doctor-cli";
-import { ExtensionCatalogUnavailable } from "ziggy/domain/extension-catalog";
-import type {
-  ProfileExtensionMutationLockApi,
-  ProfileExtensionsApi,
-} from "ziggy/domain/profile-extension";
+import { Extensions, type ExtensionsApi, type SkippedPackage } from "ziggy/extensions/index";
+import { type AuthApi, type ModelsApi } from "ziggy/profile/index";
 
 const tree = async (root: string): Promise<ReadonlyArray<string>> => {
   const output: string[] = [];
@@ -57,29 +49,12 @@ const auth: AuthApi = {
         configured: { type: "oauth" },
       },
     ]),
-  readOnlyStatus: () =>
-    Effect.succeed([
-      {
-        id: "anthropic",
-        name: "Anthropic",
-        supportsApiKeyLogin: true,
-        ambientOnly: false,
-        supportsOauth: true,
-        configured: { type: "oauth" },
-      },
-    ]),
   login: () => Effect.die("not used"),
 };
 
 const models: ModelsApi = {
+  check: () => Effect.never,
   status: () =>
-    Effect.succeed({
-      providerId: "anthropic",
-      modelId: "claude",
-      thinking: "high",
-      authConfigured: true,
-    }),
-  readOnlyStatus: () =>
     Effect.succeed({
       providerId: "anthropic",
       modelId: "claude",
@@ -107,7 +82,7 @@ const models: ModelsApi = {
   set: () => Effect.die("not used"),
 };
 
-const profileExtensions: ProfileExtensionsApi = {
+const extensionsSkipping = (skipped: ReadonlyArray<SkippedPackage>): ExtensionsApi => ({
   list: () => Effect.die("unused"),
   show: () => Effect.die("unused"),
   listForProfile: () => Effect.die("unused"),
@@ -119,24 +94,11 @@ const profileExtensions: ProfileExtensionsApi = {
       selected: [],
       preflight: { extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 },
     }),
-  prepareRuntime: () => Effect.die("unused"),
-  activateRuntime: () => Effect.die("unused"),
-};
+  health: () => Effect.succeed({ listing: { available: [], selected: [], required: [] }, skipped }),
+  update: () => Effect.die("unused"),
+});
 
-const noDownload: ExtensionArchiveClientApi = {
-  download: () =>
-    Effect.fail(
-      new ExtensionCatalogUnavailable({
-        operation: "doctor test download",
-        message: "doctor read-only proof must not download",
-        cause: undefined,
-      }),
-    ),
-};
-
-const noLock: ProfileExtensionMutationLockApi = {
-  withLock: <A, E, R>(_profilePath: string, use: Effect.Effect<A, E, R>) => use,
-};
+const profileExtensions = extensionsSkipping([]);
 
 test("doctor is read-only and renders checks in stable owning-validator order", async () => {
   const profilePath = await mkdtemp(path.join(tmpdir(), "ziggy-doctor-"));
@@ -148,12 +110,10 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
     const before = await tree(profilePath);
 
     const report = await Effect.runPromise(
-      makeDoctor(
-        auth,
-        models,
-        profileExtensions,
-        makeDoctorChecks(() => Effect.succeed([])),
-      ).check({ path: profilePath, name: "Test" }, path.resolve(import.meta.dir, "../..")),
+      makeDoctor(auth, models, profileExtensions, makeDoctorChecks()).check({
+        path: profilePath,
+        name: "Test",
+      }),
     );
 
     const rendered = renderDoctor(report);
@@ -191,7 +151,7 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
       "ok",
     ]);
     expect(rendered.exitCode).toBe(0);
-    expect(report.checks.find((check) => check.id === "ziggy")?.message).toBe("Ziggy 0.3.0");
+    expect(report.checks.find((check) => check.id === "ziggy")?.message).toBe("Ziggy 0.4.0");
     expect(report.checks.find((check) => check.id === "pi_docs")?.message).toMatch(
       /^@earendil-works\/pi-coding-agent@0\.99\.1 fingerprint=[0-9a-f]{64} count=\d+$/u,
     );
@@ -219,27 +179,25 @@ test("doctor is read-only and renders checks in stable owning-validator order", 
   }
 });
 
-test("doctor uses the ProfileExtensions service without publishing or activating resources", async () => {
+test("doctor checks real extensions without writing to the Profile", async () => {
   const profilePath = await mkdtemp(path.join(tmpdir(), "ziggy-doctor-profile-extensions-"));
 
   try {
     await writeFile(path.join(profilePath, "SOUL.md"), "# Test\n");
     const before = await tree(profilePath);
-    const service = makeProfileExtensions(noDownload, makeProfileExtensionPreflight(), noLock);
+    const service = await Effect.runPromise(Extensions.make);
 
     const report = await Effect.runPromise(
-      makeDoctor(
-        auth,
-        models,
-        service,
-        makeDoctorChecks(() => Effect.succeed([])),
-      ).check({ path: profilePath, name: "Test" }, path.resolve(import.meta.dir, "../..")),
+      makeDoctor(auth, models, service, makeDoctorChecks()).check({
+        path: profilePath,
+        name: "Test",
+      }),
     );
 
     expect(report.checks.find((check) => check.id === "resources")).toEqual({
       id: "resources",
       severity: "ok",
-      message: "5 bundled factories, 0 Profile extension entrypoints, and 3 skill roots selected",
+      message: "0 Profile extension entrypoints and 3 skill roots selected",
     });
     expect(await tree(profilePath)).toEqual(before);
   } finally {
@@ -256,12 +214,10 @@ test("doctor excludes the format README from memory size checks", async () => {
     await writeFile(path.join(profilePath, "memory", "README.md"), "x".repeat(10_000));
 
     const report = await Effect.runPromise(
-      makeDoctor(
-        auth,
-        models,
-        profileExtensions,
-        makeDoctorChecks(() => Effect.succeed([])),
-      ).check({ path: profilePath, name: "Test" }, path.resolve(import.meta.dir, "../..")),
+      makeDoctor(auth, models, profileExtensions, makeDoctorChecks()).check({
+        path: profilePath,
+        name: "Test",
+      }),
     );
 
     expect(report.checks.find((check) => check.id === "memory")).toEqual({
@@ -294,12 +250,10 @@ test("doctor uses the session projection for broken parent links", async () => {
     const before = await tree(profilePath);
 
     const report = await Effect.runPromise(
-      makeDoctor(
-        auth,
-        models,
-        profileExtensions,
-        makeDoctorChecks(() => Effect.succeed([])),
-      ).check({ path: profilePath, name: "Test" }, path.resolve(import.meta.dir, "../..")),
+      makeDoctor(auth, models, profileExtensions, makeDoctorChecks()).check({
+        path: profilePath,
+        name: "Test",
+      }),
     );
 
     expect(report.checks.find((check) => check.id === "sessions")).toEqual({
@@ -325,12 +279,10 @@ test("doctor warns when configured Slack has no runtime observation", async () =
     const before = await tree(profilePath);
 
     const report = await Effect.runPromise(
-      makeDoctor(
-        auth,
-        models,
-        profileExtensions,
-        makeDoctorChecks(() => Effect.succeed([])),
-      ).check({ path: profilePath, name: "Test" }, path.resolve(import.meta.dir, "../..")),
+      makeDoctor(auth, models, profileExtensions, makeDoctorChecks()).check({
+        path: profilePath,
+        name: "Test",
+      }),
     );
 
     expect(report.checks.find((check) => check.id === "slack-runtime")).toEqual({
@@ -353,12 +305,10 @@ test("doctor continues independent checks after malformed session metadata", asy
     await writeFile(path.join(profilePath, "sessions", "bad.jsonl"), "secret transcript text\n");
 
     const report = await Effect.runPromise(
-      makeDoctor(
-        auth,
-        models,
-        profileExtensions,
-        makeDoctorChecks(() => Effect.succeed([])),
-      ).check({ path: profilePath, name: "Test" }, path.resolve(import.meta.dir, "../..")),
+      makeDoctor(auth, models, profileExtensions, makeDoctorChecks()).check({
+        path: profilePath,
+        name: "Test",
+      }),
     );
 
     const rendered = renderDoctor(report);
@@ -382,20 +332,16 @@ test("doctor reports skipped broken packages as an error with the diagnostic", a
       makeDoctor(
         auth,
         models,
-        profileExtensions,
-        makeDoctorChecks(() =>
-          Effect.succeed([
-            { id: "broken", diagnostics: [{ source: "index.ts", message: "missing module" }] },
-          ]),
-        ),
-      ).check({ path: profilePath, name: "Test" }, path.resolve(import.meta.dir, "../..")),
+        extensionsSkipping([
+          { id: "broken", diagnostics: [{ source: "index.ts", message: "missing module" }] },
+        ]),
+        makeDoctorChecks(),
+      ).check({ path: profilePath, name: "Test" }),
     );
 
     expect(report.checks.find((check) => check.id === "resources")).toMatchObject({
       severity: "error",
-      message: expect.stringContaining(
-        "BROKEN Profile packages skipped (owned automations paused on runtime activation; stored records retained): broken (missing module)",
-      ),
+      message: expect.stringContaining("BROKEN Profile packages skipped: broken (missing module)"),
     });
   } finally {
     await rm(profilePath, { recursive: true, force: true });

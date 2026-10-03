@@ -344,7 +344,10 @@
   min-height: 0;
 }
 
-.conversation-scroll [data-radix-scroll-area-viewport] > div {
+/* Radix wraps content in a display: table box that grows to its widest child; keep it at the
+   viewport's width so a wide table or code block scrolls inside itself instead of clipping. */
+.conversation-scroll [data-radix-scroll-area-viewport] > div,
+.transcript-scroll [data-radix-scroll-area-viewport] > div {
   display: block !important;
   min-width: 0 !important;
   width: 100%;
@@ -1305,6 +1308,226 @@
   background: var(--destructive);
 }
 
+.tool-dot.is-running {
+  animation: pulse 1s ease-in-out infinite;
+}
+
+/* MCP Apps views. The frame box is restyled, never moved, when expanded. */
+.app-view {
+  /* The view's height plus the 32 px header and the frame's 1 px top and bottom borders. */
+  height: calc(var(--app-height) + 34px);
+  margin-top: 8px;
+  max-width: 100%;
+}
+
+.app-view.is-failed {
+  align-items: center;
+  color: var(--muted-foreground);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  height: auto;
+  line-height: 16px;
+}
+
+.app-view-frame {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-view-header {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  height: 32px;
+  padding: 0 4px 0 12px;
+}
+
+.app-view-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-view-toggle {
+  align-items: center;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  display: inline-flex;
+  height: 24px;
+  justify-content: center;
+  width: 24px;
+}
+
+.app-view-toggle:hover {
+  background: var(--hover);
+}
+
+.app-view-iframe {
+  background: transparent;
+  border: 0;
+  color-scheme: normal;
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+.app-view-loading {
+  align-items: center;
+  color: var(--muted-foreground);
+  display: flex;
+  flex: 1 1 auto;
+  font-size: 12px;
+  justify-content: center;
+}
+
+.app-view-backdrop {
+  background: var(--overlay);
+  border: 0;
+  inset: 0;
+  position: fixed;
+  z-index: 60;
+}
+
+/* Expanded: a centered overlay. */
+.app-view.is-expanded .app-view-frame {
+  box-shadow: var(--shadow-lg);
+  height: min(86vh, 900px);
+  left: 50%;
+  position: fixed;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(92vw, 960px);
+  z-index: 61;
+}
+
+/* Wide screens: a side panel beside the conversation. */
+@media (min-width: 1200px) {
+  .app-view.is-expanded .app-view-frame {
+    border-radius: 0;
+    height: 100vh;
+    left: auto;
+    right: 0;
+    top: 0;
+    transform: none;
+    width: min(45vw, 640px);
+  }
+}
+
+/* Phones: a bottom sheet. */
+@media (max-width: 720px) {
+  .app-view.is-expanded .app-view-frame {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    bottom: 0;
+    height: 88vh;
+    left: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+    top: auto;
+    transform: none;
+    width: 100vw;
+  }
+}
+
+.app-context-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.app-context-chip {
+  align-items: center;
+  background: var(--muted);
+  border-radius: var(--radius-full);
+  color: var(--muted-foreground);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 4px;
+  line-height: 16px;
+  max-width: 100%;
+  padding: 2px 4px 2px 10px;
+}
+
+.app-context-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-context-chip > button {
+  align-items: center;
+  border-radius: var(--radius-full);
+  color: inherit;
+  display: inline-flex;
+  height: 18px;
+  justify-content: center;
+  width: 18px;
+}
+
+.app-context-chip > button:hover {
+  background: var(--hover);
+}
+
+.message.optimistic,
+.message.thinking,
+.message.streaming {
+  animation: message-in var(--dur-press) var(--ease-out);
+}
+
+.typing-dots {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+  height: 1.5em;
+}
+
+.typing-dots > span {
+  animation: typing-dot 1.2s ease-in-out infinite;
+  background: var(--muted-foreground);
+  border-radius: var(--radius-full);
+  height: 6px;
+  width: 6px;
+}
+
+.typing-dots > span:nth-child(2) {
+  animation-delay: 150ms;
+}
+
+.typing-dots > span:nth-child(3) {
+  animation-delay: 300ms;
+}
+
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes message-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
 .tool-activity {
   color: var(--muted-foreground);
   font-size: 12px;
@@ -1669,7 +1892,7 @@
     }
   }
 
-  .mobile-only {
+  .mobile-only:not([hidden]) {
     display: inline-flex;
   }
 
@@ -1679,19 +1902,148 @@
 
   .conversation-main {
     --content-pad: 16px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
     height: 100dvh;
   }
 
+  .conversation-header {
+    align-self: start;
+    background: linear-gradient(to bottom, var(--background) 60%, transparent);
+    border-bottom: 0;
+    grid-area: 1 / 1;
+    height: 110px;
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  .conversation-header-inner {
+    padding-top: 12px;
+    position: relative;
+  }
+
+  .conversation-header .mobile-only,
+  .header-actions button {
+    align-self: flex-start;
+    backdrop-filter: blur(12px);
+    background: color-mix(in oklch, var(--background) 80%, transparent);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    box-shadow: var(--shadow-sm);
+    flex: 0 0 auto;
+    height: 40px;
+    pointer-events: auto;
+    width: 40px;
+  }
+
+  .conversation-header-inner > .bot-avatar {
+    height: 56px;
+    left: 50%;
+    position: absolute;
+    top: 12px;
+    transform: translateX(-50%);
+    width: 56px;
+  }
+
+  .conversation-title {
+    left: 50%;
+    max-width: calc(100% - 208px);
+    position: absolute;
+    top: 60px;
+    transform: translateX(-50%);
+  }
+
+  .conversation-title strong {
+    background: var(--muted);
+    border-radius: var(--radius-full);
+    font-size: 13px;
+    padding: 3px 10px;
+  }
+
+  .header-actions {
+    align-self: flex-start;
+    gap: 8px;
+  }
+
+  .conversation-title span,
+  .message.assistant:not(.automation-result) .message-author,
+  .message.user .message-author {
+    clip-path: inset(50%);
+    height: 1px;
+    margin: 0;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+
+  /* Extend scrolling beneath the composer; matching padding keeps the last message clear. */
+  .transcript-scroll {
+    grid-area: 1 / 1;
+    margin-bottom: -72px;
+  }
+
   .transcript {
-    padding-top: 24px;
+    padding-bottom: 96px;
+    padding-top: 110px;
+  }
+
+  .transcript-end {
+    scroll-margin-bottom: 72px;
+  }
+
+  .message.assistant {
+    background: var(--message);
+    border-radius: 28px;
+    max-width: none;
+    padding: 18px 20px;
+    width: 100%;
   }
 
   .message.user {
     max-width: 88%;
   }
 
+  .message.user .message-body {
+    border-radius: 22px 22px 6px 22px;
+    padding: 12px 16px;
+  }
+
+  .welcome-state {
+    margin-top: 8vh;
+  }
+
   .composer-wrap {
+    background: linear-gradient(to bottom, transparent, var(--background));
+    grid-area: 2 / 1;
     padding-bottom: max(8px, env(safe-area-inset-bottom));
+    padding-top: 24px;
+    pointer-events: none;
+    position: relative;
+    z-index: 1;
+  }
+
+  .composer-panel {
+    pointer-events: auto;
+  }
+
+  .composer {
+    align-items: center;
+    backdrop-filter: blur(16px);
+    background: color-mix(in oklch, var(--background) 85%, transparent);
+    border-radius: 26px;
+    box-shadow: var(--shadow-md);
+    padding: 8px 8px 8px 18px;
+  }
+
+  .composer button {
+    border-radius: var(--radius-full);
+    flex: 0 0 auto;
+    height: 36px;
+  }
+
+  .composer .send-button {
+    width: 36px;
   }
 
   .composer-hint {
@@ -1701,6 +2053,8 @@
   /* 16px keeps iOS from zooming the page when the composer takes focus. */
   .composer textarea {
     font-size: 16px;
+    min-height: 36px;
+    padding: 7px 0;
   }
 
   .definition-fields {
@@ -1802,4 +2156,72 @@
 .welcome-state > .ziggy-prism-art {
   max-width: 640px;
   margin: 0 auto 24px;
+}
+
+/* Attachments share the composer's column and leave the action buttons in place. */
+.composer-content {
+  flex: 1;
+  min-width: 0;
+}
+.composer-content textarea {
+  width: 100%;
+}
+.composer-panel[data-dragging] {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+  border-radius: var(--radius-lg);
+}
+.attachment-previews,
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0;
+}
+.attachment-preview {
+  position: relative;
+  width: 56px;
+  height: 56px;
+}
+.attachment-preview img,
+.message-images img {
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  width: 56px;
+  height: 56px;
+}
+.attachment-preview button {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  background: var(--background);
+  color: var(--foreground);
+  border: 1px solid var(--input);
+}
+.attachment-preview button:hover {
+  background: var(--muted);
+}
+.attachment-preview button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.attachment-preview button svg {
+  width: 14px;
+  height: 14px;
+}
+.image-count {
+  display: block;
+  width: fit-content;
+  background: var(--muted);
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  padding: 2px 6px;
+  margin-top: 4px;
+  font-size: 12px;
 }

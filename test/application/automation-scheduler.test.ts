@@ -24,15 +24,16 @@ import {
   AutomationSchedulerError,
   AutomationScheduleSuperseded,
 } from "ziggy/domain/automation";
-import { makeChatRegistry } from "ziggy/application/chat-registry";
-import type { ProfileTarget } from "ziggy/domain/profile";
-import { makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
+import { makeLiveSessions } from "ziggy/resident/live-sessions";
+import { type ZiggyAgentApi } from "ziggy/session/index";
+import { makeChatHandle } from "../harness/chat-handle";
 import {
   type AutomationCapabilities,
   type AutomationsApi,
   makeAutomations,
 } from "ziggy/application/automations";
 import { makeAutomationScheduler } from "ziggy/application/automation-scheduler";
+import { type ProfileTarget } from "ziggy/profile/index";
 
 const paths: Array<string> = [];
 
@@ -62,9 +63,9 @@ const runScheduler = (
   Effect.scoped(
     Effect.gen(function* () {
       const owner = yield* acquireGatewayOwner(target);
-      const registry = yield* makeChatRegistry(target.path);
+      const live = yield* makeLiveSessions();
 
-      return yield* scheduler.run(target, owner, registry);
+      return yield* scheduler.run(target, owner, live);
     }),
   ).pipe(
     Effect.mapError((cause) =>
@@ -291,9 +292,7 @@ describe("automation scheduler engine", () => {
               answer: "local reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: () =>
@@ -311,12 +310,7 @@ describe("automation scheduler engine", () => {
           files: automationFileStore,
           printReply: () => Effect.void,
           appendStoredResult: appendStoredAutomationResult,
-          loadTelegramConfig: () => Effect.succeed({ botToken: "t", ownerUserId: 1 }),
-          loadDiscordConfig: () => Effect.succeed({ botToken: "d", ownerUserId: "1" }),
-          loadSlackConfig: () => Effect.succeed({ botToken: "s", appToken: "a", ownerUserId: "U" }),
-          sendTelegram: () => Effect.void,
-          sendDiscord: () => Effect.void,
-          sendSlack: () => Effect.void,
+          deliver: () => Effect.void,
         };
 
         const automations = makeAutomations(agent, capabilities);
@@ -523,9 +517,7 @@ describe("automation scheduler engine", () => {
           answer: "local reply",
           session: { id: "specialist", file: "/sessions/specialist.jsonl" },
         }),
-      openSpecialistChat: () =>
-        Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-      openChat: () =>
+      open: () =>
         Effect.succeed(
           makeChatHandle({
             prompt: () => Effect.never,
@@ -539,12 +531,7 @@ describe("automation scheduler engine", () => {
       files: automationFileStore,
       printReply: () => Effect.void,
       appendStoredResult: appendStoredAutomationResult,
-      loadTelegramConfig: () => Effect.succeed({ botToken: "t", ownerUserId: 1 }),
-      loadDiscordConfig: () => Effect.succeed({ botToken: "d", ownerUserId: "1" }),
-      loadSlackConfig: () => Effect.succeed({ botToken: "s", appToken: "a", ownerUserId: "U" }),
-      sendTelegram: () => Effect.void,
-      sendDiscord: () => Effect.void,
-      sendSlack: () => Effect.void,
+      deliver: () => Effect.void,
     };
 
     const automations = makeAutomations(agent, capabilities, {

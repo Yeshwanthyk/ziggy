@@ -1,7 +1,7 @@
 import { Effect, Predicate, Schema } from "effect";
 import { CliInputInvalid, type CliCommand } from "./cli-command";
 import { isZiggyHelpTopic, renderZiggyHelp, ziggyHelpTopics } from "../domain/cli-help";
-import { MemoryScopeReference } from "../domain/memory";
+import { MemoryScopeReference } from "../memory";
 
 const decodeMemoryScope = Schema.decodeUnknownEffect(MemoryScopeReference);
 
@@ -358,6 +358,20 @@ const parseTypedArguments = (args: ReadonlyArray<string>): CliCommand | CliInput
     }
 
     return invalid(renderZiggyHelp("extensions"));
+  }
+
+  if (word === "plugin") {
+    if (
+      rest.length === 4 &&
+      rest[0] === "secret" &&
+      rest[1] === "set" &&
+      required(rest[2]) &&
+      required(rest[3])
+    ) {
+      return { _tag: "PluginSecretSet", target: rest[2], name: rest[3] };
+    }
+
+    return invalid(renderZiggyHelp("plugin"));
   }
 
   if (word === "auth") {

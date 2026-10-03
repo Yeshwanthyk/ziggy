@@ -38,7 +38,7 @@ export interface ZiggyExtensionFailure {
 export interface ZiggyExtensionChoice {
   readonly id: ZiggyExtensionId;
   readonly description: string;
-  readonly kind: "skill" | "code" | "skill+code" | "remote";
+  readonly kind: "skill" | "code" | "skill+code" | "plugin" | "remote";
   readonly source: "bundled" | "remote-approved" | "profile";
 }
 
@@ -59,6 +59,13 @@ export interface ZiggyExtensionMutationResult {
   readonly changed: boolean;
   readonly selected: boolean;
   readonly restartRequired: boolean;
+}
+
+/** `plugin.secret.set` never returns the value. */
+export interface ZiggyPluginSecretSetResult {
+  readonly profileId: ZiggyProfileId;
+  readonly name: string;
+  readonly stored: true;
 }
 
 export interface ZiggyExtensionValidationResult {
@@ -84,6 +91,11 @@ export interface ZiggyExtensionRequestMap {
     readonly commandId?: string;
   };
   readonly "extension.validate": { readonly profileId: ZiggyProfileId };
+  readonly "plugin.secret.set": {
+    readonly profileId: ZiggyProfileId;
+    readonly name: string;
+    readonly value: string;
+  };
 }
 
 export interface ZiggyExtensionResultMap {
@@ -91,7 +103,23 @@ export interface ZiggyExtensionResultMap {
   readonly "extension.add": ZiggyExtensionMutationResult;
   readonly "extension.remove": ZiggyExtensionMutationResult;
   readonly "extension.validate": ZiggyExtensionValidationResult;
+  readonly "plugin.secret.set": ZiggyPluginSecretSetResult;
 }
+
+/** A plugin `${NAME}`: the same rule the resident applies. */
+export const isPluginSecretName = (value: unknown): value is string =>
+  isBoundedString(value, 128) && /^[A-Za-z_][A-Za-z0-9_]*$/u.test(value);
+
+/** 1-1024 printable ASCII characters. */
+export const isPluginSecretValue = (value: unknown): value is string =>
+  isBoundedString(value, 1024) && /^[\x20-\x7e]+$/u.test(value);
+
+export const isPluginSecretSetResult = (value: unknown): value is ZiggyPluginSecretSetResult =>
+  isRecord(value) &&
+  hasOnlyKeys(value, ["profileId", "name", "stored"]) &&
+  isProfileId(value.profileId) &&
+  isPluginSecretName(value.name) &&
+  value.stored === true;
 
 const isExtensionId = (value: unknown): value is string =>
   isBoundedString(value, 128) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value);
@@ -104,6 +132,7 @@ const isChoice = (value: unknown): value is ZiggyExtensionChoice =>
   (value.kind === "skill" ||
     value.kind === "code" ||
     value.kind === "skill+code" ||
+    value.kind === "plugin" ||
     value.kind === "remote") &&
   (value.source === "bundled" || value.source === "remote-approved" || value.source === "profile");
 

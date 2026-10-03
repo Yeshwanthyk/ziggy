@@ -6,6 +6,7 @@ export * from "./models";
 export * from "./automations";
 export * from "./memory";
 export * from "./extensions";
+export * from "./apps";
 export * from "./groups";
 export * from "./navigation";
 
@@ -54,6 +55,7 @@ import {
   isSessionResumeResult,
   isSessionNameValue,
   isSessionReference,
+  isUploadId,
   isSessionShowResult,
 } from "./conversations";
 import {
@@ -61,7 +63,16 @@ import {
   isExtensionListResult,
   isExtensionMutationResult,
   isExtensionValidationResult,
+  isPluginSecretName,
+  isPluginSecretSetResult,
+  isPluginSecretValue,
 } from "./extensions";
+import {
+  isAppCallToolParams,
+  isAppContentResult,
+  isAppContextList,
+  isAppReadResourceParams,
+} from "./apps";
 import { isMemoryListResult, isMemoryPath, isMemoryShowResult } from "./memory";
 import { isGroupListResult } from "./groups";
 import {
@@ -198,6 +209,16 @@ export const isMethodResult = <Method extends ZiggyMethod>(
       return isExtensionMutationResult(value) && profileMatches(value.profileId, params);
     case "extension.validate":
       return isExtensionValidationResult(value) && profileMatches(value.profileId, params);
+    case "plugin.secret.set":
+      return (
+        isPluginSecretSetResult(value) &&
+        profileMatches(value.profileId, params) &&
+        isRecord(params) &&
+        value.name === params.name
+      );
+    case "app.callTool":
+    case "app.readResource":
+      return isAppContentResult(value) && refProfileMatches(value.profileId, params);
     case "pin.list":
       return isPinListResult(value) && profileMatches(value.profileId, params);
     case "pin.set":
@@ -333,9 +354,23 @@ export const isMethodParams = <Method extends ZiggyMethod>(
     case "session.follow-up":
       return (
         hasRef(value) &&
-        hasOptionalCommandId(value, ["ref", "text", "recipient", "commandId"]) &&
+        hasOptionalCommandId(value, [
+          "ref",
+          "text",
+          "recipient",
+          "commandId",
+          "images",
+          ...(method === "prompt.submit" ? ["context"] : []),
+        ]) &&
+        (value.context === undefined || isAppContextList(value.context)) &&
         (value.recipient === undefined || isRecipient(value.recipient)) &&
-        isBoundedCodePointString(value.text, 60_000)
+        (value.images === undefined ||
+          (Array.isArray(value.images) &&
+            value.images.length >= 1 &&
+            value.images.length <= 4 &&
+            value.images.every(isUploadId))) &&
+        isBoundedCodePointString(value.text, 60_000, 0) &&
+        (value.text.trim().length > 0 || value.images !== undefined)
       );
     case "agent.show":
     case "agent.document":
@@ -440,6 +475,17 @@ export const isMethodParams = <Method extends ZiggyMethod>(
         Object.keys(value).every((key) => ["profileId", "id", "commandId"].includes(key)) &&
         (value.commandId === undefined || isCommandId(value.commandId))
       );
+    case "plugin.secret.set":
+      return (
+        hasOnlyKeys(value, ["profileId", "name", "value"]) &&
+        isProfileId(value.profileId) &&
+        isPluginSecretName(value.name) &&
+        isPluginSecretValue(value.value)
+      );
+    case "app.callTool":
+      return isAppCallToolParams(value);
+    case "app.readResource":
+      return isAppReadResourceParams(value);
     case "pin.set":
       return (
         isProfileId(value.profileId) &&

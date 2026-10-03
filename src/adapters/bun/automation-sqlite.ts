@@ -3,7 +3,7 @@ import { lstat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { Effect, Schema } from "effect";
-import { fileSystemCauseDetails } from "../fs/cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 import {
   acquireGatewayOwner,
   isGatewayOwnerAuthority,
@@ -21,9 +21,9 @@ import {
   type AutomationTargetOutcome,
   manualRunId,
 } from "../../domain/automation";
-import type { ProfileTarget } from "../../domain/profile";
 import { GatewayOwnerError } from "../../domain/gateway";
 import { isLocalProcessAlive } from "./process";
+import { type ProfileTarget } from "../../profile";
 
 const DATABASE_NAME = "automation-scheduler.sqlite";
 

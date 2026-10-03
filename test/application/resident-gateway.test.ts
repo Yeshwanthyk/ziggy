@@ -15,36 +15,34 @@ import {
   type UiServerProjection,
 } from "ziggy/adapters/bun/ui-server";
 import { AutomationSchedulerError } from "ziggy/domain/automation";
-import type { ProfileTarget } from "ziggy/domain/profile";
 import {
   AutomationScheduler,
   type AutomationSchedulerApi,
 } from "ziggy/application/automation-scheduler";
 import { AutomationDefinitions } from "ziggy/application/automation-definitions";
 import { Automations } from "ziggy/application/automations";
-import { Auth } from "ziggy/application/auth";
 import { Doctor } from "ziggy/application/doctor";
-import { Memory } from "ziggy/application/memory";
-import { Models } from "ziggy/application/models";
-import { ProfileAgents } from "ziggy/application/profile-agents";
+import { Memory } from "ziggy/memory/index";
+import { ProfileAgents } from "ziggy/agents/index";
 import { DiscordGateway, type DiscordGatewayApi } from "ziggy/application/discord-gateway";
 import { Gateway, type GatewayApi } from "ziggy/application/gateway";
-import { ProfileExtensions } from "ziggy/application/profile-extensions";
 import {
   ResidentGateway,
   loadResidentGatewayConfig,
   makeResidentGateway,
-  makeResidentGatewayLive,
+  ResidentGatewayLive,
   type ResidentGatewayConfig,
   type ResidentGatewayRuntime,
   type ResidentUiRuntime,
 } from "ziggy/application/resident-gateway";
-import { Sessions, type SessionsApi } from "ziggy/application/sessions";
+import { Sessions, type SessionsApi } from "ziggy/session/index";
+import { ZiggyPaths } from "ziggy/platform/paths";
 import { SlackGateway, type SlackGatewayApi } from "ziggy/application/slack-gateway";
-import { ZiggyAgent, type ZiggyAgentApi } from "ziggy/application/agent";
+import { ZiggyAgent, type ZiggyAgentApi } from "ziggy/session/index";
 import { stableProfileId } from "ziggy/application/profile-directory";
 import { UiResponseFrame } from "ziggy/domain/ui-gateway";
-import type { ProfileExtensionsApi } from "ziggy/domain/profile-extension";
+import { Extensions, PluginSecrets, type ExtensionsApi } from "ziggy/extensions/index";
+import { type ProfileTarget, Auth, Models } from "ziggy/profile/index";
 
 const paths: Array<string> = [];
 
@@ -417,28 +415,28 @@ describe("resident gateway supervision", () => {
     expect(events.at(-1)).toBe("owner:exit");
   });
 
-  test("routes an authenticated UI extension request through shared ProfileExtensions", async () => {
+  test("routes an authenticated UI extension request through shared Extensions", async () => {
     const target = await profile();
     const calls: Array<string> = [];
 
-    const profileExtensions: ProfileExtensionsApi = {
+    const profileExtensions: ExtensionsApi = {
       list: () => Effect.never,
       show: () => Effect.never,
       listForProfile: () => Effect.never,
       add: () => Effect.never,
       remove: () => Effect.never,
       setSelected: () => Effect.never,
-      validate: (validatedTarget, repositoryRoot) =>
+      validate: (validatedTarget) =>
         Effect.sync(() => {
-          calls.push(`validate:${validatedTarget.path}:${repositoryRoot}`);
+          calls.push(`validate:${validatedTarget.path}`);
 
           return {
             selected: [],
             preflight: { extensionPathCount: 0, skillPathCount: 0, extensionFactoryCount: 0 },
           };
         }),
-      prepareRuntime: () => Effect.never,
-      activateRuntime: () => Effect.never,
+      health: () => Effect.never,
+      update: () => Effect.never,
     };
 
     const sessions: SessionsApi = {
@@ -446,13 +444,13 @@ describe("resident gateway supervision", () => {
       held: () => Effect.succeed(false),
       list: () => Effect.succeed([]),
       show: () => Effect.never,
-      resolve: () => Effect.never,
+      locate: () => Effect.never,
+      history: () => Effect.never,
     };
 
     const agent: ZiggyAgentApi = {
       runOnce: () => Effect.never,
-      openChat: () => Effect.never,
-      openSpecialistChat: () => Effect.never,
+      open: () => Effect.never,
       runSpecialist: () => Effect.never,
     };
 
@@ -468,7 +466,7 @@ describe("resident gateway supervision", () => {
       Layer.succeed(SlackGateway, channelLoops.slack),
       Layer.succeed(Sessions, sessions),
       Layer.succeed(ZiggyAgent, agent),
-      Layer.succeed(ProfileExtensions, profileExtensions),
+      Layer.succeed(Extensions, profileExtensions),
       Layer.mock(AutomationDefinitions, {}),
       Layer.mock(Automations, {}),
       Layer.mock(Auth, {}),
@@ -476,6 +474,7 @@ describe("resident gateway supervision", () => {
       Layer.mock(Memory, {}),
       Layer.mock(Models, {}),
       Layer.mock(ProfileAgents, {}),
+      Layer.mock(PluginSecrets, {}),
     );
 
     await runScoped(
@@ -509,14 +508,26 @@ describe("resident gateway supervision", () => {
         yield* Fiber.interrupt(fiber);
       }).pipe(
         Effect.provide(
-          makeResidentGatewayLive("/repository", undefined, () =>
-            Effect.succeed({ listing: { available: [], selected: [] }, skipped: [] }),
-          ).pipe(Layer.provide(dependencies)),
+          ResidentGatewayLive.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                dependencies,
+                Layer.succeed(
+                  ZiggyPaths,
+                  ZiggyPaths.make({
+                    cwd: target.path,
+                    homedir: target.path,
+                    ziggyHome: join(target.path, ".ziggy-home"),
+                  }),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
 
-    expect(calls).toEqual([`validate:${target.path}:/repository`]);
+    expect(calls).toEqual([`validate:${target.path}`]);
   });
 
   test("scheduler failure interrupts channel siblings before owner release", async () => {

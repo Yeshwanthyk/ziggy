@@ -1,12 +1,21 @@
 import { Context, Effect, Layer } from "effect";
-import type { AuthInteraction, ProviderAuthStatus } from "../adapters/pi/auth";
-import type { KnownModel } from "../adapters/pi/models";
 import { SetupIncomplete, type SetupResult } from "../domain/setup";
-import type { ProfileTarget } from "../domain/profile";
-import { Auth, type AuthError, type AuthApi } from "./auth";
 import { Doctor, type DoctorApi } from "./doctor";
-import { Models, type ModelsError, type ModelsApi } from "./models";
-import { Profiles, type ProfileError, type ProfilesApi } from "./profiles";
+import {
+  type AuthInteraction,
+  type ProviderAuthStatus,
+  type KnownModel,
+  type ProfileTarget,
+  Auth,
+  type AuthError,
+  type AuthApi,
+  Models,
+  type ModelsError,
+  type ModelsApi,
+  Profiles,
+  type ProfileError,
+  type ProfilesApi,
+} from "../profile";
 
 export type SetupError = ProfileError | AuthError | ModelsError | SetupIncomplete;
 
@@ -34,8 +43,6 @@ export interface SetupOptions {
 export interface SetupApi {
   readonly initialize: (
     target: ProfileTarget,
-    registryPath: string,
-    repositoryRoot: string,
     options: SetupOptions,
     interaction: SetupInteraction,
   ) => Effect.Effect<SetupResult, SetupError>;
@@ -93,13 +100,13 @@ export const makeSetup = (
   models: ModelsApi,
   doctor: DoctorApi,
 ): SetupApi => ({
-  initialize: (target, registryPath, repositoryRoot, options, interaction) =>
+  initialize: (target, options, interaction) =>
     Effect.gen(function* () {
-      const initialized = yield* profiles.initProfile(target, {
+      const initialized = yield* profiles.init(target, {
         createStarterDirectories: !options.minimal,
       });
 
-      yield* profiles.registerProfile(registryPath, target.path);
+      yield* profiles.register(target.path);
 
       if (options.minimal) {
         return {
@@ -212,7 +219,7 @@ export const makeSetup = (
       }
 
       const modelStatus = yield* models.status(target);
-      const report = yield* doctor.check(target, repositoryRoot);
+      const report = yield* doctor.check(target);
 
       return {
         profilePath: target.path,

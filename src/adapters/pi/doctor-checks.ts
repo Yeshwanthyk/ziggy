@@ -1,10 +1,8 @@
 import { lstat, readFile, readdir } from "node:fs/promises";
 import * as path from "node:path";
 import { Effect, Layer } from "effect";
-import { fileSystemCauseDetails } from "../fs/cause";
-import { classifyBundledCopy } from "../fs/extension-update";
-import { BUILTIN_EXTENSION_CATALOG, isRequiredBundledExtension } from "../../catalog";
-import { discoverProfileAgents } from "../fs/profile-agents";
+import { fileSystemCauseDetails } from "../../platform/cause";
+import { discoverProfileAgents } from "../../agents";
 import {
   gatewayConfigPresent,
   loadDiscordConfigFile,
@@ -12,21 +10,15 @@ import {
   loadTelegramConfigFile,
 } from "../fs/gateway-config";
 import { describePinnedPiDocs, loadPinnedPiDocs } from "./pi-docs";
-import { listProfileSessions } from "./sessions";
+import { inspectSessions } from "../../session";
 import { readSlackHealth } from "../fs/slack-health";
 import { readDiscordHealth } from "../fs/discord-health";
-import type { AuthApi } from "../../application/auth";
-import type { ModelsApi } from "../../application/models";
 
 import { parseAutomationFile } from "../../domain/automation";
-import { CONTEXT_MEMORY_CAP, SHARED_MEMORY_CAP, codePointLength } from "../../domain/memory";
+import { CONTEXT_MEMORY_CAP, SHARED_MEMORY_CAP } from "../../memory";
+import { codePointLength } from "../../platform/text";
 import { type DoctorCheck, doctorReport } from "../../domain/doctor";
-import type { ProfileTarget } from "../../domain/profile";
-import {
-  ProfileExtensionPreflightFailed,
-  type ProfileExtensionsApi,
-} from "../../domain/profile-extension";
-import { inspectPiPackageHealth } from "./profile-extension-preflight";
+import { type ExtensionsApi } from "../../extensions";
 import {
   DoctorChecks,
   type DoctorChecksApi,
@@ -35,12 +27,12 @@ import {
   error,
   classifySlackRuntime,
   classifyDiscordRuntime,
-  bundledCopyCheck,
   modelDoctorCheck,
   authDoctorCheck,
   agentsDoctorCheck,
 } from "../../application/doctor";
 import packageJson from "../../../package.json" with { type: "json" };
+import { type AuthApi, type ModelsApi, type ProfileTarget } from "../../profile";
 
 const inspect = (targetPath: string) =>
   Effect.tryPromise({
@@ -86,7 +78,7 @@ const profileCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
   });
 
 const modelCheck = (target: ProfileTarget, models: ModelsApi): Effect.Effect<DoctorCheck> =>
-  models.readOnlyStatus(target).pipe(
+  models.status(target).pipe(
     Effect.map(modelDoctorCheck),
     Effect.catch(() =>
       Effect.succeed(error("model", "Pi model settings are invalid or unreadable")),
@@ -99,11 +91,11 @@ const authCheck = (
   models: ModelsApi,
 ): Effect.Effect<DoctorCheck> =>
   Effect.gen(function* () {
-    const status = yield* models.readOnlyStatus(target);
+    const status = yield* models.status(target);
 
     if (status.providerId === undefined) return authDoctorCheck(undefined, []);
 
-    const providers = yield* auth.readOnlyStatus(target);
+    const providers = yield* auth.status(target);
 
     return authDoctorCheck(status.providerId, providers);
   }).pipe(
@@ -237,47 +229,29 @@ const memoryCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
 
 const resourcesCheck = (
   target: ProfileTarget,
-  repositoryRoot: string,
-  profileExtensions: ProfileExtensionsApi,
-  inspectPackages: typeof inspectPiPackageHealth,
+  extensions: ExtensionsApi,
 ): Effect.Effect<DoctorCheck> =>
   Effect.gen(function* () {
-    const skipped = yield* inspectPackages(target.path, repositoryRoot);
+    const { skipped } = yield* extensions.health(target.path);
 
     if (skipped.length > 0)
       return error(
         "resources",
-        `BROKEN Profile packages skipped (owned automations paused on runtime activation; stored records retained): ${skipped.map((item) => `${item.id} (${item.diagnostics.map((diagnostic) => diagnostic.message).join("; ")})`).join("; ")}`,
+        `BROKEN Profile packages skipped: ${skipped.map((item) => `${item.id} (${item.diagnostics.map((diagnostic) => diagnostic.message).join("; ")})`).join("; ")}`,
       );
 
-    const { preflight } = yield* profileExtensions.validate(target, repositoryRoot);
-
-    for (const entry of BUILTIN_EXTENSION_CATALOG.extensions) {
-      if (!isRequiredBundledExtension(entry.id) || entry.source !== "bundled") continue;
-      const present = yield* Effect.result(inspect(path.join(target.path, "extensions", entry.id)));
-
-      if (present._tag === "Failure" && isMissing(present.failure)) continue;
-
-      if (present._tag === "Failure")
-        return error("resources", `Could not inspect required package ${entry.id}`);
-
-      const copy = yield* classifyBundledCopy(target.path, entry);
-
-      const copyCheck = bundledCopyCheck(target.path, entry.id, copy.state);
-
-      if (copyCheck !== undefined) return copyCheck;
-    }
+    const { preflight } = yield* extensions.validate(target);
 
     return ok(
       "resources",
-      `${preflight.extensionFactoryCount} bundled factories, ${preflight.extensionPathCount} Profile extension entrypoints, and ${preflight.skillPathCount} skill roots selected`,
+      `${preflight.extensionPathCount} Profile extension entrypoints and ${preflight.skillPathCount} skill roots selected`,
     );
   }).pipe(
     Effect.catch((failure) =>
       Effect.succeed(
         error(
           "resources",
-          failure instanceof ProfileExtensionPreflightFailed
+          failure._tag === "ExtensionLoadFailed"
             ? `Fatal Pi resource diagnostics: ${failure.diagnostics
                 .slice(0, 3)
                 .map((item) => `${item.source}: ${item.message}`)
@@ -322,9 +296,15 @@ const gatewayCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
   );
 
 const sessionsCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
-  listProfileSessions(target.path).pipe(
-    Effect.map((sessions) => {
+  inspectSessions(target.path).pipe(
+    Effect.map(({ sessions, skipped }) => {
       const broken = sessions.filter((session) => session.parentUnknown).length;
+
+      if (skipped > 0)
+        return error(
+          "sessions",
+          `${skipped} Pi session file${skipped === 1 ? " is" : "s are"} invalid, unreadable or duplicated`,
+        );
 
       return broken > 0
         ? warn(
@@ -374,10 +354,8 @@ const runtimeCheck = (target: ProfileTarget): Effect.Effect<DoctorCheck> =>
       : error("runtime", "Resident runtime path must be a regular directory");
   });
 
-export const makeDoctorChecks = (
-  inspectPackages: typeof inspectPiPackageHealth = inspectPiPackageHealth,
-): DoctorChecksApi => ({
-  check: (target, repositoryRoot, auth, models, profileExtensions) =>
+export const makeDoctorChecks = (): DoctorChecksApi => ({
+  check: (target, auth, models, profileExtensions) =>
     Effect.gen(function* () {
       const checks = [
         ok("ziggy", `Ziggy ${packageJson.version}`),
@@ -387,7 +365,7 @@ export const makeDoctorChecks = (
         yield* agentsCheck(target, models),
         yield* automationsCheck(target),
         yield* memoryCheck(target),
-        yield* resourcesCheck(target, repositoryRoot, profileExtensions, inspectPackages),
+        yield* resourcesCheck(target, profileExtensions),
         piDocsCheck(),
         yield* gatewayCheck(target),
         yield* discordRuntimeCheck(target),

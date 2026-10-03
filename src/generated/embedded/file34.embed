@@ -1,159 +1,59 @@
-import { nodeByRef, outlineNodeLabel } from "./outline.mjs";
-function normalizedLabel(value) {
-    return value.toLowerCase().replace(/\s+/g, " ").trim();
+import { macosBackend } from "./macos/backend.mts";
+import { isBrowserApp, isChromeFamilyApp, openBrowserLocationWithAppleScript } from "./macos/browser.mts";
+import { ensureMacosReady } from "./macos/permissions.mts";
+import type { ComputerUsePlatformBackend, PlatformName } from "./types.mts";
+import { linuxBackend } from "./linux/backend.mts";
+import { windowsBackend } from "./windows/backend.mts";
+
+const macosPlatformBackend: ComputerUsePlatformBackend = {
+	name: "macos",
+	ensureReady: ensureMacosReady,
+	listApps: macosBackend.listApps,
+	listRoots: macosBackend.listRoots,
+	getFrontmost: macosBackend.getFrontmost,
+	focusWindow: macosBackend.focusWindow,
+	observe: macosBackend.observe,
+	act: macosBackend.act,
+	actBatch: macosBackend.actBatch,
+	readText: macosBackend.readText,
+	waitFor: macosBackend.waitFor,
+	isBrowserApp,
+	isChromeFamilyApp,
+	openBrowserLocation: openBrowserLocationWithAppleScript,
+};
+
+class UnsupportedPlatformBackend implements ComputerUsePlatformBackend {
+	readonly name: PlatformName;
+	private readonly platform: NodeJS.Platform;
+
+	constructor(platform: NodeJS.Platform) {
+		this.platform = platform;
+		this.name = platform === "win32" ? "windows" : "linux";
+	}
+
+	private unsupported(): never {
+		throw new Error(`pi-computer-use does not support platform '${this.platform}' yet.`);
+	}
+
+	async ensureReady(): Promise<never> { this.unsupported(); }
+	async listApps(): Promise<never> { this.unsupported(); }
+	async listRoots(): Promise<never> { this.unsupported(); }
+	async getFrontmost(): Promise<never> { this.unsupported(); }
+	async focusWindow(): Promise<never> { this.unsupported(); }
+	async observe(): Promise<never> { this.unsupported(); }
+	async act(): Promise<never> { this.unsupported(); }
+	async readText(): Promise<never> { this.unsupported(); }
+	async waitFor(): Promise<never> { this.unsupported(); }
+	isBrowserApp(): never { this.unsupported(); }
+	isChromeFamilyApp(): never { this.unsupported(); }
+	async openBrowserLocation(): Promise<boolean> { this.unsupported(); }
 }
-function nodeLabel(node) {
-    return outlineNodeLabel(node) || node.role || node.ref;
+
+export function platformBackendForRuntime(platform: NodeJS.Platform = process.platform): ComputerUsePlatformBackend {
+	if (platform === "darwin") return macosPlatformBackend;
+	if (platform === "win32") return windowsBackend;
+	if (platform === "linux") return linuxBackend;
+	return new UnsupportedPlatformBackend(platform);
 }
-function regionKey(node) {
-    return `${node.role || "AXUnknown"}:${node.identifier || normalizedLabel(nodeLabel(node)) || node.ref}`;
-}
-function regionLabel(node) {
-    const label = nodeLabel(node);
-    return normalizedLabel(label) || normalizedLabel(node.role) || node.ref;
-}
-function topLevelRegions(outline) {
-    const nodes = outline.root.children.length ? outline.root.children : [outline.root];
-    return nodes.map((node) => ({ node, key: regionKey(node), label: regionLabel(node) }));
-}
-function topLevelAncestor(node, outline) {
-    let current = node;
-    while (current.parent && current.parent !== outline.root)
-        current = current.parent;
-    return current;
-}
-function uniqueRegions(regions) {
-    const seen = new Set();
-    const output = [];
-    for (const region of regions) {
-        const dedupeKey = `${region.key}:${region.status}:${region.detail ?? ""}`;
-        if (seen.has(dedupeKey))
-            continue;
-        seen.add(dedupeKey);
-        output.push(region);
-    }
-    return output;
-}
-function frontierRegions(outline, topLevels) {
-    const output = [];
-    for (const node of outline.nodes) {
-        if (node.scrollExtent && node.scrollExtent.seen < node.scrollExtent.total) {
-            const ancestor = topLevelAncestor(node, outline);
-            const top = topLevels.find((candidate) => candidate.node === ancestor);
-            output.push({
-                key: `${top?.key ?? regionKey(ancestor)}:scroll:${node.ref}`,
-                label: top?.label ?? regionLabel(ancestor),
-                status: "never-looked",
-                detail: `${node.scrollExtent.total} rows, ${node.scrollExtent.seen} seen`,
-            });
-        }
-        if (node.truncated) {
-            const ancestor = topLevelAncestor(node, outline);
-            const top = topLevels.find((candidate) => candidate.node === ancestor);
-            output.push({
-                key: `${top?.key ?? regionKey(ancestor)}:truncated:${node.ref}`,
-                label: top?.label ?? regionLabel(ancestor),
-                status: "never-looked",
-                detail: "subtree not walked",
-            });
-        }
-    }
-    return output;
-}
-export function noteFromLook(prev, outline, window) {
-    const topLevels = topLevelRegions(outline);
-    const currentKeys = new Set(topLevels.map((region) => region.key));
-    const regions = topLevels.map((region) => ({
-        key: region.key,
-        label: region.label,
-        status: "seen",
-    }));
-    if (prev) {
-        for (const old of prev.regions) {
-            if (old.status === "never-looked")
-                continue;
-            if (!currentKeys.has(old.key)) {
-                regions.push({ ...old, status: "changed", detail: "not matched in latest look" });
-            }
-        }
-    }
-    if (!window.windowRef || window.pairingScore === Number.NEGATIVE_INFINITY) {
-        regions.push({
-            key: "window:unpaired",
-            label: "window capture",
-            status: "never-looked",
-            detail: "AX window without capture pairing",
-        });
-    }
-    regions.push(...frontierRegions(outline, topLevels));
-    return {
-        windowRef: window.windowRef ?? "(unpaired)",
-        title: window.title,
-        pairing: window.pairing ?? "low",
-        lastLookId: outline.lookId,
-        regions: uniqueRegions(regions),
-    };
-}
-export function noteAfterAct(prev, targetRef, outline, refreshOutcome) {
-    const note = noteFromLook(prev, outline, refreshOutcome.window);
-    if (targetRef) {
-        const target = nodeByRef(outline, targetRef);
-        if (target) {
-            const ancestor = topLevelAncestor(target, outline);
-            const key = regionKey(ancestor);
-            const region = note.regions.find((candidate) => candidate.key === key);
-            if (region) {
-                region.status = "changed";
-                region.detail = "acted here";
-            }
-            else {
-                note.regions.unshift({ key, label: regionLabel(ancestor), status: "changed", detail: "acted here" });
-            }
-        }
-    }
-    for (const delta of refreshOutcome.rootDelta ?? []) {
-        note.regions.unshift({
-            key: `root:${delta.change}:${delta.ref ?? delta.kind}:${delta.title ?? ""}`,
-            label: `${delta.kind}${delta.title ? ` ${delta.title}` : ""}`,
-            status: delta.change === "closed" ? "changed" : "never-looked",
-            detail: `root ${delta.change}`,
-        });
-    }
-    if (refreshOutcome.windowChanged) {
-        for (const region of note.regions) {
-            if (region.status === "seen")
-                region.status = "changed";
-        }
-        note.regions.push({
-            key: `window:changed:${note.lastLookId ?? "unknown"}`,
-            label: refreshOutcome.newWindowLabel ?? "new sheet/window",
-            status: "never-looked",
-            detail: "appeared after act",
-        });
-    }
-    return { ...note, regions: uniqueRegions(note.regions) };
-}
-export function noteRegionKeyForRef(outline, ref) {
-    const node = nodeByRef(outline, ref);
-    return node ? regionKey(topLevelAncestor(node, outline)) : undefined;
-}
-export function renderNote(note) {
-    if (!note)
-        return "";
-    const looked = note.lastLookId ? "looked just now" : "not looked";
-    const lines = [`note ${note.windowRef} ${JSON.stringify(note.title.slice(0, 512))} (pairing ${note.pairing}, ${looked})`];
-    const visible = note.regions.slice(0, 64);
-    for (const region of visible) {
-        const detail = region.detail ? `   (${region.detail.slice(0, 256)})` : "";
-        lines.push(`  ${region.label.slice(0, 512).padEnd(14, " ")} ${region.status}${detail}`);
-    }
-    if (note.regions.length > visible.length)
-        lines.push(`  … ${note.regions.length - visible.length} more note regions; use search_ui or expand_ui`);
-    const encoded = new TextEncoder().encode(lines.join("\n"));
-    if (encoded.byteLength <= 8 * 1024)
-        return new TextDecoder().decode(encoded);
-    let end = 8 * 1024;
-    while (end > 0 && (encoded[end] & 0xc0) === 0x80)
-        end -= 1;
-    return `${new TextDecoder().decode(encoded.subarray(0, end))}\n… note byte budget reached`;
-}
+
+export const currentPlatformBackend = platformBackendForRuntime();

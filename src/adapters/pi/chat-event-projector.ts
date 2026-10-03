@@ -1,6 +1,12 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { Option, Schema } from "effect";
-import type { ChatEvent } from "../../application/agent";
+import { McpToolApp } from "../../extensions";
+import type { ChatEvent } from "../../session";
+
+/** The view record the `mcp-apps` hook adds to a model-called MCP tool's result details. */
+const AppDetails = Schema.Struct({ app: McpToolApp });
+
+const decodeAppDetails = Schema.decodeUnknownOption(AppDetails);
 
 const AssistantTextContent = Schema.Struct({
   type: Schema.Literal("text"),
@@ -141,16 +147,21 @@ export const createChatEventProjector = (): ((
 
       if (event.type === "tool_execution_end") lastToolDetail.delete(event.toolCallId);
 
-      return [
-        {
-          kind: "tool",
-          phase: toolEventPhase(event.type),
-          toolCallId: boundedCodePoints(event.toolCallId, MAX_PROGRESS_TOOL_ID_CODE_POINTS),
-          toolName: safeProgressToolName(event.toolName),
-          failed: event.type === "tool_execution_end" && event.isError,
-          ...Object.fromEntries(detail === undefined ? [] : ([["detail", detail]] as const)),
-        },
-      ];
+      const tool: ChatEvent = {
+        kind: "tool",
+        phase: toolEventPhase(event.type),
+        toolCallId: boundedCodePoints(event.toolCallId, MAX_PROGRESS_TOOL_ID_CODE_POINTS),
+        toolName: safeProgressToolName(event.toolName),
+        failed: event.type === "tool_execution_end" && event.isError,
+        ...Object.fromEntries(detail === undefined ? [] : ([["detail", detail]] as const)),
+      };
+
+      if (event.type !== "tool_execution_end" || event.isError) return [tool];
+
+      return Option.match(decodeAppDetails(event.result?.details), {
+        onNone: () => [tool],
+        onSome: ({ app }) => [{ ...tool, app }],
+      });
     }
 
     if (event.type === "message_end" && event.message.role === "assistant") {

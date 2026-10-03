@@ -1,81 +1,115 @@
-use serde::Serialize;
-use std::fmt;
-
-/// Error code strings sent in JSON error responses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum ErrorCode {
-    #[serde(rename = "capability_deferred")]
-    CapabilityDeferred,
-    #[serde(rename = "unsupported_command")]
-    UnsupportedCommand,
-    #[serde(rename = "invalid_request")]
-    InvalidRequest,
-    #[serde(rename = "target_not_found")]
-    TargetNotFound,
-    #[serde(rename = "internal_error")]
-    InternalError,
-    #[serde(rename = "unsupported_platform")]
-    UnsupportedPlatform,
-    #[serde(rename = "capture_failed")]
-    CaptureFailed,
-    #[serde(rename = "stale_look")]
-    StaleLook,
-    #[serde(rename = "stale_ref")]
-    StaleRef,
-    #[serde(rename = "coordinate_unavailable_for_root")]
-    CoordinateUnavailableForRoot,
-    #[serde(rename = "coordinate_blocked")]
-    CoordinateBlocked,
-    #[serde(rename = "foreground_required")]
-    ForegroundRequired,
-    #[serde(rename = "occluded_target")]
-    OccludedTarget,
-    #[serde(rename = "secure_text_unreadable")]
-    SecureTextUnreadable,
-}
-
-impl fmt::Display for ErrorCode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            ErrorCode::CapabilityDeferred => "capability_deferred",
-            ErrorCode::UnsupportedCommand => "unsupported_command",
-            ErrorCode::InvalidRequest => "invalid_request",
-            ErrorCode::TargetNotFound => "target_not_found",
-            ErrorCode::InternalError => "internal_error",
-            ErrorCode::UnsupportedPlatform => "unsupported_platform",
-            ErrorCode::CaptureFailed => "capture_failed",
-            ErrorCode::StaleLook => "stale_look",
-            ErrorCode::StaleRef => "stale_ref",
-            ErrorCode::CoordinateUnavailableForRoot => "coordinate_unavailable_for_root",
-            ErrorCode::CoordinateBlocked => "coordinate_blocked",
-            ErrorCode::ForegroundRequired => "foreground_required",
-            ErrorCode::OccludedTarget => "occluded_target",
-            ErrorCode::SecureTextUnreadable => "secure_text_unreadable",
-        };
-        write!(f, "{s}")
-    }
-}
-
-/// A typed protocol error with a human-readable message and a machine-readable code.
-#[derive(Debug, Clone, Serialize)]
-pub struct ProtocolError {
-    pub message: String,
-    pub code: ErrorCode,
-}
-
-impl ProtocolError {
-    pub fn new(message: impl Into<String>, code: ErrorCode) -> Self {
-        Self {
-            message: message.into(),
-            code,
-        }
-    }
-}
-
-impl std::error::Error for ProtocolError {}
-
-impl fmt::Display for ProtocolError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}] {}", self.code, self.message)
-    }
-}
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>files</key>
+	<dict/>
+	<key>files2</key>
+	<dict/>
+	<key>rules</key>
+	<dict>
+		<key>^Resources/</key>
+		<true/>
+		<key>^Resources/.*\.lproj/</key>
+		<dict>
+			<key>optional</key>
+			<true/>
+			<key>weight</key>
+			<real>1000</real>
+		</dict>
+		<key>^Resources/.*\.lproj/locversion.plist$</key>
+		<dict>
+			<key>omit</key>
+			<true/>
+			<key>weight</key>
+			<real>1100</real>
+		</dict>
+		<key>^Resources/Base\.lproj/</key>
+		<dict>
+			<key>weight</key>
+			<real>1010</real>
+		</dict>
+		<key>^version.plist$</key>
+		<true/>
+	</dict>
+	<key>rules2</key>
+	<dict>
+		<key>.*\.dSYM($|/)</key>
+		<dict>
+			<key>weight</key>
+			<real>11</real>
+		</dict>
+		<key>^(.*/)?\.DS_Store$</key>
+		<dict>
+			<key>omit</key>
+			<true/>
+			<key>weight</key>
+			<real>2000</real>
+		</dict>
+		<key>^(Frameworks|SharedFrameworks|PlugIns|Plug-ins|XPCServices|Helpers|MacOS|Library/(Automator|Spotlight|LoginItems))/</key>
+		<dict>
+			<key>nested</key>
+			<true/>
+			<key>weight</key>
+			<real>10</real>
+		</dict>
+		<key>^.*</key>
+		<true/>
+		<key>^Info\.plist$</key>
+		<dict>
+			<key>omit</key>
+			<true/>
+			<key>weight</key>
+			<real>20</real>
+		</dict>
+		<key>^PkgInfo$</key>
+		<dict>
+			<key>omit</key>
+			<true/>
+			<key>weight</key>
+			<real>20</real>
+		</dict>
+		<key>^Resources/</key>
+		<dict>
+			<key>weight</key>
+			<real>20</real>
+		</dict>
+		<key>^Resources/.*\.lproj/</key>
+		<dict>
+			<key>optional</key>
+			<true/>
+			<key>weight</key>
+			<real>1000</real>
+		</dict>
+		<key>^Resources/.*\.lproj/locversion.plist$</key>
+		<dict>
+			<key>omit</key>
+			<true/>
+			<key>weight</key>
+			<real>1100</real>
+		</dict>
+		<key>^Resources/Base\.lproj/</key>
+		<dict>
+			<key>weight</key>
+			<real>1010</real>
+		</dict>
+		<key>^[^/]+$</key>
+		<dict>
+			<key>nested</key>
+			<true/>
+			<key>weight</key>
+			<real>10</real>
+		</dict>
+		<key>^embedded\.provisionprofile$</key>
+		<dict>
+			<key>weight</key>
+			<real>20</real>
+		</dict>
+		<key>^version\.plist$</key>
+		<dict>
+			<key>weight</key>
+			<real>20</real>
+		</dict>
+	</dict>
+</dict>
+</plist>

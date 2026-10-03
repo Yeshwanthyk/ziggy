@@ -5,6 +5,8 @@ import {
   ChevronDown,
   Menu,
   PanelLeftClose,
+  Paperclip,
+  X,
   Pencil,
   Plus,
   RefreshCw,
@@ -13,7 +15,17 @@ import {
   Square,
   Star,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
+import type { AppHost } from "@/apps/app-view";
 import type {
   ZiggyRecipientId,
   ZiggySessionHistoryEntry,
@@ -33,7 +45,18 @@ import { SidebarSection } from "@/components/sidebar-section";
 import { Textarea } from "@/components/ui/textarea";
 import { readSavedConnection } from "@/components/settings/connection-pane";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
-import { type ConversationSummary, useZiggyGateway } from "@/gateway";
+import { type ConversationSummary, type GatewayConnector, useZiggyGateway } from "@/gateway";
+
+// The DOM lib does not yet declare the CSSOM View container option.
+const transcriptEndScrollOptions: ScrollIntoViewOptions & { container: "nearest" } = {
+  block: "end",
+  container: "nearest",
+};
+
+const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const MAX_IMAGE_BYTES = 5 * 1_024 * 1_024;
+
+const imageLabel = (count: number) => `${count} ${count === 1 ? "image" : "images"}`;
 
 const avatar = (name: string, active = false, size = 32) => (
   <BotAvatar active={active} className="bot-avatar" name={name} size={size} />
@@ -47,6 +70,30 @@ const historyKey = (entry: ZiggySessionHistoryEntry, index: number): string =>
         ? `${entry.automationId}:${entry.runId}`
         : entry.text.slice(0, 24)
   }:${index}`;
+
+// The MCP Apps bridge and its schemas load only when a conversation has a view to show.
+const AppView = lazy(() =>
+  import("@/apps/app-view").then((module) => ({ default: module.AppView })),
+);
+
+function LazyAppView(props: Parameters<typeof AppView>[0]) {
+  return (
+    <Suspense fallback={<div className="app-view is-loading" aria-busy="true" />}>
+      <AppView {...props} />
+    </Suspense>
+  );
+}
+
+/** Shown where a view cannot run: stored, Telegram, Discord and Slack sessions refuse its calls. */
+function ViewUnavailable({ title }: { readonly title: string }) {
+  return (
+    <div className="tool-line">
+      <span className="tool-dot" />
+      <span>{title}</span>
+      <span>Interactive view available only in live web UI conversations</span>
+    </div>
+  );
+}
 
 const sameSession = (left: ZiggySessionRef | undefined, right: ZiggySessionRef): boolean =>
   left?.profileId === right.profileId &&
@@ -117,13 +164,37 @@ function ActionRow({
   );
 }
 
+/** Tool calls with a view render alone, never folded into a group of finished calls. */
+const isFoldableTool = (entry: {
+  readonly phase: string;
+  readonly failed: boolean;
+  readonly app?: unknown;
+}) => entry.phase === "end" && !entry.failed && entry.app === undefined;
+
 export function HistoryEntry({
+  appHost,
   assistantName,
   entry,
+  sessionRef,
 }: {
+  readonly appHost?: AppHost;
   readonly assistantName: string;
   readonly entry: ZiggySessionHistoryEntry;
+  /** Set only when the conversation is a live web UI session that can serve views. */
+  readonly sessionRef?: ZiggySessionRef;
 }) {
+  if (entry.kind === "tool" && entry.app !== undefined) {
+    if (appHost === undefined || sessionRef === undefined)
+      return <ViewUnavailable title={`${entry.app.server} · ${entry.app.tool}`} />;
+    return (
+      <LazyAppView
+        app={entry.app}
+        host={appHost}
+        sessionRef={sessionRef}
+        title={`${entry.app.server} · ${entry.app.tool}`}
+      />
+    );
+  }
   if (entry.kind === "tool") {
     return (
       <div className="tool-line">
@@ -148,6 +219,9 @@ export function HistoryEntry({
       <div className="message-author">{entry.kind === "user" ? "You" : assistantName}</div>
       <div className="message-body">
         {entry.kind === "assistant" ? <MessageMarkdown>{entry.text}</MessageMarkdown> : entry.text}
+        {entry.kind === "user" && entry.imageCount !== undefined ? (
+          <span className="image-count">{imageLabel(entry.imageCount)}</span>
+        ) : null}
       </div>
     </article>
   );
@@ -162,13 +236,18 @@ const shortAgentDescription = (description: string, profileName: string): string
     : first;
 };
 
-export function App() {
-  const gateway = useZiggyGateway();
+/** A fixed connection skips auth discovery; the dev gallery uses it to render sample data. */
+export type AppConnection = { readonly connector: GatewayConnector; readonly url: string };
+
+export function App({ connection }: { readonly connection?: AppConnection } = {}) {
+  const gateway = useZiggyGateway(connection?.connector);
   const [connectionOpen, setConnectionOpen] = useState(false);
   const [hosted, setHosted] = useState(false);
   const [pairingRequired, setPairingRequired] = useState(false);
   const [discoveryAttempt, setDiscoveryAttempt] = useState(0);
-  const [startupPending, setStartupPending] = useState(() => readSavedConnection() !== undefined);
+  const [startupPending, setStartupPending] = useState(
+    () => connection !== undefined || readSavedConnection() !== undefined,
+  );
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
@@ -176,6 +255,58 @@ export function App() {
   const [selectedAutomationId, setSelectedAutomationId] = useState<string>();
   const [agentEditorOpen, setAgentEditorOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  // A view's `ui/message` lands in the composer; the person sends it, or not.
+  const appHost: AppHost = useMemo(
+    () => ({
+      readResource: gateway.readAppResource,
+      callTool: gateway.callAppTool,
+      setContext: gateway.setAppContext,
+      draftMessage: (ref, text) => {
+        if (!sameSession(gateway.selectedRef, ref)) return;
+        setDraft((current) => (current.trim().length === 0 ? text : `${current}\n\n${text}`));
+      },
+    }),
+    [gateway.readAppResource, gateway.callAppTool, gateway.setAppContext, gateway.selectedRef],
+  );
+  const [attachments, setAttachments] = useState<
+    ReadonlyArray<{ readonly file: File; readonly url: string }>
+  >([]);
+  const attachmentsRef = useRef(attachments);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const sendingRef = useRef(false);
+  const [sending, setSending] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string>();
+  const [dragging, setDragging] = useState(false);
+  useEffect(
+    () => () => {
+      for (const attachment of attachmentsRef.current) URL.revokeObjectURL(attachment.url);
+    },
+    [],
+  );
+
+  const updateAttachments = (next: typeof attachments) => {
+    attachmentsRef.current = next;
+    setAttachments(next);
+  };
+  const addAttachments = (files: ReadonlyArray<File>) => {
+    if (sendingRef.current || gateway.connection !== "open" || gateway.selectedRef?.kind !== "live")
+      return;
+    const next = [...attachmentsRef.current];
+    let error: string | undefined;
+    for (const file of files) {
+      if (!IMAGE_TYPES.has(file.type)) error = "Use a PNG, JPEG, GIF or WebP image.";
+      else if (file.size > MAX_IMAGE_BYTES) error = "Images must be 5 MiB or smaller.";
+      else if (next.length >= 4) error = "Attach up to 4 images per message.";
+      else next.push({ file, url: URL.createObjectURL(file) });
+    }
+    updateAttachments(next);
+    setAttachmentError(error);
+  };
+  const removeAttachment = (url: string) => {
+    URL.revokeObjectURL(url);
+    updateAttachments(attachmentsRef.current.filter((attachment) => attachment.url !== url));
+    setAttachmentError(undefined);
+  };
   const [search, setSearch] = useState("");
   const [recipient, setRecipient] = useState("all");
   const [localAction, setLocalAction] = useState<string>();
@@ -189,14 +320,14 @@ export function App() {
   }, [gateway.profile?.name]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
+    endRef.current?.scrollIntoView(transcriptEndScrollOptions);
   }, [gateway.pendingUser, gateway.streamText, gateway.tools]);
 
   useEffect(() => {
     const first = gateway.history[0];
     const nextKey = first === undefined ? undefined : historyKey(first, 0);
     if (nextKey !== undefined && firstHistoryKeyRef.current === undefined)
-      endRef.current?.scrollIntoView({ block: "end" });
+      endRef.current?.scrollIntoView(transcriptEndScrollOptions);
     firstHistoryKeyRef.current = nextKey;
   }, [gateway.history]);
 
@@ -288,8 +419,12 @@ export function App() {
 
   useEffect(() => {
     if (autoConnectStartedRef.current) return;
-    const saved = readSavedConnection();
     autoConnectStartedRef.current = true;
+    if (connection !== undefined) {
+      void connect(connection.url, undefined, false, false);
+      return;
+    }
+    const saved = readSavedConnection();
     const pairingCode = new URLSearchParams(location.hash.slice(1)).get("code");
     const pairing =
       pairingCode === null
@@ -385,7 +520,11 @@ export function App() {
   const send = async (event?: FormEvent, mode: "steer" | "queue" = "steer"): Promise<void> => {
     event?.preventDefault();
     const text = draft.trim();
-    if (text.length === 0) return;
+    if (sendingRef.current || (text.length === 0 && attachmentsRef.current.length === 0)) return;
+    const sentAttachments = attachmentsRef.current;
+    sendingRef.current = true;
+    setSending(true);
+    setAttachmentError(undefined);
     const target: ZiggyRecipientId | undefined =
       selectedGroup === undefined
         ? undefined
@@ -396,9 +535,19 @@ export function App() {
             : { kind: "agent", agentId: recipient };
     try {
       setDraft("");
-      await gateway.submit(text, target, mode);
+      await gateway.submit(
+        text,
+        target,
+        mode,
+        sentAttachments.map((attachment) => attachment.file),
+      );
+      for (const attachment of sentAttachments) URL.revokeObjectURL(attachment.url);
+      updateAttachments([]);
     } catch {
       setDraft((current) => (current.length === 0 ? text : current));
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
     }
   };
 
@@ -796,14 +945,18 @@ export function App() {
             ) : null}
             {groupCompletedActivity(
               gateway.history,
-              (entry) => entry.kind === "tool" && entry.phase === "end" && !entry.failed,
+              (entry) => entry.kind === "tool" && isFoldableTool(entry),
             ).map((entries, groupIndex) => (
               <ToolActivity count={entries.length} key={groupIndex}>
                 {entries.map((entry, index) => (
                   <HistoryEntry
+                    appHost={appHost}
                     assistantName={gateway.selectedTitle}
                     entry={entry}
                     key={historyKey(entry, index)}
+                    {...(gateway.selectedRef === undefined || !gateway.selectedServesViews
+                      ? {}
+                      : { sessionRef: gateway.selectedRef })}
                   />
                 ))}
               </ToolActivity>
@@ -811,25 +964,74 @@ export function App() {
             {gateway.pendingUser === undefined ? null : (
               <article className="message user optimistic">
                 <div className="message-author">You</div>
-                <div className="message-body">{gateway.pendingUser}</div>
+                <div className="message-body">
+                  {gateway.pendingUser}
+                  {gateway.pendingUserImages.length > 0 ? (
+                    <div className="message-images">
+                      {gateway.pendingUserImages.map((url, index) => (
+                        <img alt={`Attached image ${index + 1}`} key={url} src={url} />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               </article>
             )}
-            {groupCompletedActivity(
-              gateway.tools,
-              (tool) => tool.phase === "end" && !tool.failed,
-            ).map((tools, groupIndex) => (
+            {groupCompletedActivity(gateway.tools, isFoldableTool).map((tools, groupIndex) => (
               <ToolActivity count={tools.length} key={groupIndex}>
-                {tools.map((tool) => (
-                  <div className="tool-line live" key={tool.id}>
-                    <span className={tool.failed ? "tool-dot is-error" : "tool-dot"} />
-                    <span>{tool.name}</span>
-                    <span>
-                      {tool.phase === "end" ? (tool.failed ? "failed" : "finished") : "working"}
-                    </span>
-                  </div>
-                ))}
+                {tools.map((tool) =>
+                  tool.app !== undefined &&
+                  tool.phase === "end" &&
+                  !tool.failed &&
+                  !gateway.selectedServesViews ? (
+                    <ViewUnavailable
+                      key={tool.id}
+                      title={`${tool.app.server} · ${tool.app.tool}`}
+                    />
+                  ) : tool.app !== undefined &&
+                    tool.phase === "end" &&
+                    !tool.failed &&
+                    gateway.selectedRef !== undefined ? (
+                    <LazyAppView
+                      app={tool.app}
+                      host={appHost}
+                      key={tool.id}
+                      sessionRef={gateway.selectedRef}
+                      title={`${tool.app.server} · ${tool.app.tool}`}
+                    />
+                  ) : (
+                    <div className="tool-line live" key={tool.id}>
+                      <span
+                        className={
+                          tool.failed
+                            ? "tool-dot is-error"
+                            : tool.phase === "end"
+                              ? "tool-dot"
+                              : "tool-dot is-running"
+                        }
+                      />
+                      <span>{tool.name}</span>
+                      <span>
+                        {tool.phase === "end" ? (tool.failed ? "failed" : "finished") : "working"}
+                      </span>
+                    </div>
+                  ),
+                )}
               </ToolActivity>
             ))}
+            {gateway.busy &&
+            gateway.streamText.length === 0 &&
+            gateway.tools.every((tool) => tool.phase === "end") ? (
+              <article className="message assistant thinking" role="status">
+                <div className="message-author">{gateway.selectedTitle}</div>
+                <div className="message-body">
+                  <span className="typing-dots" aria-label="Thinking">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                </div>
+              </article>
+            ) : null}
             {gateway.streamText.length === 0 ? null : (
               <article className="message assistant streaming">
                 <div className="message-author">{gateway.selectedTitle}</div>
@@ -843,12 +1045,40 @@ export function App() {
                 {gateway.localError}
               </div>
             )}
-            <div ref={endRef} />
+            <div className="transcript-end" ref={endRef} />
           </div>
         </ScrollArea>
 
         <div className="composer-wrap">
-          <div className="composer-panel">
+          <div
+            className="composer-panel"
+            data-dragging={dragging || undefined}
+            onDragOver={(event) => {
+              if (event.dataTransfer.types.includes("Files")) {
+                event.preventDefault();
+                setDragging(true);
+              }
+            }}
+            onDragLeave={(event) => {
+              if (
+                !(
+                  event.relatedTarget instanceof Node &&
+                  event.currentTarget.contains(event.relatedTarget)
+                )
+              )
+                setDragging(false);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragging(false);
+              addAttachments(Array.from(event.dataTransfer.files));
+            }}
+          >
+            {attachmentError === undefined ? null : (
+              <div className="local-error" role="alert">
+                {attachmentError}
+              </div>
+            )}
             {selectedGroup === undefined ? null : (
               <label className="recipient-control">
                 <span>Send to</span>
@@ -869,28 +1099,107 @@ export function App() {
                 {gateway.pendingInputs.map((input) => (
                   <div key={input.id}>
                     <span>{input.mode === "queue" ? "Queued" : "Steering"}</span>
-                    <p>{input.text}</p>
+                    <p>
+                      {input.text}
+                      {input.imageCount === undefined ? null : (
+                        <span className="image-count">{imageLabel(input.imageCount)}</span>
+                      )}
+                    </p>
                   </div>
                 ))}
               </section>
             ) : null}
             <form className="composer" onSubmit={(event) => void send(event)}>
-              <Textarea
-                aria-label={`Message ${gateway.selectedTitle}`}
-                disabled={!connected || !selectedIsLive}
-                maxLength={gateway.maxPromptCodePoints}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={composerKeyDown}
-                placeholder={
-                  !connected
-                    ? "Offline"
-                    : selectedIsLive
-                      ? `Message ${gateway.selectedTitle}`
-                      : "Past conversations are read only"
-                }
-                rows={1}
-                value={draft}
+              <div className="composer-content">
+                {gateway.appContext.length === 0 ? null : (
+                  <div className="app-context-chips" aria-label="Context from views">
+                    {gateway.appContext.map((entry) => (
+                      <div className="app-context-chip" key={entry.server} title={entry.text}>
+                        <span>Context from {entry.server}</span>
+                        <button
+                          aria-label={`Remove context from ${entry.server}`}
+                          disabled={sending}
+                          onClick={() => {
+                            if (gateway.selectedRef !== undefined)
+                              gateway.setAppContext(gateway.selectedRef, entry.server, "");
+                          }}
+                          type="button"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {attachments.length === 0 ? null : (
+                  <div className="attachment-previews" aria-label="Image attachments">
+                    {attachments.map(({ file, url }) => (
+                      <div className="attachment-preview" key={url}>
+                        <img alt={file.name || "Attached image"} src={url} />
+                        <button
+                          aria-label={`Remove ${file.name || "image"}`}
+                          disabled={sending}
+                          onClick={() => removeAttachment(url)}
+                          type="button"
+                        >
+                          <X />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <Textarea
+                  aria-label={`Message ${gateway.selectedTitle}`}
+                  disabled={!connected || !selectedIsLive || sending}
+                  maxLength={gateway.maxPromptCodePoints}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={composerKeyDown}
+                  onPaste={(event) => {
+                    const files = Array.from(event.clipboardData.items)
+                      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+                      .flatMap((item) => {
+                        const file = item.getAsFile();
+                        return file === null ? [] : [file];
+                      });
+                    if (files.length > 0) {
+                      event.preventDefault();
+                      addAttachments(files);
+                    }
+                  }}
+                  placeholder={
+                    !connected
+                      ? "Offline"
+                      : selectedIsLive
+                        ? `Message ${gateway.selectedTitle}`
+                        : "Past conversations are read only"
+                  }
+                  rows={1}
+                  value={draft}
+                />
+              </div>
+              <input
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                aria-label="Choose images"
+                hidden
+                multiple
+                onChange={(event) => {
+                  addAttachments(Array.from(event.target.files ?? []));
+                  event.target.value = "";
+                }}
+                ref={fileInputRef}
+                type="file"
               />
+              <Button
+                aria-label="Attach images"
+                className="send-button"
+                disabled={!connected || !selectedIsLive || sending || attachments.length >= 4}
+                onClick={() => fileInputRef.current?.click()}
+                size="icon"
+                type="button"
+                variant="ghost"
+              >
+                <Paperclip />
+              </Button>
               {gateway.busy ? (
                 <Button
                   aria-label="Stop generating"
@@ -908,7 +1217,9 @@ export function App() {
                   type="button"
                   size="sm"
                   variant="secondary"
-                  disabled={draft.trim().length === 0 || !connected}
+                  disabled={
+                    (draft.trim().length === 0 && attachments.length === 0) || !connected || sending
+                  }
                   onClick={() => void send(undefined, "queue")}
                 >
                   Queue
@@ -917,7 +1228,12 @@ export function App() {
               <Button
                 aria-label={gateway.busy ? "Steer response" : "Send message"}
                 className="send-button"
-                disabled={!connected || !selectedIsLive || draft.trim().length === 0}
+                disabled={
+                  !connected ||
+                  !selectedIsLive ||
+                  sending ||
+                  (draft.trim().length === 0 && attachments.length === 0)
+                }
                 size="icon"
                 type="submit"
               >
@@ -925,9 +1241,11 @@ export function App() {
               </Button>
             </form>
             <p className="composer-hint">
-              {gateway.busy
-                ? "Enter to steer · Queue to send after this response"
-                : "Enter to send"}{" "}
+              {sending
+                ? "Sending…"
+                : gateway.busy
+                  ? "Enter to steer · Queue to send after this response"
+                  : "Enter to send"}{" "}
               · Shift+Enter for a new line
             </p>
           </div>

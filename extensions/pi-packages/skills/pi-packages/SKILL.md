@@ -10,8 +10,8 @@ are compiled into the Ziggy executable as file trees. The in-process `profile_ex
 selects a package and records its ID in `extensions.json`; runtime loads only those Profile
 folders. Profile-specific packages live under the same shelf.
 Each package may contain an Agent Skill, executable Pi extension code, or both. `pi-packages`,
-`extension-authoring`, and `ziggy-operations` are required and also sit on disk in the Profile;
-all other packages are optional. A Profile-owned package takes precedence over an approved
+`extension-authoring`, and `ziggy-operations` are required and load from Ziggy's own cache, not
+the Profile; all other packages are optional. A Profile-owned package takes precedence over an approved
 catalogue package with the same ID.
 
 The lowercase kebab-case folder and `extensions.json` key are Ziggy's shelf identity;

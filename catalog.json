@@ -14,12 +14,6 @@
       "path": "./extensions/apple-reminders"
     },
     {
-      "id": "codemode",
-      "version": "0.1.0",
-      "source": "bundled",
-      "path": "./extensions/codemode"
-    },
-    {
       "id": "coding-agent",
       "version": "0.1.0",
       "source": "bundled",
@@ -96,6 +90,12 @@
       "version": "0.1.0",
       "source": "bundled",
       "path": "./extensions/pi-packages"
+    },
+    {
+      "id": "plugin-authoring",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/plugin-authoring"
     },
     {
       "id": "qmd",

@@ -25,5 +25,5 @@
     ]
   },
   "include": ["src", "test", "extensions/**/*.ts"],
-  "exclude": ["extensions/computer-use/dist"]
+  "exclude": ["extensions/computer-use/dist", "extensions/plugin-authoring/skills/plugin-authoring/template"]
 }

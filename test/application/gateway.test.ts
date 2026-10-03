@@ -3,7 +3,8 @@
 import { describe, expect, test } from "bun:test";
 import { Deferred, Effect } from "effect";
 import type { TelegramUpdate } from "ziggy/adapters/telegram/api";
-import { formatSpecialistVoice, makeChatHandle, type ZiggyAgentApi } from "ziggy/application/agent";
+import { formatSpecialistVoice, type ZiggyAgentApi } from "ziggy/session/index";
+import { makeChatHandle } from "../harness/chat-handle";
 import {
   isTelegramStopCommand,
   makeTelegramGateway,
@@ -133,9 +134,7 @@ describe("Telegram gateway startup", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: (_target, context, sessionDirectory) =>
+          open: ({ context, directory: sessionDirectory }) =>
             Effect.sync(() => {
               openedChats.push({ context, sessionDirectory });
 
@@ -218,9 +217,7 @@ describe("Telegram gateway stop", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 isIdle: false,
@@ -290,9 +287,7 @@ describe("Telegram gateway stop", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.sync(() => {
               openChatCalls += 1;
 
@@ -361,9 +356,7 @@ describe("Telegram gateway stop", () => {
               answer: "reply",
               session: { id: "specialist", file: "/sessions/specialist.jsonl" },
             }),
-          openSpecialistChat: () =>
-            Effect.succeed(makeChatHandle({ prompt: () => Effect.succeed("unused") })),
-          openChat: () =>
+          open: () =>
             Effect.succeed(
               makeChatHandle({
                 prompt: (_text, options) => {

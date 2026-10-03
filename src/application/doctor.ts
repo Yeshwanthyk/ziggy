@@ -1,17 +1,13 @@
 import { Context, Effect, Layer } from "effect";
-import type { AuthApi } from "./auth";
-import { Auth } from "./auth";
-import type { ModelsApi } from "./models";
-import { Models } from "./models";
-import { ProfileExtensions } from "./profile-extensions";
-import type { BundledCopyState, DoctorCheck, DoctorReport } from "../domain/doctor";
+import type { DoctorCheck, DoctorReport } from "../domain/doctor";
 import type { SlackHealthProjection } from "../domain/slack-health";
 import type { DiscordHealthProjection } from "../domain/discord-health";
-import type { ProfileAgent, ProfileTarget } from "../domain/profile";
-import type { ProfileExtensionsApi } from "../domain/profile-extension";
+import type { ProfileAgent } from "../domain/profile";
+import { Extensions, type ExtensionsApi } from "../extensions";
+import { type AuthApi, Auth, type ModelsApi, Models, type ProfileTarget } from "../profile";
 
 export interface DoctorApi {
-  readonly check: (target: ProfileTarget, repositoryRoot: string) => Effect.Effect<DoctorReport>;
+  readonly check: (target: ProfileTarget) => Effect.Effect<DoctorReport>;
 }
 
 export class Doctor extends Context.Service<Doctor, DoctorApi>()("ziggy/Doctor") {}
@@ -20,10 +16,9 @@ export class Doctor extends Context.Service<Doctor, DoctorApi>()("ziggy/Doctor")
 export interface DoctorChecksApi {
   readonly check: (
     target: ProfileTarget,
-    repositoryRoot: string,
     auth: AuthApi,
     models: ModelsApi,
-    profileExtensions: ProfileExtensionsApi,
+    profileExtensions: ExtensionsApi,
   ) => Effect.Effect<DoctorReport>;
 }
 
@@ -34,17 +29,16 @@ export class DoctorChecks extends Context.Service<DoctorChecks, DoctorChecksApi>
 export const makeDoctor = (
   auth: AuthApi,
   models: ModelsApi,
-  profileExtensions: ProfileExtensionsApi,
+  profileExtensions: ExtensionsApi,
   checks: DoctorChecksApi,
 ): DoctorApi => ({
-  check: (target, repositoryRoot) =>
-    checks.check(target, repositoryRoot, auth, models, profileExtensions),
+  check: (target) => checks.check(target, auth, models, profileExtensions),
 });
 
 export const DoctorLive = Layer.effect(
   Doctor,
   Effect.gen(function* () {
-    return makeDoctor(yield* Auth, yield* Models, yield* ProfileExtensions, yield* DoctorChecks);
+    return makeDoctor(yield* Auth, yield* Models, yield* Extensions, yield* DoctorChecks);
   }),
 );
 
@@ -127,29 +121,8 @@ export const classifyDiscordRuntime = (projection: DiscordHealthProjection): Doc
   return warn("discord-runtime", `Discord runtime is ${snapshot.state}`);
 };
 
-/** Recovery text is Profile policy; the adapter only determines the copy state. */
-export const bundledCopyCheck = (
-  profilePath: string,
-  id: string,
-  state: BundledCopyState,
-): DoctorCheck | undefined => {
-  if (state === "modified")
-    return warn(
-      "resources",
-      `${id} has local changes; copy your edits elsewhere and restore the original files, then run ziggy extensions update ${JSON.stringify(profilePath)} ${id}`,
-    );
-
-  if (state === "untracked-behind")
-    return warn(
-      "resources",
-      `${id} is behind the bundle and untracked; run ziggy extensions update ${JSON.stringify(profilePath)} ${id} --adopt`,
-    );
-
-  return undefined;
-};
-
 export const modelDoctorCheck = (
-  status: Effect.Success<ReturnType<ModelsApi["readOnlyStatus"]>>,
+  status: Effect.Success<ReturnType<ModelsApi["status"]>>,
 ): DoctorCheck =>
   status.providerId === undefined || status.modelId === undefined
     ? error("model", "No effective Pi model is selected")
@@ -160,7 +133,7 @@ export const modelDoctorCheck = (
 
 export const authDoctorCheck = (
   providerId: string | undefined,
-  providers: Effect.Success<ReturnType<AuthApi["readOnlyStatus"]>>,
+  providers: Effect.Success<ReturnType<AuthApi["status"]>>,
 ): DoctorCheck => {
   if (providerId === undefined)
     return warn("auth", "Provider auth cannot be checked until a model is selected");

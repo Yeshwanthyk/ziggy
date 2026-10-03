@@ -25,7 +25,7 @@ const decodeRequest = Schema.decodeUnknownSync(UiRequestEnvelope);
 
 const decodeOpen = Schema.decodeUnknownSync(UiSessionOpenParams);
 
-const decodeText = Schema.decodeUnknownSync(UiSessionTextParams);
+const decodeText = Schema.decodeUnknownSync(UiSessionTextParams, { onExcessProperty: "error" });
 
 const decodeName = Schema.decodeUnknownSync(UiSessionName);
 
@@ -91,6 +91,15 @@ test("UI protocol decodes explicit Profile-scoped request params", () => {
     text: "hello",
   });
   expect(() => decodeText({ ref: liveRef, text: "", extra: true })).toThrow();
+  const id = "12345678-1234-4123-8123-123456789abc";
+  expect(decodeText({ ref: liveRef, text: "", images: [id] })).toEqual({
+    ref: liveRef,
+    text: "",
+    images: [id],
+  });
+
+  for (const images of [[], ["invalid"], Array(5).fill(id)])
+    expect(() => decodeText({ ref: liveRef, text: "hello", images })).toThrow();
 });
 
 test("UI names and live keys reject traversal, separators, uppercase aliases, and overlong values", () => {

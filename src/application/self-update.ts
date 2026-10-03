@@ -1,7 +1,7 @@
 import { Context, Effect, Layer } from "effect";
 import { installSelfUpdate, type SelfUpdateInstaller } from "../adapters/fs/self-update";
 import { ZiggyReleaseClient, type ZiggyReleaseClientApi } from "../adapters/github/self-update";
-import { ZiggyUpdateUnavailable } from "../domain/extension-catalog";
+import { ZiggyUpdateUnavailable } from "../domain/self-update";
 
 export interface SelfUpdateResult {
   readonly path: string;

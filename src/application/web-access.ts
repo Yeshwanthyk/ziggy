@@ -3,8 +3,8 @@ import { openWebAccessStore } from "../adapters/bun/web-access-sqlite";
 import { inspectGatewayOwner } from "../adapters/bun/gateway-owner";
 import { readUiServerProjection } from "../adapters/bun/ui-server";
 import { readWebAccessConfig, writeWebAccessConfig } from "../adapters/fs/web-access-config";
-import type { ProfileTarget } from "../domain/profile";
 import { WebAccessError, type WebPairing } from "../domain/web-access";
+import { type ProfileTarget } from "../profile";
 
 const openStore = (target: ProfileTarget, operation: string) =>
   Effect.try({

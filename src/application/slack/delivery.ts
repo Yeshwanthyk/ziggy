@@ -1,6 +1,7 @@
 import { Duration, Effect } from "effect";
 import {
   isSlackPrivateFileUrl,
+  postMessage,
   MAX_SLACK_IMAGE_BYTES,
   SLACK_IMAGE_MIME_TYPES,
   type SlackApiError,
@@ -12,8 +13,11 @@ import type {
   SlackIngressPayload,
   SlackIngressTerminalState,
 } from "../../domain/slack-ingress";
-import { codePointLength } from "../../domain/memory";
-import { normalizeSlackUserText, SLACK_BROADCAST_MENTION } from "./intake";
+import { codePointLength } from "../../platform/text";
+import type { ProfileTarget } from "../../profile";
+import { apiFailure, chatApiUrl, configurationFailure, type DeliveryFailure } from "../delivery";
+import type { GatewayTarget } from "../delivery";
+import { loadSlackGatewayConfig, normalizeSlackUserText, SLACK_BROADCAST_MENTION } from "./intake";
 
 const SLACK_MESSAGE_LIMIT = 4_000;
 
@@ -382,4 +386,23 @@ export const retrySlackDelivery = <A>(
       yield* delay(retryDelay);
       attempt += 1;
     }
+  });
+
+/** Post `text` to a Slack channel, or a thread in it, in Slack-sized chunks. */
+export const deliverSlack = (
+  profile: ProfileTarget,
+  target: Extract<GatewayTarget, { readonly _tag: "slack" }>,
+  text: string,
+): Effect.Effect<void, DeliveryFailure> =>
+  Effect.gen(function* () {
+    const config = yield* loadSlackGatewayConfig(profile).pipe(
+      Effect.mapError(() => configurationFailure),
+    );
+
+    const baseUrl = yield* chatApiUrl("ZIGGY_SLACK_API_URL");
+
+    for (const chunk of slackMessageChunks(text))
+      yield* postMessage(config.botToken, target.channelId, chunk, target.threadTs, baseUrl).pipe(
+        Effect.mapError(apiFailure),
+      );
   });

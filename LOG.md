@@ -432,8 +432,6 @@ results.
 
 ## 2026-08-23
 
-**Optional confined MCP Code Mode.** Added the self-contained `codemode` Pi package with one collision-resistant `codemode_execute` tool. JavaScript is parsed with Acorn and evaluated by an in-process tree-walking orchestration interpreter adapted from OpenCode's MIT-licensed Code Mode design; no source reaches eval, vm, a shell, imports, or a general JavaScript runtime. Strict Profile decoding atomically opens a physical regular `codemode.json` with the platform no-follow flag, validates and reads that same owned handle, and fails closed where no-follow cannot be guaranteed; it admits only explicitly configured stdio servers and per-server `allowTools`, and keeps credentials in the host-owned child environment. Clients start lazily, bounded discovery exposes only allowed MCP tools, and calls recheck policy before dispatch. Timeout, external cancellation, and session shutdown revoke clients, terminate detached MCP process groups with bounded TERM-to-KILL escalation, and await confirmed child exit. The installed entrypoint is a self-contained Effect 4 bundle so Pi's ambient Effect 3 compatibility alias cannot change its schema/runtime API. Wall time, interpreter steps, tool calls, catalog acquisition, MCP messages, logs, and the complete result envelope are bounded; untrusted AST/helper failures and defects normalize to a fail-closed result envelope. Focused package proof covers real newline-framed MCP composition through Pi registration, lazy lifecycle, host-only credentials, allowlist denial, malformed/error/pagination failure, adversarial syntax/helper probes, limits, cancellation and descendant cleanup, symlink rejection, and copied-package resource-loader invocation.
-
 **Core computer use, browser profiles, and teachable workflows.** Added the pinned, MIT-licensed `@injaneity/pi-computer-use@0.5.0` runtime as the self-contained `computer-use` package with its native helper payloads, concrete Ziggy entrypoint adapter, eleven upstream tools, and a bounded `run_ui_segment` driver tool. Semantic segments freshly resolve durable app/browser roots, support read-only assertions, require exact targets and verified postconditions, and stop on ambiguity, cancellation, stale or unknown state, driver errors, and uncertain outcomes; coordinates, JavaScript, text entry, and secret values are excluded. Added `computer-workflows` for session-scoped teaching, strict redaction and nested decoding, visible immutable Profile revisions, later-user-input publication approval, compact replay plans, logged-in browser preconditions, and derived pass/fail/incomplete checkpoint summaries. Added `dev-browser` as the separate named persistent-browser lifecycle boundary with Profile-namespaced browser identities, bounded status/list execution, idle cleanup policy, and confirmation-gated global stop that preserves profile data. Runtime drafts and run evidence stay under `.runtime`; transient refs, state IDs, typed text, URLs, code, coordinates, result bodies, cookies, and page text never enter durable workflows.
 
 **Complete UI-capabilities and Squarey web plan.** Created a clean planning worktree on `kyendamuri/ui` from `6d7f71c`, captured the product boundary in `PRODUCT.md`, and recorded the full implementation packet in `docs/plans/ui-capabilities-squarey-web.md`. The plan improves the existing serve-owned UI gateway and `@ziggy/gateway-client`, redesigns the existing `clients/example-web` into a Grok-style Squarey client, and routes UI authoring through the bundled `ziggy-operations` skill. It defines the complete Profile interaction inventory, transcript projection, event epoch/cursor/replay behavior, product-to-primitive composition, eight end-to-end implementation slices, focused and live proof, commit discipline, and a fresh-session handoff prompt. No production behavior or Squarey Profile files changed.
@@ -1003,7 +1001,7 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 
 ## 2026-09-22 — OpenMuse connector research
 
-- Inspected OpenMuse at `ef8f608bb0305ff97114983de5c9db7ebcd816e2` and Ziggy at `2d3bf4a`; recorded direct Google/OAuth reuse patterns, existing Executor/Code Mode/Jev seams, and a proposed Profile-owned connector base in `docs/research/openmuse-connectors-scout.md`.
+- Inspected OpenMuse at `ef8f608bb0305ff97114983de5c9db7ebcd816e2` and Ziggy at `2d3bf4a`; recorded direct Google/OAuth reuse patterns, existing Executor/Jev seams, and a proposed Profile-owned connector base in `docs/research/openmuse-connectors-scout.md`.
 - Compared the current official MCP client and Pi MCP adapter ownership boundaries. This is source research only: no runtime implementation, account connection, external API action, or live compatibility test.
 - Verified source link line bounds and whitespace; no application tests were needed for these documentation-only changes.
 - Follow-up web research clarified the direct-first scope: no MCP dependency is required. Added native SDK, Nango auth, and Composio direct-tool options; revised the first slice to a Google extension only.
@@ -1049,7 +1047,6 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 
 ## 2026-09-28 — Codemode setup, pi_docs policy, and headless skill guidance
 
-- Codemode: a missing `codemode.json` now gives a schema hint and points to a setup skill; the tool description states the interpreter contract (no classic `for`, `try/catch` or `throw`); MCP `isError` content reaches the script, capped at 4 KiB; config errors name key paths, never values.
 - Offline `pi_docs` includes Ziggy's Profile resource rules.
 - Replaced TUI instructions in `docs/operations/*.md` and the preloaded skills with resident web UI and CLI flows, and regenerated the packaged references. The extension-authoring skill says extensions run headless: `ctx.ui` confirm returns `false`, select and input return `undefined`.
 - Verification: `bun run check` and `bun run test` (714 pass) passed. Opus re-review: merge.
@@ -1237,7 +1234,7 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
   - `ToolInfo` requires `exposure`.
   - Tools receive an `ExtensionToolContext`.
 - Behaviour change: Pi now writes a persistent session's JSONL on the first user message, not the first assistant reply (Pi #10000). The lazy-session test now asserts that.
-- Pi's new built-in codemode, tool-search, MCP and llama.cpp extensions load only in Pi's CLI. SDK hosts such as Ziggy must opt in, so nothing collides with the bundled `codemode` or `mcporter`.
+- Pi's new built-in codemode, tool-search, MCP and llama.cpp extensions load only in Pi's CLI. SDK hosts such as Ziggy must opt in, which is now done for MCP, codemode and tool-search in plugins Step 1.
 - Regenerated the builtin catalog and pi-docs embeds.
 - Squarey was backed up first to `~/.ziggy/backups/squarey-full-20260929` (APFS clone; sockets and Chrome singleton links skipped).
 - Verification: `bun run check` and `bun run test` (812 pass) passed. A development standalone binary built and passed `smoke-standalone-executable --allow-development`. No live model turn was run, and the installed binary and `~/.ziggy` were not touched.
@@ -1247,3 +1244,760 @@ Full verification: `bun run check` and `bun test ./test ./extensions ./tooling` 
 - `ziggy auth <profile> openai --type oauth` now works. Pi 0.99's Sign in with ChatGPT needs `LoginOptions.getDeviceId`, and without it the login failed before any network call. `src/adapters/pi/auth.ts` passes Pi's own `SettingsManager.getOrCreateDeviceId()` for the Profile, so each Profile keeps a stable UUID in its `settings.json`, created on first login.
 - `openai-codex` (Pi's "legacy" provider) is left available, not hidden; new Profiles should use `openai`.
 - Verification: `bun run check` passed. The rebuilt dev binary, run against a scratch Profile, printed the `auth.openai.com` authorize URL with `ext_agent_host_id=urn:uuid:<id>` and the ChatGPT token scopes, and wrote the ID to `settings.json`. The browser consent and a live model turn were not completed.
+
+## Effect composition plan and live Effect diagnostics
+
+- New plan `docs/plans/effect-composition.md`, from the kvim review of `src/main.ts`. It covers:
+  - why the file grew: services don't own their wiring, one layer is built for every command, host state is read at module scope, exit codes bypass the error channel, and command logic lives in the entrypoint;
+  - the target shape: a composition root, per-area handlers, `Match.valueTags` dispatch, and per-command layers;
+  - five slices, and the lint and skill guardrails.
+- The `@effect/tsgo` patch was not applied, so `bun run check` had been running plain `tsc` without any Effect diagnostics. A `postinstall` now runs `effect-tsgo patch`. The two diagnostics it raised as errors (`missingReturnYieldStar` in the Slack gateway and extension lock tests) are fixed.
+- 53 warnings and 105 suggestions remain and are not yet enforced (`ignoreEffectWarningsInTscExitCode`). The plan ratchets them.
+- Verification: `bun run check` and `bun run test` (812 pass) passed with the patch applied.
+
+## Composition root for the CLI
+
+- `src/composition.ts` is now the one place layers are wired. Each service layer is named once and shared by reference: `ZiggyAgentLayer` over `PiAgentLayer`, `ProfilesLayer`, `DoctorLayer` and the rest. This removes `main.ts`'s 15 `XProvided` constants and the five inline re-spellings of `ZiggyAgentLive.pipe(Layer.provide(PiAgentLive))`.
+- `makeCliLayer(resolutionOptions)` returns the CLI's service layer. The chat gateways are wired only under the resident, because no command uses them directly.
+- The Pi standalone registration (Bun OAuth flows, the Bedrock module, the Photon WASM fallback) no longer runs at module load. `PiStandaloneRuntimeLive`, a `Layer.effectDiscard`, is provided under the whole CLI layer, so it runs before any command touches Pi.
+- `main.ts` decodes the command first. `help` and `--version` answer without building any services. Every other command runs `runCommand` under `makeCliLayer`.
+- Removed the unused `makePiAgentLive`.
+- Verification: `bun run check` and `bun run test` (812 pass) passed. Smoke-tested `--version`, `help`, `profiles` and `extensions list` from source.
+
+## Delete the dead repositoryRoot parameter
+
+- `repositoryRoot` was threaded through about ten APIs (`PiAgent`, `ProfileExtensions`, `Doctor`, `Setup`, the resident gateway, the extension manager and the UI gateway config), and every sink ignored it. It is gone from `src/` and `test/`, along with the `composition.ts` export.
+- `extensions show` now prints paths relative to the current directory, its only real use.
+- Verification: `bun run check` and `bun run test` (812 pass) passed. Smoke-tested `--version`, `help`, `profiles` and `extensions show apple-notes` from source.
+
+## ZiggyPaths service
+
+- New `ZiggyPaths` service (`src/application/ziggy-paths.ts`) for Ziggy home, the Profiles directory and registry, and CLI Profile target resolution. `ZiggyPathsLive` (`src/adapters/bun/ziggy-paths.ts`) reads `ZIGGY_HOME` through `Config` and cwd/home when the layer builds. `main.ts` no longer reads host state at module scope for paths.
+- `makeResidentGatewayLive(registry, extensionHealth, directory)` is now a plain `ResidentGatewayLive` that yields `ZiggyPaths` and a new `ExtensionHealth` service. `composition.ts` exports a constant `CliLayer`.
+- Fix: resident service operations read `ZIGGY_HOME` raw, not resolved against cwd, so a relative `ZIGGY_HOME` could reach launchd/systemd unresolved. They now use `ZiggyPaths`, and their host runtime is built in the layer instead of at module load.
+- Verification: `bun run check` and `bun run test` (812 pass) passed. Smoke-tested `--version`, `help`, `profiles`, `extensions show apple-notes`, and `profiles` with a relative `ZIGGY_HOME` from a scratch directory.
+
+## CLI exit codes and terminal style through Effect
+
+- `main.ts` no longer writes `process.exitCode` or prints-then-succeeds. Commands return their exit code; `exitWith` fails with `CliExit` (`src/faces/cli-exit.ts`), which carries `Runtime.errorExitCode` and suppresses `runMain`'s report. `CliCommandFailed` replaces the `fail(message)` helper.
+- Failure rendering is 7 `catchTags` entries for tags with extra detail plus one `Effect.catch` on `.message`, down from 61 entries. Any typed failure is now reported, not only listed tags.
+- `disableErrorReporting` is removed from `runMain`, so defects print instead of exiting 1 silently.
+- `TerminalStyle` (`src/faces/terminal-ui.ts`) replaces `terminalRenderOptions()`. It reads `TERM` and `NO_COLOR` through `Config` and the stdout TTY and columns when its layer builds.
+- Verification: `bun run check` and `bun run test` (812 pass) passed. Smoke-tested exit codes from source: `--version`/`help`/`profiles` 0; doctor on a missing Profile, unknown extension, `serve status` on an uninstalled Profile, and an uninitialized Profile all 1 with one printed report. Under a pseudo-TTY `profiles` renders the pretty panel, and `NO_COLOR` drops colors.
+
+## Per-area CLI handlers: models
+
+- `main.ts` dispatches every command, help and version included, through one exhaustive `Match.valueTags`. Commands not yet moved map to `legacy`, which still runs `runCommand` under `CliLayer`.
+- `ziggy models status|list|set` moved to `src/faces/commands/models.ts`. It yields only `Models` and `ZiggyPaths`, prints through `Console`, and runs under `ModelsCommandsLayer`, so it no longer builds the resident, gateway and agent layers.
+- Verification: `bun run check` and `bun run test` (812 pass) passed. Smoke-tested from a scratch `ZIGGY_HOME`: `help models` 0; `models status` and `models list --provider anthropic` on a fresh Profile 0; both on an uninitialized Profile 1 with one report.
+
+## Tight-core alignment audit
+
+- Added `docs/research/tight-core-alignment-audit.md` and its JSON evidence index: a bottom-up review of 61 current core/composition files (17,255 lines), checked against pinned Effect beta.99 and installed Pi 0.99.1. Every file has a disposition; findings include correction scope, caller impact, proof limits, and implementation order.
+- Disposable local fixtures reproduced premature session-writer admission after failed shutdown, a Profile registry lost update, memory-lock symlink traversal, missing acquired-handle cleanup during UI registration failure, and eager runtime-directory reads. No production source or Profile data was changed; existing CLI extraction work was preserved.
+- Verification: `bun run lint` and `bun run typecheck` passed. The 32-file focused core test run had 230 pass and 1 fail; the optional-Pi-diagnostics activation test also failed in isolation because it expected model-selection failure but obtained a chat handle. The report records that unresolved test/startup-contract mismatch. No full-suite, live provider/gateway, or footprint claim is made.
+
+## Tight-core rebuild plan
+
+- Added `docs/plans/tight-core/`, a working plan spanning several sessions. `README.md` is the synthesis: a reach table, the mistake patterns, per-area targets, decisions D1–D16, an e2e verification loop with proofs P1–P19, slices 0–9, a disagreement ledger and a bug list. `areas/` holds five area reviews and two challenge reviews (Fable, and a devil's advocate for the current design).
+- The challenge round corrected draft v1, which had dropped guards without naming the invariants they protected:
+  - The writer lease stays, as a lease held for the handle's lifetime that moves across switch, `/new` and `/fork` (web `/new` followed by `run -c` would otherwise branch the transcript).
+  - The `.owner` pid stays.
+  - The extension selection lock stays.
+  - `update` gets `.old` crash recovery.
+  - Required packages go to a cache directory for each Ziggy version (embedded-only breaks the relative `references/` links).
+  - Sessions keep the streaming scan (the largest transcript is 376 MB).
+  - The resume-ordering tests move to handle level.
+- Documentation only. No source changed and no checks run.
+- 2026-09-30: Rewrote `docs/plans/tight-core/README.md` bottom-up. It now covers:
+  - the `src/` inventory, showing each concept spread across 5–9 folders and 34 of 53 `application/` files importing adapters;
+  - a three-folder core (`profile/`, `session/`, `extensions/`), with agents, memory and resident built on top through a tool seam;
+  - the `Context.Service` + `make` + `static layer` service syntax, and where each of the 34 services goes;
+  - Effect patterns before and after;
+  - the plain-language areas, the work order, and three open questions.
+
+  Documentation only; no checks run.
+
+## Per-area CLI handlers: sessions and memory
+
+- `ziggy sessions list|show` and `ziggy memory list|show` moved to `src/faces/commands/sessions.ts` and `memory.ts`. They run under `SessionsCommandsLayer` and `MemoryCommandsLayer`, so they build only their own services.
+- Verification:
+  - `bun run check` and `bun run test` (812 pass) passed.
+  - Smoke-tested from a scratch `ZIGGY_HOME`: `memory list` and `sessions list` on a fresh Profile both exit 0.
+
+## Tight core, step 0: harness and end-to-end proofs
+
+- `test/harness/` drives the real product from outside:
+  - a scripted OpenAI-compatible SSE model server (`provider.ts`: text, tool calls, failures, a turn held open by a gate);
+  - scratch Profiles in a tmp `ZIGGY_HOME` with `HOME` split from it, plus `treeHash` for "nothing changed";
+  - the real `bun src/main.ts` (`cli.ts`), a real `ziggy serve` driven through `packages/ui-sdk` (`resident.ts`), Pi transcript reading (`transcript.ts`);
+  - `sandbox.ts` for driving by hand.
+- `test/e2e/` proves run, profiles, models, sessions, web sessions (reconnect mid-turn, shared main), single writer, `agent_run`, memory (next turn, group scope, cap), automation delivery (stored with and without a resident, live idle, live busy) and ACP.
+- Red proofs (`test.failing`) mark the known bugs step 1 fixes:
+  - `profiles` rewrites `profiles.list`;
+  - ACP `session/set_model` is ignored;
+  - `agent_run` returns an unbounded result;
+  - an agent declaring an unknown tool or `profile_extensions` is only noticed at call time.
+- `.agents/skills/verify-ziggy/` plus `features/` map every user flow to its recipe and proof, and record what is uncovered. "One automation run delivered twice gives one receipt" is unreachable end to end, because nothing re-sends a run.
+- Lint: `test/harness/` and `test/e2e/` count as adapter code (they own processes, sockets and Promises).
+- An independent verifier reviewed the harness. It confirmed every red proof fails on its intended assertion and caught leaks: a failed proof left `ziggy serve` or `ziggy acp` running. Fixed:
+  - `stopResidents()` runs in `afterEach`, a resident that never comes up is killed, CLI children are killed at 4.5 s, and ACP closes in `finally`;
+  - `eventually` treats `false` as "not yet";
+  - the mid-turn reconnect now rewatches before the turn ends;
+  - single writer also proves no model call and an unchanged transcript;
+  - the cap proof seeds `MEMORY.md`;
+  - `wake` forwarding to a running resident is proven.
+- Found while doing so: Effect's `Cron.next` throws for a cron that parses but never fires (`0 0 31 2 *`), and the scheduler calls it unguarded, so one such automation file keeps `serve` from starting. Recorded as a red proof and added to step 1.
+- `bun run test` now runs files with `--parallel`; `bun run test:e2e` runs only the proofs.
+- Verification:
+  - `bun run check` passed.
+  - `bun run test` gave 836 pass in about 13 s (budget 15 s); e2e alone is about 7 s (budget 10 s).
+  - A deliberately failing proof with a resident up leaves no `serve` process.
+  - The sandbox recipe was followed by hand: doctor all OK, `run` printed `ok`, and one request was logged.
+
+## Tight core, step 1: free fixes
+
+**`profiles` is read-only.** `listProfiles` no longer rewrites `profiles.list` to prune stale entries; it skips them. PROF-2 flipped green; the unit test now asserts the registry is untouched.
+
+**Delivery targets decided.** Conversation delivery stays: Squarey's `linkedin-jobs` sends to a Slack channel and a UI conversation at once. Plan step 7 now routes delivery through gateway-owned targets (Slack/Discord channel or thread, Telegram chat, ui-sdk conversation) behind one `deliver` seam, and gives the chat APIs a base URL so the harness can prove gateway delivery.
+
+**A cron that never fires is invalid.** `parseAutomationFile` rejects a cron that parses but never fires (`0 0 31 2 *`) with "cron never fires", so Effect's throwing `Cron.next` is never reached and `serve` starts. AUT-5 is green.
+
+**ACP `set_model` applies.** The face stored a `modelOverride` nothing read; it now calls the session handle's `setModel` and the field is gone. ACP-2 is green; the face unit test's fake handle records the applied model.
+
+Once, a combined `bun run test` stalled with one worker at 100% CPU; three reruns and every folder alone pass (836 in ~12 s). Not reproduced; watch for it.
+
+**Children refuse `profile_extensions`.** Both blocked-tool lists (the child selector in `adapters/pi/specialist.ts` and the agent validator in `profile-agents.ts`) now include it; children load no Profile extensions, so it used to pass validation and vanish. AG-3 was rewritten: the step-0 version demanded that one bad agent file fail the whole `run`, which would break a Profile over one file. It now proves `agent_run` is refused, no child file exists, and the child never reaches the model (confirmed red without the guard).
+
+**`agent_run` is bounded and said once.** The tool content is the child answer cut at 3,000 code points, with a note naming the child session file when cut; `details.result` no longer repeats the answer. `ziggy agents run` and the ui-sdk agent verb still return the full answer from the runner. AG-2 is green; every proof is now green (24).
+
+**A switched-away target gets the stored receipt.** Resuming another session in the UI releases the old file, so delivery already stored the receipt (AUT-6, green from the start). The real gap was a race: `session.resume` holds a gateway permit, not the registry's `statePermit`, so the owner could switch between the registry match and the live append, and the handle answered `destination-missing` (non-retriable), losing the run. `deliverAutomationResult` now falls back to the stored append when the live owner reports `destination-missing` or `session-held`. The unit proof fakes a handle whose live session moved on; it was red before the fix.
+
+The progress board source (`docs/plans/tight-core/status.html`) is no longer tracked; only the published artifact matters.
+
+**Session stats count Pi's `usage` entries; history drops the `toolCall` branch.** `sessions.ts` added usage from messages, compactions and branch summaries but skipped Pi's `usage` entries (e.g. `cache_warm`); they now count, and the stats unit test carries one (red before). `session-history.ts` projected a `toolCall` entry type Pi never writes (tool calls live inside the assistant message) and tracked starts in an `activeTools` map; both are gone, and a tool entry now takes its name from the `toolResult` message, which is where Pi writes it. The history test no longer fabricates the `toolCall` record.
+
+**No test seams in `ChatHandle`.** `currentSession` and `appendAutomationResult` are required; both production handles already supplied them, so the `=== undefined` branches in the registry, the gateway session verbs and group listing are gone (among them a "live session history is unavailable" failure no real handle could reach). `makeChatHandle` moved from `application/agent.ts` to `test/harness/chat-handle.ts`; its fake has no session and refuses automation results as `owner-unavailable`.
+
+**`runtime.ts` and `ZiggyAgentLive` are gone.** `composition.ts` provides `ZiggyAgent` straight from `makePiAgent`; the `PiAgent` service class and its `PiAgentApi` twin of `ZiggyAgentApi` were a second name for the same thing. `ChatSessionMode` moved to `application/agent.ts`, so application code no longer imports the Pi adapter.
+
+**Verifier pass on step 1.** No bugs found. Follow-ups applied: ACP `set_model` during a prompt answers `invalidRequest` ("has an active prompt") instead of an opaque internal error, and other failures keep their cause; `listProfiles` drops the unused `initialized` field; AUT-6 asserts the delivered run outcome rather than the absence of "category"; the AG-2 e2e drops an assertion that passed before the fix (the unit test proves `details.result` no longer repeats the answer). The history `phase: "start"` literal stays in the wire schema for now; history only produces `"end"`.
+
+**`ChatRegistry` loses four test-only members.** `registerAlias`, `unregisterAlias`, `subscribe` and `replay` had no production caller; with them go `ChatRegistryListener`, `ChatRegistryReplay` and the unsequenced listener loop in `emit`. Channels use `openAlias`/`closeAlias`, and the UI uses `subscribeSequenced`, which already replays the retained window. Tests now open channels with `openAlias(key, kind, Effect.succeed(handle))`, read the retained window through a throwaway `subscribeSequenced`, and the stale-unregister test became "closing a stale channel handle cannot remove the live one", the same guard on the path production uses.
+
+**The GitHub extension source is gone.** Every catalog entry is bundled, so `adapters/github/extension-catalog.ts` (`ExtensionArchiveClient`), the tar extractor, `publishSource`, `makeExtensionInstaller`, `GitHubExtensionCatalogEntry` and `ExtensionCatalogUnavailable` had no path to run. `makeProfileExtensions(preflight, lock, catalog?, automation?)` and `makeExtensionUpdate(profiles, lock, options)` install through `installBundledPackage`; the catalog schema accepts only bundled entries, and an install failure's `reason` is `validation` or `filesystem`. `ZiggyUpdateUnavailable` stays for self-update. The ui-sdk `"remote"`/`"remote-approved"` literals stay so the wire protocol and web client do not change.
+
+**E2E proofs get a 30 s default timeout.** A proof spawns the CLI up to three times; under the parallel suite "with no resident, each wake stores one receipt" crossed bun's 5 s default in two of three runs. `test/harness/cli.ts`, which every e2e file imports, sets it. Seen once each and not reproduced in three reruns: a legacy extension cancellation failure, and a whole-suite run that printed nothing before the 240 s alarm (the stall noted earlier).
+
+**`src/platform/` holds the shared low-level pieces.** `file-lock.ts` is the one hardened SQLite `BEGIN IMMEDIATE` lock: the root must be a real directory, directories under it are created 0700 and symlinks are refused at every step, the lock file is 0600 and opened with `O_NOFOLLOW`, sidecars must be regular files, and a `waitMs` retry runs every 50 ms. The extension lock (2 s), memory writes (2 s) and the gateway owner lease (no wait) use it and map `FileLockFailed` to their own errors; the Profile runtime lease opens its database through it until step 4 deletes it. `atomic-write.ts` (`writeFileAtomic`: private sibling, sync, rename, remove the sibling on failure) replaces the copies in memory and the gateway-owner projection; the other stores move when their concept does. `paths.ts` merges `application/ziggy-paths.ts` and its Bun layer, and `ZiggyPaths` now holds locations only (`cwd` included). `resolveProfileTarget(value, paths)` stays in `domain/profile.ts`, so `platform/` imports nothing from Ziggy. `adapters/fs/cause.ts` moved to `platform/cause.ts`, and every importer points at the new path (no re-export). Lock release failures are now logged rather than returned; nothing could act on them. The oxlint Effect rules treat `src/platform/` as an adapter boundary.
+
+**`ziggy/import-boundaries` enforces the target layout.** Pi packages may be imported only in `src/adapters/pi/` and the `[Pi]` files the plan names (`session/{runtime,handle,agent,tools}.ts`, `extensions/{loader,tool}.ts`, `agents/{run,tools}.ts`, `memory/tool.ts`); `src/platform/` may import only `effect`, `node:*`, `bun:*` and itself; code outside `profile/`, `session/`, `extensions/`, `agents/` or `memory/` reaches them only through their `index.ts`. The rule checks static imports, re-exports and `import()`, and resolves relative and `ziggy/` specifiers; probes for all three violations were reported. `AGENTS.md` describes the target layout and says the old faces → application → domain rule holds until a concept moves. The Effect skills gain the `Context.Service` `make` + `static layer` shape, `Effect.fn("Service.method")`, the service-versus-function rule, resources in a `Scope`, no test seams in production types, the one Pi tool-callback exception, and "one error class per recovery path".
+
+**Verifier pass on step 2.** Waiting for a held file lock is interruptible again: acquisition ran inside `acquireUseRelease`'s uninterruptible acquire, so an aborted `memory_write` or extension mutation waited out the full 2 s (1.9 s measured; now 1 ms). Only the sleep between attempts is interruptible, so an interrupted wait still closes the database it opened. `lockSegments` also refuses `..` and empty segments, the extension lock keeps its Profile-worded messages, and `platform/` may import `effect/*` subpaths. Release failures stay logged rather than returned; nothing could act on them.
+
+**`profile/` is the first core folder.** `src/profile/` holds a Profile on disk: `types.ts` (`ProfileTarget`, target resolution, the Profile, model and auth errors, split out of `domain/profile.ts` and `domain/agent.ts`), `profiles.ts`, `models.ts` and the two `[Pi]` files `pi-models.ts` and `pi-auth.ts` (moved from `adapters/pi/`). Everyone imports it through `profile/index.ts`. `Profiles`, `Models` and `Auth` use `Context.Service`'s `make` with a `static layer`, and fakes type against `(typeof X)["Service"]`. `Profiles` absorbs `ProfileStore` (deleted) and reads `ZiggyPaths` itself, so its API is `init(target, options)`, `register(path)` and `list()`; `Setup.initialize` and `manageExtensions` lose their registry and directory arguments. `readOnlyStatus` collapsed into `status` on `Models` and `Auth`, since both were already read-only. The `[Pi]` file list lives once in `tooling/oxlint/effect/utils.mjs`: import-boundaries uses it, and the Effect rules treat those files and their tests as adapter boundaries, as `adapters/pi/` was. `profiles.ts` keeps one suppressed `node:fs` Promise helper. Not done here: `application/profile-directory.ts` still reads the registry for the ui-gateway's id-keyed directory; it moves with the resident in step 7.
+
+**`session/` is the second core folder.** `src/session/` owns a live conversation: `lease.ts` (one synchronous SQLite `BEGIN IMMEDIATE` per transcript, `takeSessionLease`/`isSessionHeld` returning `Result`, and the `SessionLeaseSet` a handle keeps), `runtime.ts` (`createProfileRuntime`: prompt, resources, contributed tools, model; `disposeRuntime`), `handle.ts` (`makeChatHandle`) and `agent.ts` (`openSession`, `runOnce`, `runSpecialist`, `makeZiggyAgent`). `ZiggyAgentApi` has one `open(request)` taking `{ target, context, directory, session: "new" | "continue", agent?, model?, name? }`; `openChat`, `openSpecialistChat` and the `"fresh"` mode are gone, and every face, gateway and automation calls `open`. Composition passes extensions and the memory, extension and agent tools as `SessionDependencies`. Deleted: `adapters/pi/pi-agent.ts`, `chat-runtime-binding.ts`, `session-lease.ts`, `profile-runtime-lease.ts`, `adapters/bun/profile-runtime-lock.ts` (the Profile-wide runtime lock), the extension-update fence (`requireNoPendingUpdate` in the runtime refuses a pending update instead) and the print-mode `console.error` capture.
+
+**The handle owns its transitions.** One `turn` semaphore: a prompt holds it for the whole turn, and model, thinking and resume controls refuse with `SessionBusy` instead of queuing. Pi builds every replacement session through the runtime factory, whose `beforeServices` hook takes the new transcript's lease first (a refusal comes back as a typed `SessionHeld`); after Pi moves, the handle keeps only the landed transcript's lease and emits `session-state` `transcript`. The chat registry clears its replay window on that event, so the ui-gateway's `resetTranscript` is gone. `steer`/`followUp` fail `ChatNotStreaming` while idle. `makeChatHandle` takes a `HandleRuntime` (the Pi members it drives) so tests use the real handle over `test/harness/pi-runtime.ts`; the fake `ChatHandle` in `test/harness/chat-handle.ts` also emits `session-state` after a successful resume.
+
+**Behaviour changes.** `ziggy run` on a provider error now prints Pi's own provider line before Ziggy's stable `provider request failed` (the capture that swallowed it is gone); the e2e proof asserts the stable last line. Two Pi sessions on the same Profile no longer serialize on a Profile-wide lock; only a transcript is exclusive. Dropped tests: the internal session-reference, `createLocalSessionManager` routing, `run --session` lease and interrupted-build tests (their code is gone), and the live-append poison test (the handle no longer keeps an in-memory dedupe). `test/session/lease.test.ts` proves the holder pid, release and `keepOnly`. Still in `adapters/pi/` for now: `prompt-turn`, `provider-failure` and `chat-event-projector`; the `runPromiseWith` tool helper is step 7.
+
+**Verifier pass on step 4.** Three regressions from the move, each with a test that failed before the fix. An uninitialized Profile is refused before any lease, session directory or `.runtime/` file is created (`openTranscript` checks `SOUL.md` first). A second `prompt` fails `SessionBusy` instead of queueing behind the first or behind a `resume`; it used to run on the transcript the user had switched away from. A live automation delivery trusts the transcript receipt, not the send promise: a send that throws after Pi persisted the entry counts as delivered, and one that resolves without persisting fails as a retriable `write`. `resume` also takes the target lease inside the uninterruptible switch, so an interrupt cannot strand it. Left as is: a failed switch keeps the old lease and session (Pi decides whether the old one survives), and the `automation-result` ↔ `session` import cycle goes when delivery moves in step 7.
+
+**`session/store.ts` is the one read side of transcripts.** `platform/lines.ts` (`scanLines`) is the bounded line reader: an `O_NOFOLLOW` handle, 64 KB chunks, an 8 MB cap per line, and a visitor that can stop or fail. `session/transcript.ts` decodes Pi's header and entries on top of it (content is parsed to text-or-parts at this boundary), walks `sessions/` without following symlinks, and finds the newest transcript for `continue`. `session/store.ts` is the `Sessions` service (`make` + `static layer`, one parse cache per service, LRU 512 keyed by file, size and mtime) with `list`, `summaries`, `show`, `locate`, `history` and `held`, plus plain functions for callers without the service. Deleted: `adapters/pi/{sessions,session-history,transcript-lines,session-discovery}.ts`, `application/sessions.ts` and `domain/session.ts` (its types live in `session/types.ts`). `AUTOMATION_RESULT_CUSTOM_TYPE` and its details schema moved to `domain/automation.ts`.
+
+**Behaviour changes.** Listing is lenient: an unreadable, oversized, symlinked or duplicate-id transcript is logged and left out instead of failing the whole list; `show` of that file still fails typed, and doctor reports the skipped count as an error. On Squarey's 303 transcripts (1.1 GB) `sessions list` takes 2.1 s and skips three Slack threads with records over 8 MB (the largest is 21 MB); before, those three made the list fail. The history cursor is `{index, id}` of the page's first entry: appends no longer invalidate it, and a rewrite that moves that entry does. `history` and `resume` take a session id only (`locate` reads headers; `locateValidSession` also reads the whole file strictly before Pi's `SessionManager` may touch it), `Sessions.resolve` became `locate` returning the file, and `history` is required on `SessionsApi`. Still in `adapters/pi/`: `session-name.ts` and `session-lineage.ts`, which write through Pi; lineage moves with agents in step 7. Dropped tests: the scan-count cache spy.
+
+**Verifier pass on step 5.** `locateSession` is now the only locate and always reads the matched transcript strictly, so `run --session` can no longer hand Pi's `SessionManager` an old-version file with a corrupt line to rewrite (the check had been skipped on that path; `locateValidSession` is gone). A same-id copy that does not parse is set aside instead of making the readable one ambiguous, matching `list`. The parse cache also keeps failures against the file's mtime and size, so the three oversized Slack threads are not re-read on every list. Left as is: `show <id>` of a skipped file says "not found", since an unreadable file's id is not known.
+
+**`extensions/` is the third core folder.** `src/extensions/` owns what a Profile loads: `package.ts` (manifest and skill frontmatter), `selection.ts` (`extensions.json`, the shelf scan, the 2 s selection lock), `bundled.ts` (unpacking a bundled tree into a staging folder the process owns), `loader.ts` (`checkSelection`, preflight through Pi, and the `PiResources` a runtime gets), `resources.ts` (open-time resources and `<id>.old` recovery), `update.ts`, `tool.ts` (`profile_extensions`) and `service.ts` (`Extensions`: `list`, `show`, `listForProfile`, `add`, `remove`, `setSelected`, `validate`, `health`, `update`). Deleted: `adapters/fs/{profile-extensions,extension-installer,extension-update}.ts`, `adapters/pi/{resources,profile-resource-loader,profile-extension-diagnostics,profile-extension-preflight,profile-extension-tool}.ts`, `adapters/bun/profile-extension-lock.ts`, `application/{profile-extensions,extension-update}.ts` and `domain/{profile-extension,extension-catalog,extension-update}.ts`. `ZiggyUpdateUnavailable` moved to `domain/self-update.ts`; `hashTree` is `platform/tree.ts`.
+
+**Decisions.** Required packages load from a fingerprinted cache under `ZIGGY_HOME`; Profiles hold no copies, so doctor's bundled-copy check and serve's `refreshRequiredExtensions` are gone. The runtime runs without inline extensions (`extensionFactoryCount` 0). A package that fails to load is skipped with a warning and no longer pauses its automations. Listing comes from package metadata. The wire codes `preflight_failed` and `lock_failed` stay. `add` of a bundled package writes an update receipt. Update refuses required ids, stages in a process-owned folder, checks the staged package through Pi, then swaps through `<id>.old` with no journal; an open that finds only `<id>.old` puts it back. Undo failures are warnings, so there is no `RollbackFailed`. `--restart` is orchestrated in `main.ts`. A mutation result carries its automations. Listing and health reads take no lock (writers rename atomically), so `doctor` stays read-only; before, the real service created `.runtime/profile-extensions.sqlite`, which a lock-free fake had hidden.
+
+**Logs go to stderr.** Effect's default logger wrote to stdout, so a skipped-package warning landed in `ziggy run`'s answer and could corrupt ACP's stdout. `main.ts` provides `Logger.LogToStderr`.
+
+**Proofs.** `test/e2e/extensions.test.ts` (EXT-1..9 in `verify-ziggy/features/extensions.md`): unknown and broken adds leave the selection and shelf unchanged; an added tool answers the model; `profile_extensions` adds with `PATH=""`; a broken selected package is skipped and doctor names it; a Profile package overrides bundled skill text; the model reads `ziggy-operations` from the cache; update reports `current`, `updated`, `adopted` and refuses `modified`, `unmanaged` and a live resident; `<id>.old` is restored on open. `test/harness/cli.ts` gains `ziggyWith(profile, env, ...args)`. Dropped tests: the deleted adapters' unit tests, the runtime activation rollback tests and the required-extension refresh tests (their code is gone). A refused mutation may still create the lock file under `.runtime/`; that is runtime state, not a Profile change.
+
+**Step 6 verifier fixes.** The review of 8ef2d433 found three update-recovery defects, each now a red-then-green proof in `test/e2e/extensions.test.ts`:
+- An update that published but failed to write its receipt was refused as `modified` forever. The `modified` check now runs after staging and refuses only when the installed bytes match neither the receipt nor this build, so the next `update` records the receipt. A receipt write that fails after publishing is a warning.
+- `doctor`, `health`, `validate` and the tool's `list` moved `<id>.old` back, without the lock. `resolveResources` is read-only again and names an interrupted update in its error; only session open (under the selection lock, and only when `<id>.old` is alone), `add` and `update` restore it.
+- `update` refused an `<id>.old`-only package as not installed, and `add` unpacked a fresh copy beside `.old`. Both now restore first.
+Also: a Profile extension change and its undo run uninterruptibly, and the extension-updates docs describe the actual order (stop the resident, then update) and recovery. Not fixed, recorded: bridge logs ignore `LogToStderr` (fixed with the step 7 callback bridge); leftover `.extension-stage-*` after a crash; a refused bundled `add` leaves its shelf copy; `ExtensionMutation.automations` lists untouched automations; the tool's ignored `source` parameter; stale Profile copies of required packages still parsed by `scanShelf`; update checks the package alone, not with the rest of the selection.
+
+## Step 7: memory/
+
+**One folder.** `src/memory/` replaces `domain/memory.ts`, `adapters/fs/memory-files.ts`, `application/memory.ts` and `adapters/pi/memory-write-tool.ts` (about 1,200 lines) with `types.ts` (the scope table, operations, errors), `memory.ts` (read, list, locked update, backups, the read-only `Memory` service) and `tool.ts` ([Pi]: `memory_write`, `memoryTools`, `memoryPrompt`). Reads go through `platform/tree`'s `readPhysicalFile`; writes through `platform/atomic-write` (now taking bytes) and `platform/file-lock`. `codePointLength` moved to `platform/text`, so gateways no longer import memory for it. `ChatContext` lives in `session/types.ts`.
+
+**The session knows nothing about memory.** Memory reaches the session through the tool seam and a new prompt seam: `SessionPrompt` contributions run before every turn and are appended by the one hidden `ziggy-contributed-prompt` extension. `session/runtime.ts` no longer calls `memoryFilePaths`. `platform/callback.ts` is the single Pi-callback bridge (`runCallback`); it provides `Logger.LogToStderr`, closing the step 6 nit that bridge logs reached stdout.
+
+**Behavior changes.** Backups keep 5 plain copies (was 10 hardlinked ones), named `<ISO time>-<random>.md`, so a same-millisecond collision cannot happen and the hardlink collision test is gone. A chat id memory cannot store no longer fails session open with `MemoryIdInvalid`; the turn runs and the prompt says memory is unavailable (`MemoryIdInvalid` left `ZiggyAgentError`; the persisted automation failure-category literal stays so old runs still decode). `memory_write` failures are logged as warnings before the model sees `ERROR: memory … failed`.
+
+**Proofs.** `test/memory/` holds the ported domain, inventory and tool tests (retention now `MEMORY_BACKUPS_KEPT`) plus three prompt tests: reread per turn, a symlink refused, an invalid id reported to the model. `test/e2e/memory.test.ts` (MEM-1..3) passes unchanged. `bun run check`, 765 unit and 41 e2e pass.
+
+**Step 7 memory verifier fixes.** The review of d663eec9 confirmed one defect: `memory list` on a mistyped Profile path reported no documents. It now fails with `MemoryFileError` (red-then-green test in `test/memory/memory.test.ts`). The `memory_write` failure warning is a single line, since stderr is the user's screen in the TUI. Accepted as spec-consistent: a symlinked `memory/` makes the whole memory prompt unavailable. Not fixed, recorded: `list` ignores symlinks whose ids memory would not admit; an interrupted backup's temp file is not pruned; retention orders by wall-clock names. `bun run check`, 766 unit and 41 e2e pass.
+
+## Step 7: agents/
+
+**Structure.** `src/agents/` holds the agent slice: `files.ts` (read, create, save `agents/<id>.md`), `service.ts` (`ProfileAgents`: create, list, show, validate, run), `policy.ts` (`agentPersona`, `agentModel`: one policy for tools and model), `run.ts` (one child/root/rail run through `openSession`), `tools.ts` (`agent_run`, `agent_discuss`, the agent prompt and the `@agent` mention), and `index.ts` (`makeZiggyAgent`, which adds those to the session seams: tools, prompts, prepare). Agent sessions are ordinary sessions opened with a `persona` (the agent body replaces SOUL.md, only declared tools are active) and a `model` override. Deleted: `adapters/pi/specialist.ts`, `adapters/pi/profile-agent-guidance.ts`, `adapters/pi/session-lineage.ts` and the specialist runner tests; `adapters/fs/profile-agents.ts` and `application/profile-agents.ts` moved into `src/agents/`.
+
+**Behavior changes.** An agent with no `thinking` (or no model) uses the Profile default (D1). `agents validate` now makes the same checks a run makes, including the model and provider auth. An invalid agent file still refuses sessions (the agent tools discover agents at open). Saving an agent file goes through `writeFileAtomic` and keeps the old mode. Child transcripts are created by Pi's `parentSession` through `openSession`, not a separate lineage helper.
+
+**Proofs.** `test/agents/` holds the ported file and service tests plus policy, direct run, rail and invalid-file tests on the harness model server. `test/e2e/agents.test.ts` adds `agent_discuss` (2 agents × 2 rounds, sorted, no child tools, 4 child files; duplicates refused); verify-ziggy AG-4 and AG-5 document it. `bun run check`, 746 unit and 43 e2e pass; knip clean.
+
+**Step 7 agents verifier fixes.** The review of f6b9583c confirmed one defect: `agent_run` and `agent_discuss` were registered only if the Profile had agents when the session was built, while the prompt and `@agent` check reread agents every turn, so an agent added mid-session was advertised but not callable. Both tools are now always registered (a run refuses an unknown id); red-then-green test in `test/agents/agents.test.ts`. `writeFileAtomic` takes an optional mode and sets it on the temporary file, so a saved agent file keeps its mode from the moment it appears (no chmod after the rename). Accepted, comment corrected: a narrowed `agent_discuss` run does not check that narrowed-away declared tools exist. Not fixed, recorded: a missing-tool refusal happens after Pi builds the runtime, so it can leave an empty `sessions/agents/<parent-id>/`. `bun run check`, 747 unit and 43 e2e pass.
+
+## Step 7: gateway delivery
+
+Automation delivery to a channel goes through one seam, `Deliver = (profile, target, text)` in `src/application/delivery.ts`. Each gateway owns its send: `deliverSlack` (`slack/delivery.ts`), `deliverDiscord` (`discord/delivery.ts`) and `deliverTelegram` (`gateway.ts`) load their own config, split the text at their own limit and post each chunk. `automations.ts` no longer imports chat adapters or chunkers; it routes a channel target with one `Match.valueTags` and keeps the conversation branch until live sessions are rebuilt. The capabilities fake is one `deliver` function instead of three per-gateway sends.
+
+**Deviation.** Target syntax stays in `domain/automation.ts`, not in each gateway: domain cannot import application, the targets are persisted in automation files, and the web picker parses the same strings. Gateways own config, chunking and the send.
+
+**Base URLs.** The Slack, Discord and Telegram API clients take an optional base URL (`src/adapters/http-base.ts` rewrites requests that start with the real API origin, leaving CDN and file URLs alone). Only delivery reads `ZIGGY_SLACK_API_URL`, `ZIGGY_DISCORD_API_URL` and `ZIGGY_TELEGRAM_API_URL`; the gateways' own loops still use the real APIs.
+
+**Proofs.** `test/harness/chat.ts` is a fake chat server. `test/e2e/automations.test.ts` wakes an automation broadcasting to a Slack thread, a Discord thread channel and a Telegram chat, and checks each post's path and body, including the Discord split at 2,000 characters. verify-ziggy AUT-7 documents it; the uncovered list drops channel delivery and `agent_discuss`. The automation docs list the channel target forms and say `discord:channel:<thread id>` posts into a thread. `bun run check`, 748 unit and 44 e2e pass (one earlier unit run had 5 failures that did not repeat in three reruns).
+
+**Step 7 delivery verifier follow-ups.** The review of b44c8ef5 found no defects. Three hardening notes taken: `withBaseUrl` rewrites only the origin itself or a path under it (not `https://slack.com/apiX`); `chatApiUrl` treats an empty value as unset, strips a trailing `/`, and reports a value that is not a URL as a `configuration` failure instead of a retriable transport failure. Not taken: pinning per-gateway failure categories with a failing fake server (the mapping moved unchanged). `bun run check`; automations unit and e2e pass.
+
+## Step 7: destination book out of the chat registry
+
+- `src/resident/destinations.ts`: `DestinationBook` (`list`, `remember`) replaces the registry's
+  `destinations`/`rememberDestination`. The resident makes one per run and passes it to the UI
+  branch and the channel loops next to the registry; shared-UI branches for other Profiles get an
+  empty book, as before.
+- The label-keeping test moved to `test/resident/destinations.test.ts`.
+
+## Step 7: live sessions replace the chat registry
+
+- `src/resident/live-sessions.ts` (`LiveSessions`) replaces `application/chat-registry.ts`: `acquire`, `release`, `get`, `list`, `findBySessionId`, `watch` (replay ring, resume cursor), `publish`, and `runExclusive`/`interrupt` for background UI turns. Refusals are one `LiveSessionRefused` with a `reason`; the UI maps reasons to protocol codes in `ui-gateway/errors.ts` (`liveFailure`), so channel runtimes no longer catch `UiGatewayError`. It is about 360 lines, not the planned 220: the open/close state machine and the owned turn fibers stayed.
+- UI prompt verbs (submit, steer, follow-up, abort, close) live in `ui-gateway/sessions.ts`. The per-handle `WeakMap` lock is gone: the handle's own `control` refuses a prompt during resume or a model switch (SessionBusy), and the handle publishes the transcript reset and the model change itself, while it still holds the turn.
+- Conversation delivery moved into `automations.ts`: find the live owner by session id, append through its handle (which publishes `automation-result`), fall back to the stored append when there is no owner, the owner switched away, or the lease is held elsewhere. The registry's global fence is gone; the per-session writer lease is the guard.
+- Tests: `test/resident/live-sessions.test.ts` (6) and `test/session/handle.test.ts` (a prompt during a resume is refused and the reset lands before the handle frees). Deleted the registry tests and the three gateway lock-choreography tests. `bun run check`, 746 unit and 44 e2e pass.
+
+## Step 8: per-command layers
+
+- `main.ts` is the entry and a dispatch table only (about 150 lines, was 904). Every command belongs to an area module in `src/faces/commands/` (`profile`, `update`, `extensions`, `agents`, `run`, `automations`, `resident`, `serve`, plus the existing `models`, `sessions`, `memory`), and each area is provided its own layer from `composition.ts`. `runCommand`, `LegacyCommand` and `CliLayer` are gone; the case bodies moved unchanged.
+- `ResidentService` no longer needs `ResidentGateway`: it inspects the owner lease directly (`inspectGatewayOwner`) and exposes it as `owner(target)`, which `extensions add`, `automations status`, `wake` and `open` use instead of `ResidentGateway.status`. Only `ziggy serve <profile>` builds `ResidentGateway` and the channel gateways. (It still reaches the agent stack through `AutomationScheduler`, for `scheduler.status` only.)
+- `bun run check`; 745 unit pass plus one legacy extension cancellation test that failed once under parallel load and passed 3/3 alone; 44 e2e pass.
+
+**Live sessions verifier fixes.** The review of 986ef4f6 confirmed four defects, all in coordination the old registry permit used to give:
+- `dispose` now waits for the handle's turn, so an in-flight automation append finishes before the lease is freed (red-then-green test in `test/session/handle.test.ts`).
+- The `automation-result` event is published inside the append's permit, so a following resume or prompt cannot slip in before it.
+- A prompt waits behind a control or append instead of failing busy (the plan's "keep waiting"); a second prompt is still refused while the first is waiting or running. The resume test now proves the prompt starts after the transcript reset.
+- `session.close` releases the handle it checked, not whatever holds the key by then.
+- Also: dropped the dead `session-held` branch in conversation delivery (only the stored append produces it), `watch` replays and attaches in the same step as its gap check, and `release` documents that an opening key is left alone. Not changed: `findBySessionId` still reports an unreadable transcript as `open-failed`. `bun run check`, 747 unit and 44 e2e pass.
+
+## Step 9: clean up
+
+- Deleted `src/application/agent.ts`, the last old-path re-export (`export * from "../session"`); its 17 source and 14 test importers use `session/` directly. `application/discord-gateway.ts`, `application/slack-gateway.ts` and `domain/ui-gateway.ts` stay: they are deliberate public faces of their folders, not leftovers of a move.
+- Face tests already build handles through the one fake, `test/harness/chat-handle.ts` (the plan called it `fake-chat.ts`; not renamed). The only other handle builders are the real-handle tests over `fakePiRuntime` (`test/session/{agent,handle}.test.ts`, `test/adapters/pi/automation-result.test.ts`).
+- `bun run check`, 747 unit and 44 e2e pass.
+
+## Resident service owner check (step 8 verifier follow-up)
+
+- `makeResidentService` takes an `inspectOwner` function instead of a `Pick<ResidentGatewayApi, "status">`; the adapter no longer imports the gateway application type.
+- LOG step 8 entry corrected: the service layer still builds the agent stack through `AutomationScheduler`.
+
+## Web UI: dev component gallery and phone chat layout
+
+- `clients/web/src/gallery/`: dev-only gallery at `/gallery` (phone and desktop iframes of the real chat screen per scenario, plus buttons, avatars, messages, composer, sidebar rows). `/gallery/screen?scenario=conversation|working|empty` runs the real `App` against `fixture-gateway.ts`, a typed `GatewayClient` stand-in that serves sample data and streams a reply on submit. `main.tsx` loads it only under `import.meta.env.DEV`; a production build contains no gallery code.
+- `App` takes an optional `connection` (`{ connector, url }`) that skips auth discovery; the gallery is its only user.
+- Phone layout (`@media (max-width: 720px)` only; implemented by codex gpt-6.1-sol, reviewed in the browser): header overlays the transcript with a top fade, frosted round menu/pin buttons, centered 56px avatar with a name pill; assistant messages as rounded cards, rounder user bubbles, author labels kept for screen readers; floating frosted composer with round send/stop. The scroll-to-end sentinel has `scroll-margin-bottom` so the last message clears the composer.
+- `.claude/launch.json` gains a `web` dev server on port 4175.
+- `bun run --cwd clients/web check` passes (81 tests); `tsc -p clients/web/tsconfig.json` passes. `src/generated/web-assets` not regenerated.
+
+## Executor extension: MCP client for Executor v2
+
+- `extensions/executor` (0.2.0) is now a Streamable HTTP MCP client for Executor v2 instead of a wrapper over an installed catalog. It registers `executor_skills`, `executor_execute` and `executor_resume`, keeps one MCP session per Pi session (a paused execution resumes only on its own session), starts a new session once on a 404, and turns `isError` results into failed tool calls.
+- Default endpoint is the local server `http://127.0.0.1:4312/mcp` (`executor serve`, Executor 2.0.0-beta.6, Node 24.14+); `EXECUTOR_MCP_URL` overrides it, e.g. hosted `https://v2.executor.sh/mcp` with an org-scoped personal access token. The bearer token comes from `EXECUTOR_API_KEY` or the Keychain item `ziggy-executor`; it is never read from files or chat.
+- The skill covers setup, discovery through `tools.search`, approvals (ask before send/delete/publish; `resume` with `accept` only after the user approves; never rerun past a decline) and building apps through the management tools. It still needs checking against the server's live guides.
+- `bun test ./extensions/executor/test` passes (3); fmt, lint, typecheck, catalog and pi-docs checks pass. `check:web-assets` fails on the uncommitted web UI work.
+
+## Web UI: activity feedback while a reply is pending
+
+- While the selected session is busy with no streamed text and no running tool, the transcript shows the agent's name with three animated dots (`.message.thinking`, `role="status"`). A running tool's dot pulses (`.tool-dot.is-running`). The optimistic user message, the thinking row and the streaming reply fade in (`message-in`); reduced motion turns these off.
+- `settled` no longer clears the streamed reply and tool lines before history reloads; `loadHistory` clears them in the same render that adds the stored message, so the reply no longer blinks out and back in at the end of a turn.
+- `bun run --cwd clients/web check` passes (81 tests). Gallery: pulse, dots and fade render; the fixture starts a tool on submit, so the dots were checked with injected markup.
+
+## Web UI: image attachments
+
+- The composer accepts up to four PNG, JPEG, GIF or WebP images through attach, paste or drop, with removable previews, optimistic thumbnails and image-count chips in history. Image-only prompts, steering and follow-up work through the SDK's optional attachment argument.
+- Image bytes use authenticated `POST /uploads`, with magic-byte checks and a 5 MiB limit. Uploads bind to the bearer or browser session owner, expire after ten minutes, cap at eight per owner and consume once; invalid batches submit nothing. WebSocket frames carry only upload IDs. Web assets regenerated.
+- `POST /uploads` reads every body to the end and keeps at most 5 MiB: Bun stalls the next request on a keep-alive connection whose body was left unread, so an early 413 would hang the client's next upload.
+- `prompt.submit` still queues behind a running turn; images are consumed only after the recipient checks pass.
+- `bun run check` passes (23 SDK tests, 84 web tests); `bun test test` passes (666), including the `/uploads` auth, type, size and ownership test.
+
+## Executor extension: OAuth for the local v2 server
+
+- `extensions/executor` (0.3.0) falls back to OAuth after `EXECUTOR_API_KEY` and the existing `ziggy-executor` Keychain token. It discovers the server's metadata, registers a public loopback client, and returns one browser sign-in link with PKCE S256, state and the MCP resource. The callback listener lasts at most ten minutes and closes on approval, failure or session shutdown.
+- Refresh credentials stay in `ziggy-executor-oauth` (account `executor`), written through `security -i` stdin; off macOS they stay in memory. Access tokens are cached until shortly before expiry; a 401 gets one refresh and retry, rotated refresh tokens are saved, and `invalid_grant` clears state and starts sign-in again. Setup text now describes local sign-in and static credential overrides.
+- Builtin catalog regenerated for 0.3.0. `bun run check` passes; package tests pass (12) with injected fetch, storage and listeners. The live server accepts dynamic registration of a public loopback client (`token_endpoint_auth_method: none`); the browser approval itself is first exercised from Squarey.
+
+## Plugins Step 1: Pi MCP and codemode (stock Pi 0.99.1)
+
+- Step 1 runs on stock `@earendil-works/pi-coding-agent@0.99.1`. The Bun patch and the `patchedDependencies` entry are gone. `bun install` reinstalled the stock package, and `bun.lock` no longer mentions a patch. Removed with it: the Keychain OAuth store, the `security` subprocess code, `rememberCredentials` and the credential redactor, the `onStartup` discovery wait, the `toolFilter` automation predicate and the constructed automation tool lists, together with their tests and the credential-process fixture. `src/platform/file-lock.ts` is unchanged from `main`. The removal of `extensions/codemode` stays, as does the QuickJS wasm and Pi worker embedding with its standalone smoke.
+- `src/extensions/mcp.ts` [Pi] builds Pi's MCP, codemode and tool-search factories:
+  - `loadConfig` returns only servers the caller hands in. It never reads `<profile>/mcp.json` or `<cwd>/.pi/mcp.json`, and `updateConfig` is a no-op.
+  - `credentials` is Pi's `McpOAuthCredentialStore` over a backend that reads nothing and throws on any write. `openUrl` also throws, so OAuth sign-in fails as "Sign-in failed: …" (`dist/extensions/mcp/index.js:383-386`) until G3.
+  - `logPath` is `<cache>/ziggy/<sha256(profile) prefix>/mcp.log`. The cache root is `$XDG_CACHE_HOME` when set, otherwise `~/Library/Caches` on macOS, `%LOCALAPPDATA%` on Windows and `~/.cache` elsewhere.
+  - `startupWaitMs` is 3000.
+- A5: whether a session gets MCP depends on whether the MCP stack is loaded at all, not on a filter.
+  - `session/runtime.ts` `loadsMcp` loads it for main sessions.
+  - A persona session (a specialist, or an automation tagged with a specialist) loads it only when its allowlist names `codemode` or an `mcp__` tool.
+  - Untagged automations (`application/automations.ts` passes `automation: true`) never load it.
+  - `extensions/loader.ts` adds the factories only when `LoadRequest.mcp` is set. `checkSelection` does not set it, so the doctor counts are unchanged.
+- Pi source shows that a session without the extension cannot gain these tools:
+  - `registerMcpServer` only stores the server in the runtime registry (`dist/core/extensions/loader.js:365-377`). Only the MCP extension reads that registry, through `pi.getMcpServers()` (`dist/extensions/mcp/index.js:144`). With no handler, `reportUnhandledMcpServers` reports an extension error and connects nothing (`dist/core/extensions/runner.js:506-518`, called from `dist/core/agent-session.js:2551,2888`).
+  - Auto-activation is the extension's own `ensureDiscoveryActive` (`index.js:255-283`).
+  - `codemode` and `tool_search` are registered by their extensions with `defaultActive:false` (`dist/extensions/codemode/index.js:26`, `dist/extensions/tool-search/index.js:11`). Without those extensions, neither tool exists to activate, call or nest.
+  - On reload the same inline factory list is rebuilt, so nothing new appears.
+  - Specialists also keep Pi's registry allowlist: `isAllowedTool` filters definitions, late registrations and the active set (`dist/core/agent-session.js:2747-2799`), and nested callable tools come from that registry (`:1086`).
+- Specialist check (`session/agent.ts` `requirePersonaTools`): `mcp__*` names are not refused before their server connects. The other declared tools are still checked against the active set after build. A named MCP tool that never appears fails as an unknown tool when called ("not found"). The bind-and-wait discovery step was removed.
+- Redaction is the inline `mcp-redact` extension on Pi's `tool_result` hook. It covers `mcp__*`, `codemode` and the three MCP resource tools:
+  - Secrets are the header values, the env values and `oauth.clientSecret` of the configured servers and of servers registered through `pi.getMcpServers()`. `$NAME`/`${NAME}` references are resolved from the environment; for a Bearer or Basic value the token part is added too.
+  - Values shorter than 8 characters are skipped, as are `!cmd` values (their output is unknown).
+  - Each secret is replaced in its raw, JSON-escaped and URI-encoded forms, in text content, `structuredContent` and JSON `details`. Non-JSON details are dropped.
+  - Content and structured content are returned together, because Pi drops structured content that is not replaced with its content (`dist/core/extensions/runner.js:904-908`, `pi-agent-core/dist/agent-loop.js:606-616`).
+  - Nested codemode calls go through the same hook (`dist/core/agent-session.js:366-385` passes `parentToolCallId` to `_afterToolCall`, `:327`). Scripts therefore receive the redacted `structuredContent` (`dist/extensions/codemode/execute.js:172-175`).
+  - Pi only logs a handler that throws and keeps the original result (`runner.js:928`). On any internal failure the redactor withholds the result instead.
+- Oversized results are spilled to temp files before the hook runs. The MCP tool's `execute` (`dist/extensions/mcp/tools.js:218-229`) calls `convertMcpResult` (`:149-163`). That calls `limitMcpContent` (`:81-100`), which writes text over 20 KB (`:31`) through `saveToTempFile` (`:36-41`, `$TMPDIR/pi-mcp-*.txt`, mode 0600). Binary resources are saved the same way at `:134`. All of this happens inside the tool call, before `_afterToolCall` emits `tool_result` (`agent-session.js:327-341`), so those files hold unredacted text. Progress messages (`tools.js:223-226`) also bypass `tool_result`. Codemode's own spill (`codemode/execute.js:130-132`) is built from already-redacted nested results. None of this was patched.
+- Accepted risks, per the user's decision:
+  1. Pi's `mcp.log` is plaintext. It sits in the user cache, outside the Profile.
+  2. Large MCP results spilled to temp files before `tool_result` may be unredacted.
+
+  OAuth plugins stay disabled until G3. A Profile extension that bundles its own `createMcpExtension` could still give an untagged automation MCP tools; Ziggy does not police that.
+- Tests (`test/session/runtime.test.ts`, stdio fixture `test/extensions/fixtures/mcp-server.ts`, no network, cache redirected through `XDG_CACHE_HOME`) cover:
+  - a main session calling the fixture through codemode, with the log in the cache and not in the Profile;
+  - a specialist (`["read"]`) and an untagged automation that see and call no MCP, codemode or tool-search tools, even after `registerMcpServer` at load, on `session_start` and on `before_agent_start`, after an attempted activation and after reload;
+  - a specialist whose allowlist names `codemode` and MCP tools: the named tool works, the unknown `mcp__` one fails as not found, and the unnamed tool stays hidden;
+  - ambient `mcp.json` being ignored, and reconnection after reload;
+  - a server that echoes its env secret: the secret is redacted from direct and codemode results, the provider request and the session messages.
+
+  Mutation checks: loading the stack for everyone fails both A5 cases, and dropping `mcp-redact` fails both redaction cases. `test/e2e/automations.test.ts` still denies untagged automations a registered server in codemode, direct and deferred exposure.
+- Verification:
+  - `bun run check` passes (fmt, lint, typecheck, knip, UI SDK, web, catalog, web-assets, Pi-docs).
+  - `bun test test` passes (677). `bun test ./tooling ./extensions` passes (83).
+  - `bun run build:binary:dev` built `dist/ziggy` (SHA-256 `cfd3758e…6a63ab`). The release build refuses a dirty tree by design.
+  - `bun tooling/smoke-standalone-executable.mjs --allow-development --artifact dist/ziggy` passed, including `standalone_codemode_mcp=pass`, `checkout_reads=denied` and `adjacent_sidecars=none`.
+  - Existing Effect diagnostic warnings remain non-fatal.
+  - No real Profile or cache was touched, `extensions/executor` is unchanged, and nothing was committed. G7 stays deferred to Step 4.
+- Review round 3 (Claude Opus 5.5, read-only) approved with doc-only findings, now fixed: the plan's decisions match stock Pi (refusing credential store, log in the user cache, no patch), a specialist needs `codemode` and each `mcp__` tool named, `!command` secrets are not redacted, and the redactor runs after earlier extensions' `tool_result` handlers, which therefore see unredacted MCP output. Pi's `/mcp` status text still points at `<agentDir>/mcp.json` and `.pi/mcp.json`, which Ziggy ignores.
+
+## Plugins Step 2: plugin folders and secrets
+
+- `src/extensions/plugin.ts` reads `<profile>/plugins/<id>/` when it holds `plugin.json`:
+  - `plugin.json` and `mcp.json` decode with Effect Schema (agent-plugins 1.0.0). A schema violation rejects the plugin. Unknown `plugin.json` fields are warnings.
+  - The folder, manifest, `skills/` and each `SKILL.md` are realpath-checked to stay inside the plugin. Symlinked roots and non-regular files are refused.
+  - Each `skills/<name>/SKILL.md` with valid frontmatter joins the skill paths. A bad skill is a warning.
+- `pluginMcp` turns the selected plugins' `mcpServers` into Step 1 `McpServerEntry` values. It runs only inside `session/runtime.ts` `sessionMcp`, after the A5 `loadsMcp` gate, so plugin servers reach only main sessions and personas whose allowlist names `codemode` or an `mcp__` tool.
+  - Names are `<id>` for a single server and `<id>_<key>` otherwise. A name already in use (Step 1 servers or an earlier plugin) is a diagnostic.
+  - `cwd` must be `./`, `${PLUGIN_ROOT}` or `${PLUGIN_DATA}`. `env` may not set `PLUGIN_ROOT`/`PLUGIN_DATA`. Both are added to the server env.
+  - `command` is a bare name (PATH lookup) or a `./` path that stays inside the plugin; `${PLUGIN_ROOT}`/`${PLUGIN_DATA}` expand in `args`.
+  - `${NAME}` expands in `env`, `headers` and `url` from the Keychain (`security find-generic-password -s ziggy-plugin -a NAME -w`), then process env.
+  - Secrets never expand in `command`, `args` or `cwd`, so they never reach argv. `${PLUGIN_*}` stays literal in headers and url.
+  - Resolved values are escaped (`$`→`$$`, leading `!`→`$!`) so Pi's `resolveConfigValue` passes them through unchanged.
+  - Any unresolved variable, bad cwd, reserved env, path command, SSE server (Pi has no SSE transport), or non-https url (http only on loopback) skips that server. The diagnostic names the server and the variable, never a value.
+  - `<profile>/plugin-data/<id>/` is created when a session that loads MCP opens and the plugin's `mcp.json` lists at least one server, before the servers are checked. The plugin folder is never written (R4).
+  - The resolved values go to the Step 1 redactor through `ProfileMcpOptions.plugins`, which covers raw, Bearer/Basic token, JSON and URI forms.
+- `resources.ts` partitions packages into extensions and plugins. An extension owns its id (see review round 1). `extensions.json` selection, `profile_extensions` add/remove and `listForProfile`/`show` accept plugin ids (`kind: "plugin"`). Add, remove, enable and disable are each one call.
+- `src/extensions/secrets.ts` `PluginSecrets` wraps `security`:
+  - `set` runs `security -i` with the value hex-encoded on stdin, never in argv, then reads it back.
+  - `get` treats exit 44 as unset.
+  - Names match `[A-Za-z_][A-Za-z0-9_]*` (at most 128 characters); values are 1-1024 printable ASCII characters.
+- Setting secrets:
+  - `ziggy plugin secret set <name|path> <NAME>` (`src/faces/commands/plugins.ts`, `src/adapters/terminal/secret-input.ts`) uses a masked clack prompt on a TTY and otherwise reads stdin less one trailing newline. It requires a Profile at the target and prints only the name.
+  - The resident method `plugin.secret.set` (`src/application/ui-gateway/management-plugins.ts`; UI SDK `setPluginSecret`) returns `{profileId, name, stored: true}`. A decode failure carries no cause, so a rejected value never reaches an error frame.
+  - Secrets are Keychain-global, not per Profile, and apply to sessions opened afterwards.
+- Example: `docs/plans/plugins/examples/linear/` (`plugin.json`, `mcp.json` streamable-http `https://mcp.linear.app/mcp/readonly` with `Authorization: Bearer ${LINEAR_API_KEY}`, and a read-only skill). It was not run against Linear.
+- Tests in `test/extensions/plugin.test.ts` use a fake Keychain, a scratch Profile, the stdio fixture and `XDG_CACHE_HOME` in temp. They cover:
+  - add of a plugin id through `profile_extensions`;
+  - a main session calling the plugin server through codemode with its Keychain secret redacted from the tool result and the session messages;
+  - the plugin skill in the prompt and `${PLUGIN_DATA}` as cwd;
+  - an unchanged plugin tree hash after loading and after remove;
+  - a `["read"]` specialist that sees no MCP tools and creates no `plugin-data`;
+  - `pluginMcp` naming, path resolution, header expansion, and the value-free skip and collision diagnostics.
+
+  `test/application/ui-gateway.test.ts` checks that `plugin.secret.set` stores the value and never returns it, including when refused. The UI SDK parity fixture covers the new method.
+- Deviations and limits:
+  - `${NAME}` expands in url and headers (the spec allows paths only; G1 needs it).
+  - MCP diagnostics are logged session warnings, not doctor output.
+  - Off macOS the Keychain reads nothing and writes fail.
+  - There is no web UI form yet.
+  - The live web/Slack Linear demo is the user's to run.
+- Verification: `bun run check` passes (fmt, lint, typecheck, knip, UI SDK, web, regenerated web-assets, catalog, Pi-docs). `bun test test` passed (681) before review round 1. No real Profile, `~/.ziggy` or Keychain was touched, `extensions/executor` is unchanged, and nothing was committed.
+- Review round 1 (Claude Opus 5.5, read-only) asked for changes; all are fixed:
+  - Major: a `plugins/<id>` whose id matched a selected extension made `profileResources` fail, so no session on the Profile could open.
+    - An extension now owns its id when `extensions/<id>` exists or `<id>` is bundled (`plugin.ts` `pluginShadowed`). Session open loads the extension and logs that `plugins/<id>` is ignored.
+    - `scanPlugins` leaves shadowed plugins out, so `listForProfile` and `show` name the same winner.
+    - `add` still refuses the id.
+  - Unselected plugins are lenient, selected ones strict. `scanPlugins` logs and skips a plugin that cannot be read, so one malformed folder no longer breaks list, show or health. Selected plugins are still read strictly at session open.
+  - Redaction now scans plugin configs like Step 1 configs: literal header and env values and Bearer/Basic tokens. The added `PLUGIN_ROOT`/`PLUGIN_DATA` paths are excluded.
+  - Skills: `readSkill` applies Pi's `validateName`/`validateDescription` rules (`core/skills.js`: at most 64 characters, `[a-z0-9-]`, no leading, trailing or double hyphen, non-empty description of at most 1024 characters). A failing skill is skipped with a warning instead of Pi dropping the whole plugin and its MCP.
+  - `plugin.json` is read through `regularFileText`; a non-regular file is invalid.
+  - `${NAME}` values substituted into a url are URI-encoded. A url they would break is skipped with a message saying so. Both raw and encoded forms go to the redactor.
+  - `security` runs from `/usr/bin/security`, and an interrupted call kills the child.
+  - Accepted limit, documented and not changed: Keychain items created by `security` trust that tool, so any process running as the user can read them with `security find-generic-password -s ziggy-plugin -a NAME -w` without a prompt.
+  - Docs: commands may be `./` paths inside the plugin; `plugin-data/<id>/` is created when a session that loads MCP opens and `mcp.json` lists at least one server.
+  - Tests in `test/extensions/plugin.test.ts`:
+    - the main-session test adds a second plugin with a literal `Bearer` env value, whose value and token are redacted, plus a `Bad_Skill` skill that is skipped while the plugin's MCP and other skill still load;
+    - the `pluginMcp` test adds `tok$en$$x` and `!echo pwned` secrets, which Pi's own `resolveConfigValue` returns unchanged, a URI-encoded query secret, and a hostile host secret that is skipped without the value in the diagnostic;
+    - a new test covers a selected bundled extension next to `plugins/<same id>`, `plugins/<unselected bundled id>`, a malformed plugin and a valid one: the session resources load, list and show agree, the broken plugin is left out, and `add` of a shadowed id is refused.
+
+    Mutation check: scanning only the Step 1 configs fails the main-session test.
+  - Verification: `bun run check` passes. `bun test test`: 682 pass, 0 fail, 94 files. Nothing was committed.
+- Review round 2 (Claude Opus 5.5, read-only) approved with two minors and a nit; all are fixed:
+  - `apply` refused every id in the next selection whose `plugins/<id>` an extension shadows, so once that happened every add or remove failed. `shelfPackage` now refuses the clash only for ids being added. Ids already selected follow `pluginShadowed`: the extension loads and a warning is logged.
+  - Plugin redaction no longer treats every env value of 8+ characters as a secret. It covers:
+    - header values, plus Bearer/Basic tokens;
+    - env values whose name matches `/TOKEN|KEY|SECRET|PASS|AUTH|CREDENTIAL/i`, skipping values that contain the PLUGIN_ROOT or PLUGIN_DATA path;
+    - every `${NAME}` value, as before.
+  - A selected id that is shadowed by a bundled extension and has no `extensions/<id>` now fails with an error saying `plugins/<id>` is shadowed.
+  - Tests:
+    - the main-session test checks that a `MODE=production-mode` plugin env value is not redacted;
+    - the ownership test adds and removes `valid` after `apple-notes` is selected with a `plugins/apple-notes` folder present.
+
+    Mutation check: refusing the clash for every id fails the ownership test.
+  - Verification: `bun run check` passes. `bun test test`: 682 pass, 0 fail, 94 files. Nothing was committed.
+
+## Plugins Step 4: MCP Apps UI host (stock Pi 0.99.1)
+
+- Gate (`docs/plans/plugins/step4-gate.md`): no Pi patch. Every connection goes through
+  `createMcpExtension({ createTransport })`, so a tap around Pi's default transport (`src/extensions/mcp-apps.ts`) adds the
+  `io.modelcontextprotocol/ui` capability, records `_meta.ui`, drops non-`"model"` tools from
+  `tools/list` (G7), and sends `ziggy-app-<n>` requests on the live connection.
+- Tool events and history carry `app` (server, tool, resourceUri, input, capped result) through a `tool_result` hook that writes
+  `details.app`. Pi's default plugin exposure is codemode and only the script's result persists, so codemode carries the
+  last nested view (keyed by `parentToolCallId`).
+- The handle has `callAppTool`/`readAppResource` (typed `McpAppRefused`: unknown-server, not-app-resource, not-app-tool),
+  with results redacted like `mcp-redact`.
+- UI SDK: `app.callTool`, `app.readResource`, and `prompt.submit` `context`, which goes to that prompt only, as ephemeral
+  view context.
+- Resident relay: owner-scoped and live-only (`watch_only` otherwise), with large results in a single-use 60 s content store
+  at `GET /app-content/<id>`. Host-header check: 421.
+- Web `clients/web/src/apps/`:
+  - AppBridge in a `srcdoc` frame with `sandbox=allow-scripts` and a CSP meta tag;
+  - an inline card, plus an overlay, panel or sheet that reuses the iframe;
+  - context chips and theme variables;
+  - `ui/message` drafts into the composer and is never sent; only http(s) links open.
+- Faces without UI: see Review round 1 (the footer moved out of the session).
+- Tests:
+  - `test/extensions/mcp-apps.test.ts`: G7, the view record, the own app-only call, refusals, the codemode carry;
+  - two relay and context tests in `test/application/ui-gateway.test.ts`;
+  - the fixture server serves a hand-written bridge view.
+- Browser check in a temp ZIGGY_HOME, with the fixture and the official `server-basic-vanillajs` as codemode plugins:
+  - the fixture view's app-only call went through, model_only was refused, and `ui/message` reached the composer unsent;
+  - the official view's buttons worked;
+  - expand kept the same iframe, the phone layout fit, the card reloaded from history, and a foreign Host got 421.
+  - Fixes made from the check:
+    - cards are titled `<server> · <tool>`, not "codemode";
+    - the fixture applies the host theme variables.
+- Verification: `bun run check` passes. `bun test test`: 686 pass, 0 fail, 95 files. Nothing committed.
+
+### Plugins Step 4: Review round 1
+
+- CSP: the `srcdoc` always starts `<!doctype html><meta http-equiv="Content-Security-Policy">`, so no
+  view markup (including `<!-->` or `--!>` comment tricks) comes before it; unit test with both inputs.
+  The navigation guard also requires `event.source === iframe.contentWindow`. Plan Limits corrected:
+  `data:`/`blob:` self-navigation keeps origin `"null"`.
+- Web UI link: removed from `SessionHandle.prompt` (no more `session/` → `adapters/fs` import). The
+  Telegram, Discord and Slack faces count views from the tool events they already receive
+  (`application/web-view-link.ts`) and add the link only when `.gateway/web.json` has a `publicUrl`.
+  Automations, specialists, ACP and the TUI never get it. Chose face-side counting over a new
+  `prompt` return type, which would have changed every `ChatHandle` fake for one chat-face concern.
+- `app.callTool` / `app.readResource` work only on live `ui` sessions; Slack/Telegram/Discord sessions
+  are `watch_only` (test). The "asking owner" claim now names what is true: content-store results are
+  readable only by the connection's upload owner.
+- `mcp-apps.ts`: a tool whose `_meta.ui` is present but does not decode is hidden and logged; MCP error
+  messages from view calls are redacted.
+- Web: each view is bound to the SessionRef it mounted in; the gateway refuses its calls and drops its
+  context and drafts once another conversation is selected (test). `ui/open-link` needs a recent user
+  gesture (`navigator.userActivation`) or a confirm. AppView loads with `React.lazy`. `CallToolResult`
+  is derived from `@modelcontextprotocol/core`; `@modelcontextprotocol/client` stays a dependency
+  because ext-apps' `app-bridge.js` imports `Protocol` from it at runtime (a required peer).
+- Tests: G7 under codemode (listing and a script calling `tools.mcp__fixture__app_only`), the history
+  view budget, history decode of `details.app`, the chat-face link rule.
+- Lazy chunk: Vite names it `assets/app-view.js` (fixed `chunkFileNames`), and the generator and
+  `adapters/bun/web-assets.ts` embed and serve it. `app.js` is 653 kB (198 kB gzip), was 893 kB; the
+  chunk is 241 kB (62 kB gzip).
+- Browser check on a temp resident: the chunk loads (200), the `srcdoc` begins with the doctype and CSP
+  meta, `sandbox="allow-scripts"`, and the fixture view shows `app_only` ok, `model_only` refused, and
+  the drafted `ui/message`. No console errors.
+- `bun run check` passes; `bun test test` 690 pass, 0 fail (96 files); web `vp test` 89 pass (14 files).
+
+### Plugins Step 4: Review round 2
+
+- Web UI link dropped (supersedes round 1's face-side link). Telegram, Discord and Slack sessions are
+  watch-only for `app.*`, so the link pointed at views that could never load.
+  `application/web-view-link.ts`, its test and its three face call sites are gone; the faces are back
+  to HEAD. Every face without UI shows only the tool's text result (R0).
+- The web UI mounts a view only when the selected conversation is a live web UI session
+  (`selectedServesViews`). The rule is an allow list, not an exclusion list: the ref must be live and
+  in the set of live refs `session.list` reports as kind `ui`. Every other session, including stored,
+  ended and chat-face ones, shows "Interactive view available only in live web UI conversations"
+  (gateway test).
+- `ui/open-link`: `makeLinkGate` per view. A gesture opens at once; otherwise the person confirms
+  (`window.confirm` blocks, so one dialog at a time), and after a decline later requests are refused
+  silently for the view's life (unit test).
+- `generate-web-assets.mjs` fails (generate and `--check`) on any `dist/assets` file it does not list.
+- The navigation guard keeps one comparison, `event.source !== frame.contentWindow`.
+- `bun run check` passes; `bun test test` 689 pass, 0 fail (95 files, one fewer with the link test
+  removed); web `vp test` 91 pass.
+- Round 3 follow-ups: a gesture counts only when `userActivation.isActive` and focus is in this view's
+  iframe (`document.activeElement === frame`), so typing in the composer cannot let a declined view
+  open a tab; `makeLinkGate` dropped its redundant `pending` flag; `selectedServesViews` uses the `ui`
+  allow list above and the note says "live". `bun run check` passes; `bun test test` 689 pass;
+  web `vp test` 91 pass.
+
+## Plugins Step 3: plugin authoring
+
+- New optional bundled package `extensions/plugin-authoring/`: skill `plugin-authoring` plus
+  `template/` (plugin.json, mcp.json, Bun MCP server with `registerAppTool`/`registerAppResource`,
+  Vite single-file view on host theme variables, `skills/example`, `smoke.ts`, SQLite WAL + busy
+  timeout in `PLUGIN_DATA`, refetch on load/focus/visibility). Registered in `catalog.json`; the
+  template is excluded from tsconfig, oxlint and knip; catalog and embeds regenerated.
+- Dependencies: exact pins in the template `package.json`, `bun install` once inside
+  `plugins/<id>/`, and `bun --no-install` in `mcp.json`, so a plugin outside the checkout resolves
+  its own packages and loading never installs (R4).
+- Lab: no provider credentials in the environment and real Profiles are off limits, so B1–B4 were
+  not run. `dump/plugin-lab/lab.md` has the setup, briefs, rubric and a fake Linear for B3.
+- Template-only check in a scratch ZIGGY_HOME with a scripted model, following the skill by hand:
+  build + smoke first try; view rendered dark/light/phone (inline and sheet), refetched from
+  history; app-only tools never offered to the model and refused in codemode. Fixed from it: the
+  view frame lacks `allow-forms`, so the template no longer uses `<form>` (button click + Enter),
+  the skill says the frame is scripts-only, and the empty status line no longer adds a scrollbar.
+
+### Step 3 review round 1
+
+- `template/rules.ts`: dependency-free mirror of `src/extensions/plugin.ts` (exact plugin.json and
+  mcp.json `$schema`, strict keys as with `onExcessProperty: "error"`, server key, command, cwd,
+  reserved env, `${NAME}` from Keychain then env, url and header rules, skills from `<name>/SKILL.md`
+  only). Stricter on purpose: plugin.json name = folder, skill name = folder, no `${NAME}` in
+  command/args/cwd. `test/extensions/plugin-authoring.test.ts` runs the same bad and good inputs
+  through `pluginMcp`/`extensions.show` and `checkPlugin` and requires the same verdict.
+- `smoke.ts` rewritten on it: spawns like Ziggy (literal env, PLUGIN_* substituted in args, `bun`
+  -> `process.execPath`, other bare names from PATH, Ziggy's cwd), calls only `READS` and
+  `LOCAL_WRITES`, lists `EXTERNAL_WRITES` without calling them, and reruns the reads against a
+  `VACUUM INTO` copy of `plugin-data/<id>/state.sqlite` when it exists (a read-only handle cannot
+  create the copy, so the source opens read-write and is only read).
+- `server.ts` fails fast without `PLUGIN_DATA`; title is `trim().min(1)`; `view.ts` ignores the
+  initial tool result once a refresh has rendered. Skill: `mkdir -p plugins`, existing
+  `plugin-data/<id>/` handling, the exact `ziggy plugin secret set "<pwd>" NAME` command, the
+  smoke safety rule and the strict-key rule. Template `dist/` and `bun.lock` are gitignored and
+  skipped by the catalog generator.
+- Verified: check, 692 tests, template build + smoke in scratch (`.DS_Store` in `skills/`, bad
+  `$schema`/extra key fail; the scratch lab `todo` plugin ran its reads against a copy of its data
+  and left the source unchanged).
+
+### Step 3 review round 2 and lab B1
+
+- M1: `template/rules.ts` reads SKILL.md frontmatter as YAML (`Bun.YAML.parse`, Pi's extraction:
+  `---` start, first `\n---` end). Pi parses with `yaml` and drops a skill whose YAML fails, which
+  made Ziggy drop the plugin while the old lenient parser passed smoke. A parse error is now a
+  problem; the skill says to quote `description:`, and the template's skill description is quoted.
+- m1: an unset `${NAME}` is a warning; `checkPlugin` returns `unset` server keys and smoke skips
+  them (as Ziggy does) and ends "smoke ok for the rest; not started until their secrets are set".
+  Step 5 tells the agent to give the `ziggy plugin secret set` command and rerun.
+- m2: no stdio server means static checks only, not a failure (`dist/view.html` optional too).
+- m3 and parity: tests add a remote unset-secret case, a two-server `<id>_<key>` naming case
+  against `pluginMcp`, and five frontmatter cases run through Pi's `loadSkillsFromDir` and
+  `checkPlugin` (plain, quoted colon, unquoted colon, empty, folded).
+- n1: SKILL.md must be a regular file. n2: comment reworded and `PRAGMA busy_timeout = 5000`
+  before `VACUUM INTO`.
+- Skill: rename before `bun install` (B1's agent installed first, `bun.lock` kept "example").
+- Lab B1 (reading list, iteration 1): first-try build, 1 turn, 1m31s; view passes dark, light and
+  phone; mark read, add and two-click delete work from the view; app-only tools never used by the
+  model. Found: a new web UI chat shows "view available only in live web UI conversations" until
+  the sidebar refreshes (`uiLive` filled only on sessions refresh); a live theme switch is not
+  applied until reload; the header shows `Chat <uuid>` after reload. Scores in the lab's `lab.md`.
+- Lab B2 started at 11:53 and stopped on provider 429s (rate limit); nothing built, no `gh` call.
+- Verified: `bun run check` exit 0, `bun test test` 694 pass, template check in scratch, and the
+  unset-secret path in scratch.
+
+### Step 3 review follow-ups, lab B2 and B3, web UI fixes
+
+- Frontmatter: `template/rules.ts` requires a skill to load in both readers: Pi's (BOM strip,
+  `---` to `\n---`, YAML, now also rejecting duplicate top-level keys) and Ziggy's lenient
+  `parseFrontmatter` with its name/description checks. The parity test runs 9 whole SKILL.md texts
+  (adding duplicate `description:`, `name: sample # c`, a leading BOM, a closing `---more`) and
+  requires smoke to load exactly when both `loadSkillsFromDir` and `extensions.show` do. SKILL.md
+  says: one line each for name and description, no comments or repeated keys, closing `---`.
+- `template/smoke.ts`: a tool in more than one of READS, LOCAL_WRITES and EXTERNAL_WRITES fails,
+  and the calls step refuses any EXTERNAL_WRITES name.
+- Web UI bug 1: `selectConversation` adds a chat it just opened with `session.open` to `uiLive`,
+  so a new chat serves views without a sidebar refresh (asserted in the "creates and pins a
+  separate named chat" test).
+- Web UI bug 3: restoring a stored selection uses the pin label when the chat is pinned, so the
+  header shows the chat's name, not `Chat <key>`. New test "restores a named chat under its pin
+  label, not its key" fails without the fix.
+- Web UI bug 2 (theme change not reaching an open view): not reproducible on the current host.
+  Light to dark, dark to light, the expanded sheet and 375 px all followed. B1's report was most
+  likely browser-pane screenshot lag. No change.
+- Lab B2 (PR inbox, iteration 3): first-try build, 1 turn, 2m09s; light, dark and phone pass;
+  `gh` read-only; `approve_pr` app-only, in EXTERNAL_WRITES, never called (no Approve clicked).
+  Found: no loading state while `gh` runs (5 to 8 s blank).
+- Lab B3 (Linear triage, fake Linear, iteration 3): 1 turn, 5m33s; the first check failed on a
+  gap in the lab fake (`viewer.teams`), fixed in the fake. Three writes app-only, each sent one
+  `issueUpdate` from the view. The subject read the lab notes and fake source while debugging,
+  so the lab notes moved out of ZIGGY_HOME to `dump/plugin-lab-notes/`. Scores in its `lab.md`.
+- Lab B4 (snooze, edits B3's plugin): first-try check, 1 turn, 2m36s; snooze is an app-only
+  local write in `state.sqlite` (no Linear write), the rules file and B3's data were kept. Found:
+  the first click into a view frame is often lost (host focus, B3 and B4), and a four-button row
+  clips at 375 px. App-kit candidates now include a loading state, a smoke stub for external
+  services and a date control.
+- Verified: `bun run check` exit 0 (web assets regenerated), `bun test test` 694 pass, web
+  vitest 92 pass.
+- Step 3 review round 3 (delta): approved, no new findings. Bugs 1 and 3 verified in the browser
+  on a restarted lab resident. SKILL.md step 5 now keeps debugging inside the plugin folder and
+  the Profile (the B3 subject grepped the person's shell config file names). Known lab issues
+  (lost first click into a view, dark sidebar title, clipping at phone width) are in the plan.
+  Real-Linear read-only rerun of B3 waits on a Linear key in the lab Profile.
+
+## Plugins Step 5: view quality
+
+### T1 to T5: view kit, states, first click, shots, skill rules
+
+- T3 confirmed before the fix in the lab browser (Profile `lab`, plugin `focus-probe` copied
+  from the unchanged template). A press held for a moment on a row checkbox in a frame that was
+  not focused was lost 2 of 2 times. The same press with the frame already focused worked, and
+  so did an instant synthetic click. That fits `focus` → `refresh()` → `replaceChildren`
+  between mousedown and mouseup. After the fix, 3 of 3 held presses into an unfocused frame
+  registered.
+- Kit in the template, not a package: `ui/kit.css` (`--kit-*` tokens over the MCP Apps host
+  variables, including success and warning, with light/dark fallbacks; focus rings; 36 px
+  targets, 44 px on coarse pointers) and `ui/kit.ts` (plain DOM). It provides:
+  - `el`, `stack`, `row`, and `toolbar` (extra actions fold into a "More…" select below
+    480 px);
+  - `button` (primary, secondary, danger), `tag` (tones), `field` (Enter, no form), `menu`,
+    `confirmButton` (armed state kept by key, so it survives re-render), `datePresets`;
+  - a `status` live region, and `keyedList` (rows by id, updated in place, moved, never
+    rebuilt);
+  - `notice` (empty, off, error with retry) and `skeleton`;
+  - `query`: pending (`slow` after 300 ms), data, error, and a failed refresh keeps the data;
+  - `writeQueue`: one write at a time, then a re-read;
+  - `refreshOnReturn`: focus and visibility, 2 s throttle; a focus during a press waits for
+    pointerup.
+  Vite inlines it. The template view is rewritten on the kit: `view.html` is a shell, and
+  `view.ts` handles `off`, empty, error and skeleton states.
+- `bun run shots` (`shots.ts` and `shots-host.ts`):
+  - It drives an installed Chrome, Chromium, Edge or Brave over CDP with Bun's own WebSocket,
+    headless, with a throwaway profile. Playwright would download its own browser of more than
+    100 MB, and Puppeteer needs its own Chrome too. The only new dependency is `axe-core`
+    4.13.0 (3 MB), which works offline after install.
+  - The stub host is AppBridge in a same-origin iframe. It opens each distinct result smoke
+    recorded (`shots/fixtures.json`, scratch run only), plus an error and a loading state, and
+    answers every view call with that result.
+  - It renders light and dark at 375 and 760 px, saves PNGs to `shots/`, and fails on sideways
+    scroll, console errors, and axe WCAG A/AA violations (contrast included).
+  - `check` runs it with `--if-browser`: no browser means a warning, not a failure.
+  - A negative run (a 2000 px element and grey-on-white text) failed on both counts.
+  - It caught two real issues while being built: an ARIA misuse on the skeleton, and the stub
+    page's missing viewport meta, which made 375 render at 980.
+- Smoke:
+  - a `$id` local write whose source read returned no items is skipped with a warning;
+  - it fails a view built without the kit (`.kit-button` missing from `dist/view.html`);
+  - it records fixtures for tools that have a view.
+- SKILL.md:
+  - a Views section: use the kit and never hand-roll controls; empty, "off" and error states;
+    in-place rows; queued writes; refresh on return; shots;
+  - shallow GraphQL queries and page limits;
+  - feature-off returned as its own result;
+  - secrets are shared by every Profile on the machine;
+  - debugging stays in the plugin folder and the Profile, never the Keychain;
+  - smoke skips writes with a warning;
+  - the catalog skips the template's `shots/`.
+- Verified:
+  - the template copied to scratch: `bun install`, then `bun run check` (build, smoke, 20 shots)
+    passes, and `tsc` is clean on `ui/*.ts`, `shots*.ts` and `smoke.ts`;
+  - the lab `focus-probe` with the new UI, smoke and shots passes `check`;
+  - the lab browser: the first click registers, and an armed "Sure?" survives the focus
+    refresh and disarms after 3 s.
+
+### T6 to T8: host fixes, web UI issues, extension-authoring pointer
+
+- T6, `clients/web/src/apps/app-view.tsx`:
+  - `containerDimensions` is the frame's measured size: `{width, maxHeight: 560}` inline, and
+    `{width, height}` expanded. A `ResizeObserver` on the iframe sends `setHostContext` when the
+    width changes, or the height while expanded. Before, it sent a fixed `maxWidth: 760` even
+    at phone width, and the window size when expanded.
+  - The success, warning and danger tokens already mapped text and background. Added
+    `--color-border-*` and `--color-ring-*` for all three.
+  - The frame was 1 px short of `--app-height`: header 32 plus frame borders 2 is 34, not 33. That
+    gave every view a needless scrollbar. Lab check: iframe 227 = `--app-height` 227, and the
+    scrollbar is gone.
+  - `styles.css.fonts` is not passed. The web UI uses only a system font stack, which is already
+    in `--font-sans`. It loads no webfont, and the view CSP would block a remote one, so there is
+    no `@font-face` to pass.
+- T7:
+  - "Pinned conversation":
+    - Not a Step 3 regression. The pinned row took its subtitle from the live session list.
+      Any pinned chat whose session is live in the resident therefore showed "Conversation":
+      a new chat, or one opened since the resident started.
+    - The rule dates from the first web client (985f4ffe).
+    - Pinned chats now always say "Pinned conversation"; main and specialists keep theirs.
+    - `gateway.test` asserts it for a new chat. It fails without the fix.
+  - Dark selected sidebar title: did not reproduce at desktop or 375 px, before or after a live
+    theme switch. Computed: title L 0.96 on `--selected` L 0.27. Likely the stale-screenshot
+    artifact seen with the Step 3 theme-change report. No change.
+  - Phone tables:
+    - Radix ScrollArea wraps the transcript in a `display: table` box. That box grew to the
+      widest child, so `max-width: 100%` on tables resolved against the wide box and the
+      transcript clipped. Measured at 375 px: the content was 682 px.
+    - The sidebar already had the override; it now covers `.transcript-scroll` too.
+    - After the fix the table is 303 px and wraps or scrolls in place, and the viewport no longer
+      scrolls sideways.
+- T8: `extension-authoring` now sends new tools, connectors and views to `plugin-authoring`,
+  both in its description and at the top of its body. The catalog is regenerated.
+- Gates: `bun run check` exits 0 (web vitest 92), and `bun test test` passes 694. The lab resident
+  was restarted on the new web assets.
+
+### Review follow-ups
+
+- `shots` fails when any `dist/*.html` is newer than `shots/fixtures.json`. The view HTML it
+  checks is the copy smoke loaded, so a rebuild without smoke would have checked stale HTML.
+- `shots` deletes `shots/*.png` before rendering and keeps `fixtures.json`.
+- The stub host now sends Ziggy's real theme as `styles.variables`, light and dark: the colours,
+  fonts and radii from `app-view.tsx`'s mapping and the web `styles.css`. The template still
+  passes.
+  - Negative check: dark text at L 0.3 fails with 10 `color-contrast` findings.
+- axe's undecided `color-contrast` results are printed as warnings.
+- Ready signal: the kit's `query` sets `data-kit-state` (`pending`, `slow`, `data`, `error`) on
+  the view's root element.
+  - `shots` waits for `data` or `error`, or for `slow` in the loading state, then waits 150 ms
+    for the resize.
+  - A view that gives no signal is taken after 10 s, with a warning.
+  - This replaces the fixed 800 ms wait.
+- `.gitignore`: the template's `shots/`.
+- SKILL.md: shots uses Ziggy's theme. After a rebuild, run `check`, not `shots` alone.
+- Gates: `bun run check` exits 0 and `bun test test` passes 694. The scratch template's
+  `check` passes: 5 states × 4.
+
+### T10 lab proof
+
+B3 and B4 were rebuilt by the lab model from the briefs, on the fake Linear, using the Step 5 skill
+and kit. The old build was moved aside inside the lab. Scores are in `plugin-lab-notes/lab.md`,
+section "T10".
+
+- Kit consistency:
+  - no hand-rolled controls;
+  - the plugin's copy added a `confirmButton` variant and about 25 lines of row CSS;
+  - B4 used the kit's `datePresets`.
+- States: the loading skeleton, empty, "Triage off" and error with retry all render. "Off" showed
+  for real, because the fake had no `triageEnabled`.
+- Phone width: at 375 px the rows wrap and nothing clips. Step 3 clipped here.
+- First click: the first click arms Apply. Confirming within 3 s sent exactly one `issueUpdate`
+  to the fake. In B4, Snooze and a date worked on the first click. The Step 3 first-click loss did
+  not recur.
+- `shots` ran in every `check`:
+  - In B3, the agent's own mock gave the screenshots rows. In them the agent spotted a hidden
+    panel taking space, and fixed it.
+  - No contrast findings in B3 or B4.
+  - Smoke caught non-view tools that had been registered as views.
+- Time and turns:
+  - B3: 1 user turn, 31 tool calls, 6m50s;
+  - B4: 1 user turn, 17 tool calls, 2m48s.
+- Safety:
+  - The Keychain's real Linear key went only to the local fake. A guard pinned `LINEAR_API_URL` to
+    the fake the moment `mcp.json` appeared.
+  - No request reached api.linear.app, and smoke never called the external writes.
+- Plugin nit: the header count still includes snoozed issues.
+

@@ -1,6 +1,6 @@
 {
   "name": "ziggy",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "license": "MIT",
   "bin": {
@@ -11,6 +11,7 @@
     "./*": "./src/*.ts"
   },
   "scripts": {
+    "postinstall": "effect-tsgo patch",
     "dev": "bun src/main.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p clients/web/tsconfig.json",
     "lint": "oxlint src test extensions tooling",
@@ -24,7 +25,8 @@
     "build:binary:dev": "bun tooling/build-standalone-executable.mjs --development",
     "smoke:binary": "bun tooling/smoke-standalone-executable.mjs",
     "smoke:binary:dev": "bun tooling/smoke-standalone-executable.mjs --allow-development --artifact /tmp/ziggy-standalone-dev/ziggy",
-    "test": "bun test ./test ./extensions ./tooling",
+    "test": "bun test --parallel ./test ./extensions ./tooling",
+    "test:e2e": "bun test --parallel ./test/e2e",
     "check:ui-sdk": "bun run --cwd packages/ui-sdk lint && bun run --cwd packages/ui-sdk typecheck && bun run --cwd packages/ui-sdk test",
     "check:web": "bun run --cwd clients/web check",
     "generate:web-assets": "bun run --cwd clients/web build && bun tooling/generate-web-assets.mjs",
@@ -36,7 +38,6 @@
     "@clack/prompts": "1.7.0",
     "@earendil-works/pi-coding-agent": "0.99.1",
     "@effect/platform-bun": "4.0.0-beta.99",
-    "acorn": "8.15.0",
     "effect": "4.0.0-beta.99",
     "picocolors": "1.1.1"
   },

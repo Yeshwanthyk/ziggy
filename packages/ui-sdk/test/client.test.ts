@@ -576,6 +576,35 @@ const methodFixtures = (): ReadonlyArray<{
       },
     },
     {
+      method: "plugin.secret.set",
+      params: { profileId: PROFILE_A, name: "LINEAR_API_KEY", value: "lin_api_example" },
+      result: { profileId: PROFILE_A, name: "LINEAR_API_KEY", stored: true },
+    },
+    {
+      method: "app.callTool",
+      params: {
+        ref: MAIN_A,
+        server: "fixture",
+        resourceUri: "ui://fixture/view.html",
+        tool: "refresh",
+        arguments: { count: 1 },
+      },
+      result: {
+        profileId: PROFILE_A,
+        contentId: "0b6f5f0e-3c1a-4f5e-9a2b-1c2d3e4f5a6b",
+        bytes: 12,
+      },
+    },
+    {
+      method: "app.readResource",
+      params: { ref: MAIN_A, server: "fixture", uri: "ui://fixture/view.html" },
+      result: {
+        profileId: PROFILE_A,
+        contentId: "0b6f5f0e-3c1a-4f5e-9a2b-1c2d3e4f5a6b",
+        bytes: 12,
+      },
+    },
+    {
       method: "pin.list",
       params: profileScopedParams(PROFILE_A),
       result: { profileId: PROFILE_A, pins: [pin], revision: 1 },
@@ -1179,4 +1208,23 @@ test("resume result rejects leading-dot and traversal session ids", () => {
       profileId: PROFILE_A, ref: MAIN_A, sessionId, cancelled: false,
     }, { ref: MAIN_A, sessionId })).toBe(false);
   }
+});
+
+test("image IDs stay in bounded text requests, including image-only prompts", async () => {
+  const images = ["12345678-1234-4123-8123-123456789abc"];
+  for (const method of ["prompt.submit", "session.steer", "session.follow-up"] as const) {
+    expect(isMethodParams(method, { ref: MAIN_A, text: "", images })).toBe(true);
+    expect(isMethodParams(method, { ref: MAIN_A, text: "" })).toBe(false);
+    expect(isMethodParams(method, { ref: MAIN_A, text: "hello", images: [] })).toBe(false);
+    expect(isMethodParams(method, { ref: MAIN_A, text: "hello", images: ["bad"] })).toBe(false);
+    expect(isMethodParams(method, { ref: MAIN_A, text: "hello", images: Array(5).fill(images[0]) })).toBe(false);
+  }
+  const socket = new FakeSocket();
+  const client = connectZiggy({ url: "ws://localhost/ws", socketFactory: () => socket });
+  socket.open();
+  const sent = client.submitPrompt(MAIN_A, "", "image-turn", { images });
+  expect(frame(socket, 0)).toMatchObject({ method: "prompt.submit", params: { ref: MAIN_A, text: "", commandId: "image-turn", images } });
+  socket.message({ id: frameId(socket, 0), ok: true, result: { acknowledged: true } });
+  await sent;
+  client.close();
 });

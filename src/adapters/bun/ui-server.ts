@@ -9,9 +9,16 @@ import {
   UI_PROTOCOL_MAX_FRAME_BYTES,
   type UiRequestEnvelope as UiRequestEnvelopeValue,
 } from "../../domain/ui-gateway";
-import { fileSystemCauseDetails } from "../fs/cause";
+import { fileSystemCauseDetails } from "../../platform/cause";
 import { openWebAccessStore } from "./web-access-sqlite";
 import { webAssetResponse } from "./web-assets";
+import {
+  makeUiAppContentStore,
+  makeUiUploadStore,
+  UI_IMAGE_MAX_BYTES,
+  type UiAppContentStore,
+  type UiUploadStore,
+} from "../../application/ui-gateway";
 
 export const UI_SERVER_MAX_FRAME_BYTES = UI_PROTOCOL_MAX_FRAME_BYTES;
 
@@ -21,7 +28,30 @@ export const UI_SERVER_MAX_IN_FLIGHT = 16;
 
 export const UI_SERVER_COMMAND_CAPACITY = 256;
 
+const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+const imageMatchesType = (bytes: Buffer, mimeType: string): boolean => {
+  switch (mimeType) {
+    case "image/png":
+      return bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    case "image/jpeg":
+      return bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+    case "image/gif":
+      return ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"));
+    case "image/webp":
+      return (
+        bytes.length >= 12 &&
+        bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+        bytes.subarray(8, 12).toString("ascii") === "WEBP"
+      );
+    default:
+      return false;
+  }
+};
+
 const TOKEN_PATTERN = /^[0-9a-f]{64}$/u;
+
+const APP_CONTENT_PATH = /^\/app-content\/([0-9a-f-]{36})$/u;
 
 const Token = Schema.String.check(
   Schema.makeFilter((value) => TOKEN_PATTERN.test(value), {
@@ -69,6 +99,7 @@ export class UiServerError extends Schema.TaggedErrorClass<UiServerError>()("UiS
 
 export interface UiServerConnection {
   readonly id: string;
+  readonly uploadOwner: string;
   readonly isOpen: () => boolean;
   /** Synchronous for use by ChatHandle event callbacks; closes on failed delivery. */
   readonly send: (text: string) => void;
@@ -96,10 +127,13 @@ export interface UiServerOptions {
   readonly maxInFlightPerSocket?: number;
   readonly port?: number;
   readonly publicUrl?: string;
+  readonly uploads?: UiUploadStore;
+  readonly appContent?: UiAppContentStore;
 }
 
 interface SocketState {
   readonly id: string;
+  readonly uploadOwner: string;
   readonly activeIds: Map<string, string>;
   readonly requestKeys: Set<string>;
   socket: Bun.ServerWebSocket<SocketState> | undefined;
@@ -422,6 +456,7 @@ const closeSocket = (state: SocketState, code: number, reason: string): void => 
 
 const makeConnection = (state: SocketState): UiServerConnection => ({
   id: state.id,
+  uploadOwner: state.uploadOwner,
   isOpen: () => state.socket?.readyState === WebSocket.OPEN,
   send: (text) => {
     if (!trySend(state, text)) closeSocket(state, 1013, "delivery failed");
@@ -450,6 +485,8 @@ export const openUiServer = (
       return yield* serverError("start", "UI server in-flight limit must be a positive integer");
     }
 
+    const uploads = options.uploads ?? makeUiUploadStore();
+    const appContent = options.appContent ?? makeUiAppContentStore();
     const token = randomBytes(32).toString("hex");
     const cookieName = gatewayCookieName(profilePath);
 
@@ -541,6 +578,16 @@ export const openUiServer = (
               ...(options.publicUrl === undefined ? [] : [new URL(options.publicUrl).origin]),
             ]);
 
+            // A rebound DNS name reaches this loopback port with a foreign Host; refuse it.
+            const allowedHosts = new Set([
+              `127.0.0.1:${current.port}`,
+              `localhost:${current.port}`,
+              ...(options.publicUrl === undefined ? [] : [new URL(options.publicUrl).host]),
+            ]);
+
+            if (!allowedHosts.has(request.headers.get("Host")?.toLowerCase() ?? ""))
+              return new Response("Misdirected Request", { status: 421 });
+
             if (url.pathname === "/auth/pair" && request.method === "POST") {
               const code = await request.text();
 
@@ -569,6 +616,94 @@ export const openUiServer = (
               allowedOrigins.has(requestOrigin(request) ?? "") &&
               accessStore.sessionValid(browserSessionToken);
 
+            const bearerAuthenticated = authenticated(request, token);
+
+            const uploadOwner = bearerAuthenticated
+              ? `bearer:${token}`
+              : browserAuthenticated
+                ? `browser:${browserSessionToken}`
+                : undefined;
+
+            if (url.pathname === "/uploads" && request.method === "POST") {
+              if (uploadOwner === undefined) return new Response("Unauthorized", { status: 401 });
+
+              const mimeType = request.headers
+                .get("Content-Type")
+                ?.split(";")[0]
+                ?.trim()
+                .toLowerCase();
+
+              if (mimeType === undefined || !IMAGE_MIME_TYPES.has(mimeType))
+                return new Response("Use a PNG, JPEG, GIF or WebP image.", { status: 415 });
+              const reader = request.body?.getReader();
+
+              if (reader === undefined)
+                return new Response("Image bytes are required.", { status: 415 });
+              const chunks: Array<Uint8Array> = [];
+              let size = 0;
+
+              try {
+                // Read to the end even past the cap: Bun stalls the next request on a
+                // keep-alive connection whose body was left unread.
+                while (true) {
+                  const chunk = await reader.read();
+
+                  if (chunk.done) break;
+                  size += chunk.value.byteLength;
+
+                  if (size <= UI_IMAGE_MAX_BYTES) chunks.push(chunk.value);
+                }
+              } catch {
+                return new Response("Could not read image bytes.", { status: 400 });
+              } finally {
+                reader.releaseLock();
+              }
+
+              if (size > UI_IMAGE_MAX_BYTES)
+                return new Response("Images must be 5 MiB or smaller.", { status: 413 });
+
+              const bytes = Buffer.concat(chunks, size);
+
+              if (!imageMatchesType(bytes, mimeType))
+                return new Response("Image bytes do not match the declared type.", { status: 415 });
+
+              // Recheck durable browser authority after reading the request body.
+              if (
+                !bearerAuthenticated &&
+                (browserSessionToken === undefined ||
+                  !accessStore.sessionValid(browserSessionToken))
+              )
+                return new Response("Unauthorized", { status: 401 });
+
+              const id = uploads.put(uploadOwner, {
+                type: "image",
+                mimeType,
+                data: bytes.toString("base64"),
+              });
+
+              return Response.json(
+                { id },
+                { status: 201, headers: { "Cache-Control": "no-store" } },
+              );
+            }
+
+            const contentId = APP_CONTENT_PATH.exec(url.pathname)?.[1];
+
+            if (contentId !== undefined && request.method === "GET") {
+              const body =
+                uploadOwner === undefined ? undefined : appContent.take(uploadOwner, contentId);
+
+              if (body === undefined) return new Response("Not Found", { status: 404 });
+
+              return new Response(body, {
+                headers: {
+                  "Content-Type": "application/json; charset=utf-8",
+                  "Cache-Control": "no-store",
+                  "X-Content-Type-Options": "nosniff",
+                },
+              });
+            }
+
             if (url.pathname === "/auth/status")
               return new Response(null, {
                 status: browserAuthenticated ? 204 : 401,
@@ -581,12 +716,13 @@ export const openUiServer = (
 
             if (url.pathname !== "/ws") return new Response("Not Found", { status: 404 });
 
-            if (!authenticated(request, token) && !browserAuthenticated) {
+            if (uploadOwner === undefined) {
               return new Response("Unauthorized", { status: 401 });
             }
 
             const state: SocketState = {
               id: randomUUID(),
+              uploadOwner,
               activeIds: new Map(),
               requestKeys: new Set(),
               socket: undefined,
@@ -595,12 +731,14 @@ export const openUiServer = (
               sequence: 0,
               accepting: true,
               cleaned: false,
-              browserSessionToken: browserAuthenticated ? browserSessionToken : undefined,
-              browserSessionValid: browserAuthenticated
-                ? () =>
-                    browserSessionToken !== undefined &&
-                    accessStore.sessionValid(browserSessionToken)
-                : undefined,
+              browserSessionToken:
+                !bearerAuthenticated && browserAuthenticated ? browserSessionToken : undefined,
+              browserSessionValid:
+                !bearerAuthenticated && browserAuthenticated
+                  ? () =>
+                      browserSessionToken !== undefined &&
+                      accessStore.sessionValid(browserSessionToken)
+                  : undefined,
             };
 
             if (current.upgrade(request, { data: state })) return;
@@ -724,6 +862,11 @@ export const openUiServer = (
       return yield* serverError("start", "UI server did not bind a TCP port");
     }
 
+    const uploadCleanup = setInterval(() => {
+      uploads.sweep();
+      appContent.sweep();
+    }, 60_000);
+
     const projectionPath = uiServerProjectionPath(profilePath);
     let shutdownStarted = false;
     let projectionPublished = false;
@@ -731,6 +874,7 @@ export const openUiServer = (
     const shutdown = Effect.suspend(() => {
       if (shutdownStarted) return Effect.void;
       shutdownStarted = true;
+      clearInterval(uploadCleanup);
       stopped = true;
       const current = [...connections.values()];
 

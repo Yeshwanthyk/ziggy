@@ -6,15 +6,24 @@ Ziggy owns Profile policy and composition.
 
 # Architecture
 
-Dependencies point inward: faces -> application -> domain.
+The target layout is in `docs/plans/tight-core/README.md` §4; code moves there one concept at a time.
 
-- Faces translate CLI or UI input into application calls.
-- Application services orchestrate Effect-native capabilities and domain values.
-- Domain code owns Profile concepts, invariants, and typed failures.
-- Core runtime code may import Pi packages only under `src/adapters/pi/`.
-- Repository-owned `extensions/*` are isolated Pi packages and may import Pi at their entrypoints.
+- `src/platform/` holds shared low-level pieces with no Ziggy concepts: `file-lock.ts` (the one
+  SQLite lock), `atomic-write.ts` and `paths.ts` (`ZiggyPaths`). It imports only `effect`,
+  `node:*`, `bun:*` and other platform files.
+- The core is `profile/`, `session/` and `extensions/`. `agents/` and `memory/` are modules built
+  on it, and `resident/` and `cli/` sit on top. Dependencies point down that list; the core never
+  imports agents, memory or resident.
+- Code outside a concept folder imports only its `index.ts`.
+- Pi packages may be imported only in `src/adapters/pi/` and the files marked `[Pi]` in §4.
+  Repository-owned `extensions/*` are isolated Pi packages and may import Pi at their entrypoints.
+- Until a concept moves, the old rule holds for it: faces -> application -> domain, with adapters
+  at the edges.
 - Only entrypoints execute Effects. `BunRuntime.runMain` in `src/main.ts` is the only production
-  execution edge.
+  execution edge; the one written exception is the Pi tool-callback bridge (see
+  `effect-runtime-boundaries`).
+
+`ziggy/import-boundaries` in `tooling/oxlint` enforces the platform, folder-index and Pi rules.
 
 # Toolchain
 

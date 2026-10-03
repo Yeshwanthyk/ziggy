@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import type { SessionMetadata, SessionReferenceMetadata, SessionUsage } from "../domain/session";
+import type { SessionMetadata, SessionReferenceMetadata, SessionUsage } from "../session";
 
 const SessionReferenceJson = Schema.Struct({
   id: Schema.String,

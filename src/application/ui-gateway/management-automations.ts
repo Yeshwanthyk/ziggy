@@ -249,7 +249,7 @@ export const dispatchAutomation = (
             params.automationId,
             { kind: "manual-force" },
             {
-              registry: branch.registry,
+              live: branch.live,
             },
           )
           .pipe(Effect.mapError((cause) => toGatewayError(request.method, cause)));

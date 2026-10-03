@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Deferred, Effect, Result, Scope } from "effect";
+import { Deferred, Effect, Result, Schema, Scope } from "effect";
 import {
   gatewayCookieName,
   openUiServer,
@@ -15,7 +15,12 @@ import {
   type UiServerHandlers,
 } from "ziggy/adapters/bun/ui-server";
 import { openWebAccessStore } from "ziggy/adapters/bun/web-access-sqlite";
+import { makeUiUploadStore, UI_IMAGE_MAX_BYTES } from "ziggy/application/ui-gateway";
 import { makeCommandCache } from "ziggy/application/ui-gateway/command-cache";
+
+const decodeUpload = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ id: Schema.String })),
+);
 
 const paths: Array<string> = [];
 
@@ -608,4 +613,87 @@ describe("Bun UI server socket lifecycle", () => {
       ),
     );
   });
+});
+
+test("uploads require bearer or allowed-origin browser authority, validate bytes, and bind ownership", async () => {
+  const profilePath = await makeProfile();
+  const access = openWebAccessStore(profilePath);
+  const pair = access.issuePairing();
+  access.close();
+  const uploads = makeUiUploadStore();
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const server = yield* openUiServer(profilePath, handlers(), { uploads });
+        const projection = yield* readUiServerProjection(profilePath);
+        const origin = `http://127.0.0.1:${server.port}`;
+
+        const post = (
+          headers: Record<string, string>,
+          body: NonNullable<RequestInit["body"]> = png,
+        ) => Effect.promise(() => fetch(`${origin}/uploads`, { method: "POST", headers, body }));
+
+        const bearer = { Authorization: `Bearer ${projection.token}`, "Content-Type": "image/png" };
+        expect((yield* post({ "Content-Type": "image/png" })).status).toBe(401);
+        expect((yield* post({ ...bearer, "Content-Type": "text/plain" })).status).toBe(415);
+        expect((yield* post({ ...bearer, "Content-Type": "image/jpeg" })).status).toBe(415);
+        expect((yield* post(bearer, new Uint8Array(UI_IMAGE_MAX_BYTES + 1))).status).toBe(413);
+
+        const uploaded = yield* post(bearer);
+        expect(uploaded.status).toBe(201);
+        expect(uploaded.headers.get("cache-control")).toBe("no-store");
+        const { id } = decodeUpload(yield* Effect.promise(() => uploaded.text()));
+        const socket = yield* Effect.promise(() => connect(server.port, projection.token));
+        yield* Effect.promise(() => closeClient(socket));
+        expect(yield* uploads.consume(`bearer:${projection.token}`, [id])).toHaveLength(1);
+
+        for (const [mimeType, bytes] of [
+          ["image/jpeg", Buffer.from([255, 216, 255])],
+          ["image/gif", Buffer.from("GIF89a")],
+          ["image/webp", Buffer.from("RIFFxxxxWEBP")],
+        ] as const)
+          expect((yield* post({ ...bearer, "Content-Type": mimeType }, bytes)).status).toBe(201);
+
+        const paired = yield* Effect.promise(() =>
+          fetch(`${origin}/auth/pair`, {
+            method: "POST",
+            headers: { Origin: origin },
+            body: pair.token,
+          }),
+        );
+
+        const cookie = paired.headers.get("set-cookie")?.split(";", 1)[0] ?? "";
+        expect(cookie).toContain("ziggy_ui_");
+        expect((yield* post({ Cookie: cookie, "Content-Type": "image/png" })).status).toBe(401);
+        expect(
+          (yield* post({
+            Cookie: cookie,
+            Origin: "https://foreign.invalid",
+            "Content-Type": "image/png",
+          })).status,
+        ).toBe(401);
+
+        const browser = yield* post({
+          Cookie: cookie,
+          Origin: origin,
+          "Content-Type": "image/png",
+        });
+
+        expect(browser.status).toBe(201);
+        const browserUpload = decodeUpload(yield* Effect.promise(() => browser.text()));
+        const sessionToken = cookie.slice(cookie.indexOf("=") + 1);
+        expect(yield* uploads.consume(`browser:${sessionToken}`, [browserUpload.id])).toHaveLength(
+          1,
+        );
+        const revoker = openWebAccessStore(profilePath);
+        revoker.revokeAll();
+        revoker.close();
+        expect(
+          (yield* post({ Cookie: cookie, Origin: origin, "Content-Type": "image/png" })).status,
+        ).toBe(401);
+      }),
+    ),
+  );
 });
