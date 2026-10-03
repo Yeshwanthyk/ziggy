@@ -2052,3 +2052,7 @@ section "T10".
 - Cleanup fix found while proving: `pgrep -f`/`pkill -f` matched an unrelated shell whose command
   line contained the pattern. The skill now stops processes by the PIDs captured at launch and
   polls for exit.
+
+## 2026-10-03 — Devices S0: Noise
+
+**Noise_XX in `src/platform/noise.ts`.** Noise_XX_25519_AESGCM_SHA256 in both roles on `node:crypto`, as Effects with a `NoiseFailed` tagged error. A failed decrypt poisons that direction because Noise cannot resynchronise a nonce. The test checks the cacophony vector in both roles through transport, and checks that tampering fails and poisons. `test/platform/noise-interop.ts` runs Muse's own `noise_xx.py` (via `uv`) in each role against ours. Handshake hashes match and transport round-trips. Gotcha: Muse's `split()` zeroes `h`, so the hash must be read before splitting. The S0 working decisions (BOX-3 first; stub STT/TTS engines; hardware built as far as the toolchain allows) are recorded in the plan.

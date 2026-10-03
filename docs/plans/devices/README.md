@@ -109,10 +109,10 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 
 ### S0 — Noise spike
 
-- [ ] `src/platform/noise.ts`: Noise_XX_25519_AESGCM_SHA256 initiator and responder on WebCrypto
-  (X25519, AES-GCM, SHA-256, HKDF).
-- [ ] Interop test against the muse Linux SDK: its `noise_xx.py` vectors and a run against its
-  `NoiseXXResponder`. Proves the borrowed crypto is the crypto we think it is.
+- [x] `src/platform/noise.ts`: Noise_XX_25519_AESGCM_SHA256 initiator and responder on
+  `node:crypto` (X25519, AES-256-GCM, SHA-256, HKDF).
+- [x] Interop against the muse Linux SDK: `test/platform/noise-interop.ts` runs its `noise_xx.py`
+  in both roles against ours; CI keeps the cacophony vector in `test/platform/noise.test.ts`.
 - Gate: `bun test test/platform/noise.test.ts`.
 
 ### S1 — ZDP/1 spec and schemas
@@ -198,6 +198,25 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 ### S12 — `device-authoring`
 
 - [ ] Skill and template like `plugin-authoring`: describe a device, Ziggy writes its commands.
+
+## Working decisions
+
+Taken so slices can proceed without blocking; each can be changed later.
+
+- First board: ESP32-S3-BOX-3.
+- STT/TTS: S8/S9 define an engine interface and ship a deterministic stub engine for tests; the
+  real engine (local whisper.cpp vs cloud) is plugged in once chosen.
+- Hardware slices (S7, S11, and the hardware parts of S8–S10) are built and checked here as far as
+  the toolchain allows; flashing and on-device proof wait for a board on the desk.
+- Muse interop for S0 is proven with a one-off run against Muse's own Python Noise code, and kept
+  in CI with the standard Noise test vectors (no Python needed).
+
+## Progress
+
+| Slice | State | Proof |
+|---|---|---|
+| S0 | done | `bun test test/platform/noise.test.ts` (vector, both roles; tamper poisons); `bun test/platform/noise-interop.ts <muse-gadget-sdk>` → hash equal both roles |
+| S1–S12 | not started | |
 
 ## Open decisions
 
