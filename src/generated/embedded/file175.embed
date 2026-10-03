@@ -1,157 +1,180 @@
-# Supervise `ziggy serve`
+# Automation operations
 
-`ziggy serve <profile>` is the only production scheduler host. It owns the Profile's automation
-scheduler and any configured Telegram, Discord, or Slack loops. Run at most one resident per
-resolved Profile path.
+Automation Markdown in the Profile is the only authority for automation policy. SQLite under
+`.runtime/` contains scheduler projections, occurrence claims, and run truth; it never replaces or
+stores an authoritative definition.
 
-Automation wake is handed to the running resident. A per-session single-writer lease refuses a
-second writer (web tab, ACP, or `run --continue/--session`) while another holds it. The web UI
-supports per-session model/thinking switching and resume; see [Sessions](sessions.md).
+## Definition filenames
 
-Ziggy installs one user service per Profile and delegates restart policy to launchd on macOS or
-systemd user services on Linux. It does not expose a daemon socket, public scheduler tick, or second
-scheduler process.
-
-Channel setup guides:
-
-- [Connect a Profile to Discord](discord.md)
-- [Connect a Profile to Telegram](telegram.md)
-- [Connect a Profile to Slack](slack.md)
-
-## Lifecycle commands
-
-```sh
-ziggy serve install <profile> [--force] [--no-start]
-ziggy serve start <profile>
-ziggy serve stop <profile>
-ziggy serve restart <profile>
-ziggy serve status <profile>
-ziggy serve logs <profile> [--follow]
-ziggy serve uninstall <profile>
-```
-
-`install` writes and starts the service by default. Use `--no-start` to write it without loading it
-on macOS, or to write and enable it without starting it on Linux. `start` and `restart` validate the
-Profile before asking the service manager to run it. `stop`, `status`, `logs`, and `uninstall` can
-still identify the service from the original absolute path if the Profile has moved or disappeared.
-
-`gateway <profile>` remains a foreground compatibility alias. Lifecycle subcommands exist only
-under `serve`.
-
-## Managed files and safety
-
-The resolved absolute Profile path determines a bounded readable service name plus a SHA-256 path
-digest. Equal folder names at different paths therefore receive different service identities.
-
-- macOS definition: `~/Library/LaunchAgents/works.earendil.ziggy.serve.*.plist`
-- macOS logs: `$ZIGGY_HOME/logs/serve/*.stdout.log` and `*.stderr.log`
-- Linux definition: `~/.config/systemd/user/ziggy-serve-*.service`
-- Linux logs: the user journal
-
-Definitions contain absolute argument arrays, the Profile path, a managed marker, and a deterministic
-fingerprint. They do not contain provider credentials or channel tokens. Ziggy writes definitions
-atomically and refuses unmanaged, symlinked, or non-regular destinations. It also refuses a changed
-managed definition unless `install --force` is explicit.
-
-Both service managers pin absolute `HOME` and `ZIGGY_HOME` values and render the deterministic default
-`PATH` `<home>/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`; launchd receives those
-literal values rather than shell expressions. The first `ProgramArguments` entry is Ziggy's
-absolute executable path, so service startup does not depend on finding `ziggy` on `PATH`. Changing
-these managed fields changes the fingerprint; restage an older definition with
-`ziggy serve install <profile> --force`.
-
-`uninstall` stops the job and removes only its recognized managed definition. It retains the
-Profile, `.runtime/`, automation history, Pi sessions, and logs.
-
-## macOS privacy
-
-A LaunchAgent does not inherit Terminal's Files & Folders permission. If a Profile is inside a
-macOS-protected folder such as `Documents`, the launched Ziggy executable must already have access
-to that folder; otherwise macOS can block directory enumeration while the owner process still looks
-alive. Prefer an unprotected Profile location such as `$ZIGGY_HOME/profiles`, or grant the exact
-installed/compiled Ziggy executable the required access before installation. Verify scheduler
-freshness after every first install rather than treating process ownership as health.
-
-## Read combined status
-
-```sh
-ziggy serve status <profile>
-```
-
-The output intentionally keeps these facts separate:
+An automation's lifecycle is its filename:
 
 ```text
-managed service: installed|not-installed|drifted|unknown
-service manager: launchd|systemd|unsupported
-supervisor: running|stopped|failed|unknown
-process: running|stopped|stale
-scheduler: active|stale|unknown
-tick: ok|error|unknown
-next due: ...
-active runs: ...
-latest run: ...
-discord: not configured|not observed|starting|connected|reconnecting|failed|stopped|stale
-discord observed: ...
-discord turns: active ..., queued ..., completed ..., cancelled ..., failed ...
-discord last failure: ...
-slack: not configured|not observed|starting|connected|reconnecting|failed|stopped|stale
-slack observed: ...
-slack turns: active ..., queued ..., completed ..., cancelled ..., failed ...
-slack last failure: ...
+automations/<id>.md         active
+automations/<id>.paused.md  paused
 ```
 
-A loaded supervisor without a live owner is not healthy. A live owner with a stale or unknown
-scheduler is also not healthy. A recently stopped process can temporarily have a fresh persisted
-heartbeat; the process field remains authoritative for process liveness. Any unreadable or degraded
-section makes status exit 1 while preserving the other section results. Channel projections are
-content-free and independently degraded when stale or disconnected. Status is read-only: it does
-not create `.runtime`, initialize SQLite, repair ownership, or contact a model.
+Use lowercase kebab-case IDs. `ziggy automations list <profile>` and
+`ziggy automations validate <profile> [id]` show `active`, `paused`, or `conflict` explicitly.
+They inspect the Profile without creating or changing `.runtime`, SQLite, or definition files.
+Symlinked Profile roots, automation roots, and definition files are rejected.
 
-Use the detailed projections when needed:
+Create an active starter with:
 
 ```sh
-ziggy automations status <profile>
-ziggy automations runs <profile> [automation-id]
+ziggy automations create <profile> <id>
+```
+
+Creation refuses to proceed if either the active or paused form already exists. The resident web
+UI provides automation list, show, create, save, validate, pause, resume, run, and run-history
+actions. Its editor can change the complete Markdown; a save requires a valid definition, rejects
+bytes changed since the editor opened, and uses a same-directory atomic replacement. It does not
+create a second definition store or runtime owner. A normal editor can also change definitions;
+remove them with normal filesystem operations. Ziggy intentionally adds no CLI edit or remove
+command.
+
+The web UI reads the same Profile Markdown, scheduler projection, and fixed run ledger as the
+`ziggy automations` CLI. Use `ziggy serve <profile>` to run the resident; the web UI is the
+interactive face, and `ziggy web pair <profile>` pairs a browser. The CLI provides create, list,
+validate, pause, resume, status, and runs; `ziggy wake <profile> <id>` runs a definition manually.
+When the resident is running, `wake` asks it to run the automation and prints the same outcome and
+exit code as a local run; otherwise it runs in-process. If the request may have reached the resident
+but no answer came back, check `ziggy automations runs` before retrying. Schedules fire only while
+the resident runs: `automations status` warns when the resident service is not installed.
+The CLI has no show, save, or `automations run` subcommand. In the web UI, choose an automation to
+inspect its metadata, edit it, inspect run history, or change lifecycle; the scheduler overview
+shows heartbeat, tick, next-due, and latest-run state.
+
+## Model override
+
+Optional `provider`, `model`, and `thinking` frontmatter select that automation's session model.
+`provider` and `model` must appear together. Omitted fields inherit the Profile default from
+`settings.json`. Registry, auth, and thinking support are checked when the run opens its session —
+the same gates as a Profile agent — and fail the run rather than silently falling back.
+
+A leading `@agent-id` still delegates the whole task to that Profile agent. The agent's own
+`agents/<id>.md` policy is then authoritative; automation model frontmatter applies only to the
+automation's own (untagged) session.
+
+## Multiple delivery destinations
+
+The comma-separated `broadcast` value can contain any mix of conversation, Telegram, Discord, and
+Slack targets. The web automation picker lists known destinations for the selected Profile and adds
+or removes each target independently. It stores the existing canonical target strings; display
+names never become delivery identity. `origin`, `all`, and targets entered through the full editor
+remain visible and removable even when they are not currently discoverable.
+
+Channel targets are `slack:channel:<id>` or `slack:channel:<id>:thread:<ts>`,
+`discord:channel:<id>`, and `telegram:chat:<id>`. A Discord thread is a channel, so
+`discord:channel:<thread id>` posts into the thread. Each gateway splits a long result into its own
+message limit and posts with the bot token from its `slack.json`, `discord.json`, or `telegram.json`.
+
+Stored Pi sessions supply conversation targets without the sidebar's display limit. Channel
+residents contribute the actual signed Telegram chat ID, Discord channel or thread ID, and Slack
+channel or thread address they observe. Slack IDs configured in `slack.json` are also choices;
+Ziggy looks up one display name per known channel when the token permits it and otherwise shows the
+canonical ID. This discovery state is memory-only. Saved broadcast targets survive a resident
+restart, while a previously observed channel name can fall back to its ID until the channel is
+observed again.
+
+Add `conversation:<stored-session-id>` to append a completed result to an existing transcript in
+the same Profile. Selecting a Slack destination never changes the channel's `mention` or `always`
+inbound response policy in `slack.json`.
+
+Conversation delivery appends history only. It does not start, steer, or queue a model turn, and it
+does not send the result through the destination channel. A busy destination fails as retriable;
+missing, deleted, invalid, or unavailable-owner destinations fail without choosing a replacement
+conversation. Delivery requires the resident process that owns the selected Profile. A standalone
+`ziggy wake` can run the automation, but reports `owner-unavailable` when no scoped resident can
+append the destination. Gateway history and live-event projections show the first 1,024 result code
+points; the destination Pi transcript retains the complete result.
+
+Each destination has an independent delivery outcome. The destination transcript deduplicates by
+automation and run ID. If the process crashes after the
+append but before the run ledger is finalized, the run may remain `unknown`; Ziggy does not retry it
+automatically.
+
+## Pause and resume
+
+```sh
+ziggy automations pause <profile> <id>
+ziggy automations resume <profile> <id>
+```
+
+Pause and resume preserve the exact Markdown bytes. The transition creates a same-directory hard
+link at the destination name with exclusive `EEXIST` refusal, verifies that both names identify the
+same physical regular file, and only then unlinks the source name. It never renames over or silently
+replaces a destination.
+
+A paused definition is excluded from scheduler admission. On the next resident scheduler scan its
+projected next occurrence is cleared. Resume makes it eligible on the next scan and scheduling
+restarts at a fresh future occurrence; paused time is not catch-up work.
+
+Manual `ziggy wake <profile> <id>` reports that a paused automation is paused rather than pretending
+it is missing.
+
+Pausing does not cancel an occurrence that was already claimed or a run that is already executing.
+That run may finish normally. Pause prevents later admission. If the transition itself leaves both
+filenames visible, no run is admitted from the conflicting pair.
+
+## Conflict recovery
+
+If both forms exist, list, validate, and scheduler discovery report one invalid conflict for the ID.
+The scheduler does not run it. This can happen after a source-unlink failure: keeping both names is
+the fail-closed outcome and preserves the definition bytes for recovery.
+
+Recover manually:
+
+1. Stop concurrent automation file operations for that Profile.
+2. Compare `automations/<id>.md` and `automations/<id>.paused.md` byte-for-byte.
+3. Decide whether the intended lifecycle is active or paused.
+4. Remove exactly the unwanted filename with a normal filesystem command.
+5. Run `ziggy automations validate <profile> <id>` and then `ziggy automations list <profile>`.
+
+Never resolve a conflict by copying one form over the other without first inspecting both. Ziggy
+will not choose or overwrite one on the operator's behalf.
+
+## Scheduled admission and sessions
+
+`ziggy serve <profile>` discovers active definitions and persists a future schedule cursor. When an
+occurrence is due, one SQLite transaction advances that cursor and writes the claimed run before
+executing a gate, creating a Pi session, printing output, or delivering it. Scheduled definitions
+without a gate are recorded as `skipped-gate`; add an explicit gate such as `gate: true` only when
+the scheduled model call is intended.
+
+Every admitted model-backed run receives a fresh Pi session under
+`sessions/automations/<automation-id>/`. The run ledger answers whether an occurrence was claimed,
+completed, skipped, failed, or became unknown; Pi JSONL remains the only transcript and model/tool
+history authority.
+
+Inspect both authorities from the CLI or the resident web UI automation view:
+
+```sh
+ziggy automations runs <profile> [id] [--json]
 ziggy sessions list <profile> [--json]
 ```
 
-Telegram has no persisted health projection. For a Telegram Profile, use `ziggy doctor <profile>`
-for configuration validity, `ziggy serve logs <profile>` for long-poll and delivery failures, and
-`ziggy sessions list <profile>` for session evidence. Discord and Slack add content-free health
-projections to this status output; their detailed channel guides describe those fields.
+Use `--json` on `automations list`, `automations status`, and `automations runs` when a script
+needs the bounded projection rather than operator text. Session listings and details also accept
+`--json`; JSON session views never include transcript content.
 
-## Crash and restart behavior
+## Process failure and no replay
 
-Resident exclusion is an OS-released SQLite lease in `.runtime/serve-owner.sqlite`. The JSON
-`gateway-owner.lock` file is only a status and legacy-compatibility projection. A normal stop removes
-the matching projection and releases the lease. SIGKILL may leave stale JSON, but closing the dead
-process releases the authoritative SQLite lock, so the service manager can start a new owner without
-manual lock deletion.
+Active scheduled rows are fenced by the resident owner UUID and PID. After a hard crash, the service
+manager starts a new `serve` process. Startup changes active rows belonging to the previous resident
+to terminal `unknown` with failure category `process-start`. It never returns them to `claimed` or
+`running`, and the already-advanced occurrence cursor means they are not replayed.
 
-Scheduled claims store the resident owner UUID and PID. On startup, a new resident marks active
-claims from an older resident UUID `unknown` with `process-start`. Their schedule cursor was already
-advanced in the claim transaction, so Ziggy never replays the crashed occurrence.
+A normal stop interrupts scoped workers and attempts one truthful terminal `failed/interrupted`
+write. If the process is force-killed before that write, startup records `unknown` instead of
+inferring success. There are no automatic run retries.
 
-## Platform notes
+Manual wakes have a separate process-local owner identity. Manual recovery can mark only dead manual
+owners unknown; it cannot recover, start, or finish a resident-owned scheduled claim.
 
-On macOS, Ziggy uses `launchctl bootstrap`, `bootout`, `kickstart`, and `print` in the current GUI
-user domain. The generated LaunchAgent has `RunAtLoad`, `KeepAlive`, bounded restart throttling, and
-a bounded exit timeout.
+## Why there is no public tick
 
-On Linux, Ziggy uses `systemctl --user`, writes a `Type=simple` unit with `Restart=always`, and keeps
-output in the user journal. Installation warns when user lingering is not enabled and prints the
-operator command, but never invokes `sudo` or enables lingering itself.
-
-When troubleshooting, capture all three views before changing files:
-
-```sh
-ziggy serve status <profile>
-ziggy serve logs <profile>
-ziggy automations runs <profile>
-```
-## Browser access
-
-Browser access requires a stable port configured before pairing. Tailscale is optional for remote
-access, and its background mapping does not need to be recreated for every browser or resident
-restart. See [Use Ziggy from a browser](web-access.md) for local and remote setup, pairing,
-revocation, shared-Profile scope, and troubleshooting.
+`ziggy serve <profile>` is the supervised resident owner and the only production owner of the
+internal scheduler tick. There is no public `tick`, scheduler daemon, repair, replay, or retry
+command. A second tick surface would create competing admission owners and blur the existing
+Profile owner contract. Use `ziggy serve status`, `ziggy automations status`, and
+`ziggy automations runs` for read-only operational visibility.

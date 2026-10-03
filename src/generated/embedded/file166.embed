@@ -1,285 +1,556 @@
-/* eslint-disable ziggy-effect/no-native-promise-ownership -- Pi tool execution is a Promise adapter boundary. */
-/* eslint-disable ziggy-effect/no-try-catch-or-throw -- Throwing from a Pi tool marks the tool result as failed. */
-/* eslint-disable ziggy-effect/no-error-constructor -- Pi tool failures cross this boundary as rejected Error values. */
-import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+/* oxlint-disable ziggy-effect/no-native-promise-ownership -- This package is a Pi filesystem boundary. */
+/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Filesystem failures become stable tool errors. */
+/* oxlint-disable ziggy-effect/no-error-constructor -- Errors are the standalone Pi tool boundary. */
+/* oxlint-disable ziggy-effect/no-json-parse -- This package's bounded state file is decoded immediately and never enters domain code. */
+/* oxlint-disable ziggy-effect/no-promise-catch -- Cleanup is intentionally best effort at the filesystem boundary. */
+import { createHash, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { appendFile, lstat, mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { Type, type Static } from "typebox";
+import { Check } from "typebox/value";
 
-const JINA_READER_URL = "https://r.jina.ai/";
+const MAX_LOG_DETAIL = 2_000;
 
-const TIMEOUT_MS = 30_000;
+const MAX_EVIDENCE = 500;
 
-const MAX_REDIRECTS = 5;
+const MAX_SKILL_BYTES = 64 * 1024;
 
-const USER_AGENT = "ziggy-web-search/0.1";
+const MAX_SESSION_IDS = 32;
 
-const MAX_BYTES = 5 * 1024 * 1024;
+const READY_THRESHOLD = 3;
 
-export const MAX_OUTPUT_CHARS = 24 * 1024;
+const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-interface FetchDetails {
-  source: "direct" | "jina";
-  status: number;
-  url: string;
-  jinaFallbackError?: string;
+const RESERVED_EXTENSION_IDS = new Set(["extension-authoring", "pi-packages", "ziggy-operations"]);
+
+const DESCRIPTION_MAX = 1_024;
+
+type ReviewDecision = "applied" | "no-op" | "staged" | "error";
+
+const NodeError = Type.Object(
+  { code: Type.Optional(Type.String()) },
+  { additionalProperties: true },
+);
+
+const CuratorStateValue = Type.Object({
+  version: Type.Literal(1),
+  completedSessionIds: Type.Array(Type.String({ minLength: 1, maxLength: 512 })),
+  lastObservedAt: Type.Optional(Type.String()),
+});
+
+const SessionMessageValue = Type.Object(
+  {
+    role: Type.Optional(Type.String()),
+    stopReason: Type.Optional(Type.String()),
+  },
+  { additionalProperties: true },
+);
+
+const SessionEntryValue = Type.Object(
+  {
+    type: Type.Optional(Type.String()),
+    message: Type.Optional(SessionMessageValue),
+    role: Type.Optional(Type.String()),
+    stopReason: Type.Optional(Type.String()),
+  },
+  { additionalProperties: true },
+);
+
+const ManagedManifest = Type.Object(
+  {
+    name: Type.String(),
+    ziggy: Type.Object({ curatorManaged: Type.Literal(true) }, { additionalProperties: true }),
+    pi: Type.Object(
+      {
+        skills: Type.Array(Type.String()),
+        extensions: Type.Optional(Type.Array(Type.String())),
+      },
+      { additionalProperties: true },
+    ),
+  },
+  { additionalProperties: true },
+);
+
+export type SessionEntry = Static<typeof SessionEntryValue>;
+
+export const decodeSessionEntries = (
+  entries: ReadonlyArray<SessionEntry>,
+): ReadonlyArray<SessionEntry> => entries.filter((entry) => Check(SessionEntryValue, entry));
+
+interface SessionMessageView {
+  role?: string;
+  stopReason?: string;
 }
 
-export interface FetchResult {
-  readonly text: string;
-  readonly details: FetchDetails;
+export interface ObservationInput {
+  readonly profilePath: string;
+  readonly sessionFile: string | undefined;
+  readonly entries: ReadonlyArray<SessionEntry>;
+  readonly observedAt?: Date;
 }
 
-const fail = (message: string): never => {
-  throw new Error(message);
+export interface ReviewLogInput {
+  decision: ReviewDecision;
+  detail: string;
+  evidence?: string;
+  clearReady?: boolean;
+  at?: Date;
+}
+
+interface CuratorState {
+  readonly version: 1;
+  readonly completedSessionIds: ReadonlyArray<string>;
+  readonly lastObservedAt?: string;
+}
+
+export interface CuratorStatus extends CuratorState {
+  readonly ready: boolean;
+  readonly statePath: string;
+  readonly readyPath: string;
+  readonly logsPath: string;
+}
+
+export interface ExtensionWriteInput {
+  readonly id: string;
+  readonly body: string;
+  replace?: boolean;
+  expectedOldSha256?: string;
+}
+
+interface ParsedSkill {
+  readonly name: string;
+  readonly description: string;
+}
+
+const runtimePath = (profilePath: string): string =>
+  join(profilePath, ".runtime", "self-improvement");
+
+const statePath = (profilePath: string): string => join(runtimePath(profilePath), "state.json");
+
+const readyPath = (profilePath: string): string => join(runtimePath(profilePath), "curator-ready");
+
+const logsPath = (profilePath: string): string => join(runtimePath(profilePath), "logs");
+
+const ensureRuntime = async (profilePath: string): Promise<void> => {
+  await ensurePhysicalDirectory(profilePath, false);
+  await ensurePhysicalDirectory(join(profilePath, ".runtime"), true);
+  await ensurePhysicalDirectory(runtimePath(profilePath), true);
 };
 
-const clip = (value: string, max: number): string =>
-  value.length <= max ? value : `${value.slice(0, max)}\n[output truncated]`;
+const errorCode = (cause: unknown): string | undefined =>
+  Check(NodeError, cause) ? cause.code : undefined;
 
-const isPrivateIpv4 = (ip: string): boolean => {
-  const [a = 0, b = 0] = ip.split(".").map(Number);
+const defaultState = (): CuratorState => ({ version: 1, completedSessionIds: [] });
 
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && (b === 0 || b === 168)) ||
-    (a === 198 && b >= 18 && b <= 19) ||
-    a >= 224
+const readState = async (profilePath: string): Promise<CuratorState> => {
+  try {
+    const parsed = JSON.parse(await readFile(statePath(profilePath), "utf8"));
+
+    if (!Check(CuratorStateValue, parsed)) throw new Error("invalid self-improvement state.json");
+    const completedSessionIds = [...new Set(parsed.completedSessionIds)].slice(-MAX_SESSION_IDS);
+
+    if (parsed.lastObservedAt === undefined) {
+      return { version: 1, completedSessionIds };
+    }
+
+    return { version: 1, completedSessionIds, lastObservedAt: parsed.lastObservedAt };
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return defaultState();
+    throw cause;
+  }
+};
+
+const atomicFileWrite = async (targetPath: string, content: string): Promise<void> => {
+  await mkdir(dirname(targetPath), { recursive: true });
+  const temporaryPath = join(dirname(targetPath), `.${basename(targetPath)}.${randomUUID()}.tmp`);
+
+  const file = await open(
+    temporaryPath,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+    0o600,
   );
-};
 
-/** Unknown address shapes count as private so the guard fails closed. */
-export const isPrivateIp = (value: string): boolean => {
-  const ip = value.toLowerCase().replace(/^\[|\]$/g, "");
-
-  if (isIP(ip) === 4) return isPrivateIpv4(ip);
-
-  if (isIP(ip) !== 6) return true;
-
-  const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
-
-  if (mapped !== undefined) return isPrivateIpv4(mapped);
-
-  return (
-    ip === "::" ||
-    ip === "::1" ||
-    ip.startsWith("::ffff:") ||
-    /^fe[89ab]/.test(ip) ||
-    ip.startsWith("fc") ||
-    ip.startsWith("fd")
-  );
-};
-
-/** Rejects non-HTTP(S) URLs and any host that names or resolves to a private address. */
-export const assertPublicUrl = async (raw: string): Promise<URL> => {
-  const url = URL.parse(raw) ?? fail("URL must be a valid absolute HTTP(S) URL.");
-
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    fail("Only HTTP(S) URLs are supported.");
+  try {
+    await file.writeFile(content, "utf8");
+    await file.sync();
+  } finally {
+    await file.close();
   }
 
-  const hostname = url.hostname.toLowerCase();
-  const literal = hostname.replace(/^\[|\]$/g, "");
+  try {
+    await rename(temporaryPath, targetPath);
+  } catch (cause) {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw cause;
+  }
+};
+
+const isPhysicalDirectory = async (path: string): Promise<boolean> => {
+  try {
+    const status = await lstat(path);
+
+    return status.isDirectory() && !status.isSymbolicLink();
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return false;
+    throw cause;
+  }
+};
+
+const ensurePhysicalDirectory = async (path: string, create: boolean): Promise<string> => {
+  if (!(await isPhysicalDirectory(path))) {
+    if (!create) throw new Error(`expected a physical directory at ${path}`);
+
+    try {
+      await mkdir(path);
+    } catch (cause) {
+      if (errorCode(cause) !== "EEXIST") throw cause;
+    }
+  }
+
+  const status = await lstat(path);
+
+  if (status.isSymbolicLink() || !status.isDirectory())
+    throw new Error(`expected a physical directory at ${path}`);
+
+  return realpath(path);
+};
+
+const assertContained = (root: string, candidate: string): void => {
+  const remainder = relative(root, candidate);
+
+  if (remainder === ".." || remainder.startsWith(`..${sep}`) || resolve(remainder) === remainder)
+    throw new Error("Profile extension path escapes the Profile");
+};
+
+const rejectRepositoryRoot = async (profilePath: string): Promise<void> => {
+  try {
+    await lstat(join(profilePath, ".git"));
+    throw new Error("refusing to write self-improvement data in a repository checkout");
+  } catch (cause) {
+    if (errorCode(cause) !== "ENOENT") throw cause;
+  }
+};
+
+const textField = (value: string, field: string, maximum: number): string => {
+  const normalized = value.trim();
+
+  if (normalized.length === 0 || normalized.length > maximum || normalized.includes("\0"))
+    throw new Error(`${field} must be non-empty and at most ${maximum} characters`);
+
+  return normalized;
+};
+
+const parseSkillFrontmatter = (id: string, body: string): ParsedSkill => {
+  if (Buffer.byteLength(body, "utf8") > MAX_SKILL_BYTES)
+    throw new Error(`SKILL.md exceeds the ${MAX_SKILL_BYTES}-byte limit`);
+  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(body);
+
+  if (match === null) throw new Error("SKILL.md requires YAML frontmatter");
+  const fields = new Map<string, string>();
+
+  for (const line of (match[1] ?? "").split(/\r?\n/)) {
+    const parsed = /^([a-zA-Z][a-zA-Z0-9_-]*):\s*(.*)$/.exec(line);
+
+    if (parsed === null) throw new Error("SKILL.md frontmatter contains an invalid line");
+    const key = parsed[1];
+    const rawValue = parsed[2];
+
+    if (key === undefined || rawValue === undefined)
+      throw new Error("SKILL.md frontmatter contains an invalid line");
+
+    if (fields.has(key)) throw new Error(`SKILL.md frontmatter repeats '${key}'`);
+    let value = rawValue.trim();
+
+    if (
+      value.length >= 2 &&
+      ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'")))
+    )
+      value = value.slice(1, -1);
+    fields.set(key, value);
+  }
+
+  const name = fields.get("name");
+  const description = fields.get("description");
+
+  if (name !== id || !ID_PATTERN.test(name ?? ""))
+    throw new Error(`SKILL.md frontmatter name must exactly match '${id}'`);
+
+  return { name, description: textField(description ?? "", "description", DESCRIPTION_MAX) };
+};
+
+const toSessionMessageView = (source: {
+  readonly role?: string;
+  readonly stopReason?: string;
+}): SessionMessageView => {
+  const view: SessionMessageView = {};
+
+  if (source.role !== undefined) {
+    view.role = source.role;
+  }
+
+  if (source.stopReason !== undefined) {
+    view.stopReason = source.stopReason;
+  }
+
+  return view;
+};
+
+const looksLikeMessage = (entry: SessionEntry): SessionMessageView =>
+  toSessionMessageView(entry.message ?? entry);
+
+const eligibleSession = (
+  sessionFile: string | undefined,
+  entries: ReadonlyArray<SessionEntry>,
+): string | undefined => {
+  if (sessionFile === undefined || sessionFile.length === 0) return undefined;
+  const normalized = sessionFile.replaceAll("\\", "/");
 
   if (
-    !hostname ||
-    hostname === "localhost" ||
-    [".localhost", ".local", ".internal", ".home.arpa"].some((suffix) => hostname.endsWith(suffix))
-  ) {
-    fail("Private and local hostnames are not allowed.");
-  }
+    normalized.includes("/sessions/automations/") ||
+    normalized.includes("/sessions/agents/") ||
+    normalized.includes("/sessions/specialists/")
+  )
+    return undefined;
+  const messages = entries.filter((entry) => entry.type === "message");
 
-  if (isIP(literal) !== 0) {
-    if (isPrivateIp(literal)) fail("Private and local IP addresses are not allowed.");
+  if (messages.length === 0 || !messages.some((entry) => looksLikeMessage(entry).role === "user"))
+    return undefined;
 
-    return url;
-  }
-
-  let addresses: ReadonlyArray<{ readonly address: string }> = [];
-
-  try {
-    addresses = await lookup(hostname, { all: true, verbatim: true });
-  } catch {
-    fail(`Could not resolve hostname: ${hostname}`);
-  }
-
-  if (addresses.length === 0 || addresses.some((address) => isPrivateIp(address.address))) {
-    fail("URL resolves to a private or local network address.");
-  }
-
-  return url;
-};
-
-const requestSignal = (signal: AbortSignal | undefined): AbortSignal =>
-  signal
-    ? AbortSignal.any([signal, AbortSignal.timeout(TIMEOUT_MS)])
-    : AbortSignal.timeout(TIMEOUT_MS);
-
-const fetchPublic = async (
-  raw: string,
-  signal: AbortSignal | undefined,
-): Promise<{ response: Response; url: URL }> => {
-  let current = await assertPublicUrl(raw);
-
-  for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
-    const response = await fetch(current, {
-      headers: {
-        accept: "text/html, text/plain, text/markdown, application/json;q=0.9, */*;q=0.1",
-        "user-agent": USER_AGENT,
-      },
-      redirect: "manual",
-      signal: requestSignal(signal),
-    });
-
-    const location = response.headers.get("location");
-
-    if (![301, 302, 303, 307, 308].includes(response.status) || !location) {
-      return { response, url: current };
-    }
-
-    await response.body?.cancel();
-    current = await assertPublicUrl(new URL(location, current).toString());
-  }
-
-  return fail("Too many redirects.");
-};
-
-/** Reads a response body, failing once it exceeds `maxBytes`. */
-export const readBounded = async (response: Response, maxBytes = MAX_BYTES): Promise<string> => {
-  if (Number(response.headers.get("content-length") ?? "0") > maxBytes) {
-    fail(`Response exceeds the ${maxBytes} byte limit.`);
-  }
-
-  if (!response.body) return "";
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let total = 0;
-  let text = "";
-
-  try {
-    for (let next = await reader.read(); !next.done; next = await reader.read()) {
-      total += next.value.byteLength;
-
-      if (total > maxBytes) fail(`Response exceeds the ${maxBytes} byte limit.`);
-      text += decoder.decode(next.value, { stream: true });
-    }
-  } finally {
-    try {
-      await reader.cancel();
-    } catch {
-      // The body is already complete or failed; cancelling only releases the stream.
-    }
-  }
-
-  return text + decoder.decode();
-};
-
-const NAMED_ENTITIES = new Map([
-  ["amp", "&"],
-  ["apos", "'"],
-  ["gt", ">"],
-  ["lt", "<"],
-  ["nbsp", " "],
-  ["quot", '"'],
-]);
-
-const decodeEntities = (value: string): string =>
-  value.replace(/&(#\d+|#x[\da-f]+|[a-z]+);/gi, (whole, entity: string) => {
-    const code = entity.startsWith("#x")
-      ? Number.parseInt(entity.slice(2), 16)
-      : entity.startsWith("#")
-        ? Number.parseInt(entity.slice(1), 10)
-        : undefined;
-
-    if (code === undefined) return NAMED_ENTITIES.get(entity.toLowerCase()) ?? whole;
-
-    return code <= 0x10ffff ? String.fromCodePoint(code) : whole;
-  });
-
-const htmlToText = (html: string) => {
-  const rawTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "";
-
-  const text = html
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<(script|style|noscript|svg|template)[^>]*>[\s\S]*?<\/\1>/gi, " ")
-    .replace(
-      /<\/(article|aside|blockquote|br|div|h[1-6]|li|main|p|pre|section|table|tr|ul)>/gi,
-      "\n",
-    )
-    .replace(/<[^>]+>/g, " ")
-    .replace(/[ \t\r\f]+/g, " ")
-    .replace(/\n[ \t]+/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  return {
-    title: decodeEntities(rawTitle.replace(/<[^>]+>/g, " ")).trim(),
-    text: decodeEntities(text),
-  };
-};
-
-const needsJina = (text: string, contentType: string, status: number): boolean =>
-  status >= 400 ||
-  (contentType.includes("html") &&
-    (text.length < 240 ||
-      /enable javascript|checking your browser|captcha|cookie consent/i.test(text)));
-
-/** Fetches a public URL as readable text, falling back to Jina Reader for blocked or script-only pages. */
-export const fetchUrl = async (
-  raw: string,
-  options: {
-    readonly jinaFallback: boolean;
-    readonly maxChars: number;
-    readonly signal: AbortSignal | undefined;
-  },
-): Promise<FetchResult> => {
-  const direct = await fetchPublic(raw, options.signal);
-  const contentType = direct.response.headers.get("content-type")?.toLowerCase() ?? "";
-  const body = await readBounded(direct.response);
-  const parsed = contentType.includes("html") ? htmlToText(body) : { title: "", text: body.trim() };
-
-  const directText = clip(
-    parsed.title ? `# ${parsed.title}\n\n${parsed.text}` : parsed.text,
-    options.maxChars,
+  const assistantMessages = messages.filter(
+    (entry) => looksLikeMessage(entry).role === "assistant",
   );
 
-  const directResult = (jinaFallbackError?: string): FetchResult => {
-    const details: FetchDetails = {
-      source: "direct",
-      status: direct.response.status,
-      url: direct.url.toString(),
+  const lastAssistant = assistantMessages.at(-1);
+
+  if (lastAssistant === undefined) return undefined;
+  const stopReason = looksLikeMessage(lastAssistant).stopReason;
+
+  if (stopReason === "aborted" || stopReason === "error") return undefined;
+
+  return resolve(sessionFile);
+};
+
+const appendObservation = async (
+  profilePath: string,
+  sessionId: string,
+  at: Date,
+): Promise<void> => {
+  const day = at.toISOString().slice(0, 10);
+  const timestamp = at.toISOString();
+  const sessionLabel = basename(sessionId);
+  await mkdir(logsPath(profilePath), { recursive: true });
+  await appendFile(
+    join(logsPath(profilePath), `${day}.md`),
+    `## ${timestamp} — completed foreground session\n\n- session: ${sessionLabel}\n- signal: eligible for Curator review after distinct-session recurrence\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+};
+
+export const observeCompletedForegroundSession = async (
+  input: ObservationInput,
+): Promise<{ readonly observed: boolean; readonly ready: boolean; readonly reason?: string }> => {
+  await ensureRuntime(input.profilePath);
+  const sessionId = eligibleSession(input.sessionFile, input.entries);
+
+  if (sessionId === undefined)
+    return { observed: false, ready: false, reason: "ineligible-session" };
+  const state = await readState(input.profilePath);
+
+  if (state.completedSessionIds.includes(sessionId)) {
+    return {
+      observed: false,
+      ready: await fileExists(readyPath(input.profilePath)),
+      reason: "already-observed",
     };
+  }
 
-    if (jinaFallbackError !== undefined) details.jinaFallbackError = jinaFallbackError;
+  const at = input.observedAt ?? new Date();
+  const completedSessionIds = [...state.completedSessionIds, sessionId].slice(-MAX_SESSION_IDS);
 
-    return { text: directText, details };
+  const next: CuratorState = {
+    version: 1,
+    completedSessionIds,
+    lastObservedAt: at.toISOString(),
   };
 
-  if (!options.jinaFallback || !needsJina(parsed.text, contentType, direct.response.status)) {
-    return directResult();
+  await atomicFileWrite(statePath(input.profilePath), `${JSON.stringify(next, null, 2)}\n`);
+  await appendObservation(input.profilePath, sessionId, at);
+  const ready = completedSessionIds.length >= READY_THRESHOLD;
+
+  if (ready) await atomicFileWrite(readyPath(input.profilePath), "ready\n");
+
+  return { observed: true, ready };
+};
+
+const fileExists = async (path: string): Promise<boolean> => {
+  try {
+    await lstat(path);
+
+    return true;
+  } catch (cause) {
+    if (errorCode(cause) === "ENOENT") return false;
+    throw cause;
   }
+};
+
+export const readStatus = async (profilePath: string): Promise<CuratorStatus> => {
+  await ensureRuntime(profilePath);
+  const state = await readState(profilePath);
+
+  return {
+    ...state,
+    ready: await fileExists(readyPath(profilePath)),
+    statePath: statePath(profilePath),
+    readyPath: readyPath(profilePath),
+    logsPath: logsPath(profilePath),
+  };
+};
+
+export const appendReviewLog = async (
+  profilePath: string,
+  input: ReviewLogInput,
+): Promise<{ readonly path: string; readonly clearedReady: boolean }> => {
+  await ensureRuntime(profilePath);
+
+  if (input.clearReady === true && input.decision !== "applied" && input.decision !== "no-op")
+    throw new Error("readiness can be cleared only after an applied or no-op review");
+  const detail = textField(input.detail.replaceAll("\n", " "), "detail", MAX_LOG_DETAIL);
+
+  const evidence =
+    input.evidence === undefined ? undefined : textField(input.evidence, "evidence", MAX_EVIDENCE);
+
+  const at = input.at ?? new Date();
+  const day = at.toISOString().slice(0, 10);
+  const path = join(logsPath(profilePath), `${day}.md`);
+  await mkdir(logsPath(profilePath), { recursive: true });
+  await appendFile(
+    path,
+    `## ${at.toISOString()} — ${input.decision}\n\n- detail: ${detail}${evidence === undefined ? "" : `\n- evidence: ${evidence}`}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+  let clearedReady = false;
+
+  if (input.clearReady === true) {
+    try {
+      await rm(readyPath(profilePath));
+      clearedReady = true;
+    } catch (cause) {
+      if (errorCode(cause) !== "ENOENT") throw cause;
+    }
+  }
+
+  return { path, clearedReady };
+};
+
+const packageManifest = (id: string, description: string): string =>
+  `${JSON.stringify(
+    {
+      name: `@ziggy/${id}`,
+      private: true,
+      type: "module",
+      keywords: ["pi-package"],
+      description,
+      ziggy: { curatorManaged: true },
+      pi: { skills: ["./skills"] },
+    },
+    null,
+  )}\n`;
+
+const managedManifest = (id: string, value: Static<typeof ManagedManifest>): boolean =>
+  value.name === `@ziggy/${id}` &&
+  value.pi.skills.length === 1 &&
+  value.pi.skills[0] === "./skills" &&
+  value.pi.extensions === undefined;
+
+const sha256 = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
+
+const checkedSkillFile = async (profilePath: string, id: string): Promise<string> => {
+  const extensionRoot = join(profilePath, "extensions", id);
+  const skillsRoot = join(extensionRoot, "skills");
+  const skillRoot = join(skillsRoot, id);
+  const skillFile = join(skillRoot, "SKILL.md");
+  const profileReal = await ensurePhysicalDirectory(profilePath, false);
+  const extensionReal = await ensurePhysicalDirectory(join(profilePath, "extensions"), false);
+  const packageReal = await ensurePhysicalDirectory(extensionRoot, false);
+  const skillsReal = await ensurePhysicalDirectory(skillsRoot, false);
+  const skillReal = await ensurePhysicalDirectory(skillRoot, false);
+  assertContained(profileReal, extensionReal);
+  assertContained(extensionReal, packageReal);
+  assertContained(packageReal, skillsReal);
+  assertContained(skillsReal, skillReal);
+  const fileStatus = await lstat(skillFile);
+
+  if (fileStatus.isSymbolicLink() || !fileStatus.isFile())
+    throw new Error(`SKILL.md must be a regular file at ${skillFile}`);
+  assertContained(skillReal, await realpath(skillFile));
+
+  return skillFile;
+};
+
+export const writeCuratorExtension = async (
+  profilePath: string,
+  input: ExtensionWriteInput,
+): Promise<{
+  readonly id: string;
+  readonly action: "created" | "replaced";
+  readonly path: string;
+  readonly sha256: string;
+}> => {
+  const id = textField(input.id, "extension ID", 64);
+
+  if (!ID_PATTERN.test(id) || RESERVED_EXTENSION_IDS.has(id))
+    throw new Error("extension ID must be kebab-case and non-reserved");
+
+  if (input.expectedOldSha256 !== undefined && !/^[a-f0-9]{64}$/.test(input.expectedOldSha256))
+    throw new Error("expectedOldSha256 must be a lowercase SHA-256 digest");
+  const parsed = parseSkillFrontmatter(id, input.body);
+  await rejectRepositoryRoot(profilePath);
+  const profileReal = await ensurePhysicalDirectory(profilePath, false);
+  const extensionsPath = join(profilePath, "extensions");
+  const extensionsReal = await ensurePhysicalDirectory(extensionsPath, true);
+  assertContained(profileReal, extensionsReal);
+  const packagePath = join(extensionsPath, id);
+  const packageJsonPath = join(packagePath, "package.json");
+  const skillPath = join(packagePath, "skills", id, "SKILL.md");
+  const exists = await fileExists(packagePath);
+
+  if (exists && input.replace !== true)
+    throw new Error(`Profile extension '${id}' already exists; set replace:true to replace it`);
+
+  if (exists) {
+    const packageReal = await ensurePhysicalDirectory(packagePath, false);
+    assertContained(extensionsReal, packageReal);
+    const manifestStatus = await lstat(packageJsonPath);
+
+    if (manifestStatus.isSymbolicLink() || !manifestStatus.isFile())
+      throw new Error("managed package.json must be a regular file");
+    const manifest = JSON.parse(await readFile(packageJsonPath, "utf8"));
+
+    if (!Check(ManagedManifest, manifest) || !managedManifest(id, manifest))
+      throw new Error("replacement requires ziggy.curatorManaged package manifest");
+    const currentSkill = await checkedSkillFile(profilePath, id);
+    const currentBody = await readFile(currentSkill, "utf8");
+
+    if (input.expectedOldSha256 !== undefined && sha256(currentBody) !== input.expectedOldSha256)
+      throw new Error("replacement expected-old SHA-256 does not match current SKILL.md");
+    await atomicFileWrite(currentSkill, input.body);
+
+    return { id, action: "replaced", path: currentSkill, sha256: sha256(input.body) };
+  }
+
+  await mkdir(packagePath);
 
   try {
-    const jina = await fetch(`${JINA_READER_URL}${direct.url.toString()}`, {
-      headers: { accept: "text/markdown, text/plain;q=0.9", "user-agent": USER_AGENT },
-      signal: requestSignal(options.signal),
-    });
-
-    const jinaBody = await readBounded(jina);
-
-    if (!jina.ok) fail(`Jina returned HTTP ${jina.status}.`);
-
-    return {
-      text: clip(jinaBody.trim(), options.maxChars),
-      details: { source: "jina", status: jina.status, url: direct.url.toString() },
-    };
-  } catch (error) {
-    if (options.signal?.aborted || !direct.response.ok || parsed.text.length === 0) throw error;
-
-    return directResult(String(error));
+    await mkdir(join(packagePath, "skills"));
+    await mkdir(join(packagePath, "skills", id));
+    await atomicFileWrite(packageJsonPath, packageManifest(id, parsed.description));
+    await atomicFileWrite(skillPath, input.body);
+  } catch (cause) {
+    await rm(packagePath, { recursive: true, force: true }).catch(() => undefined);
+    throw cause;
   }
+
+  return { id, action: "created", path: skillPath, sha256: sha256(input.body) };
 };

@@ -1851,3 +1851,153 @@ Automation delivery to a channel goes through one seam, `Deliver = (profile, tar
   the Profile (the B3 subject grepped the person's shell config file names). Known lab issues
   (lost first click into a view, dark sidebar title, clipping at phone width) are in the plan.
   Real-Linear read-only rerun of B3 waits on a Linear key in the lab Profile.
+
+## Plugins Step 5: view quality
+
+### T1 to T5: view kit, states, first click, shots, skill rules
+
+- T3 confirmed before the fix in the lab browser (Profile `lab`, plugin `focus-probe` copied
+  from the unchanged template). A press held for a moment on a row checkbox in a frame that was
+  not focused was lost 2 of 2 times. The same press with the frame already focused worked, and
+  so did an instant synthetic click. That fits `focus` → `refresh()` → `replaceChildren`
+  between mousedown and mouseup. After the fix, 3 of 3 held presses into an unfocused frame
+  registered.
+- Kit in the template, not a package: `ui/kit.css` (`--kit-*` tokens over the MCP Apps host
+  variables, including success and warning, with light/dark fallbacks; focus rings; 36 px
+  targets, 44 px on coarse pointers) and `ui/kit.ts` (plain DOM). It provides:
+  - `el`, `stack`, `row`, and `toolbar` (extra actions fold into a "More…" select below
+    480 px);
+  - `button` (primary, secondary, danger), `tag` (tones), `field` (Enter, no form), `menu`,
+    `confirmButton` (armed state kept by key, so it survives re-render), `datePresets`;
+  - a `status` live region, and `keyedList` (rows by id, updated in place, moved, never
+    rebuilt);
+  - `notice` (empty, off, error with retry) and `skeleton`;
+  - `query`: pending (`slow` after 300 ms), data, error, and a failed refresh keeps the data;
+  - `writeQueue`: one write at a time, then a re-read;
+  - `refreshOnReturn`: focus and visibility, 2 s throttle; a focus during a press waits for
+    pointerup.
+  Vite inlines it. The template view is rewritten on the kit: `view.html` is a shell, and
+  `view.ts` handles `off`, empty, error and skeleton states.
+- `bun run shots` (`shots.ts` and `shots-host.ts`):
+  - It drives an installed Chrome, Chromium, Edge or Brave over CDP with Bun's own WebSocket,
+    headless, with a throwaway profile. Playwright would download its own browser of more than
+    100 MB, and Puppeteer needs its own Chrome too. The only new dependency is `axe-core`
+    4.13.0 (3 MB), which works offline after install.
+  - The stub host is AppBridge in a same-origin iframe. It opens each distinct result smoke
+    recorded (`shots/fixtures.json`, scratch run only), plus an error and a loading state, and
+    answers every view call with that result.
+  - It renders light and dark at 375 and 760 px, saves PNGs to `shots/`, and fails on sideways
+    scroll, console errors, and axe WCAG A/AA violations (contrast included).
+  - `check` runs it with `--if-browser`: no browser means a warning, not a failure.
+  - A negative run (a 2000 px element and grey-on-white text) failed on both counts.
+  - It caught two real issues while being built: an ARIA misuse on the skeleton, and the stub
+    page's missing viewport meta, which made 375 render at 980.
+- Smoke:
+  - a `$id` local write whose source read returned no items is skipped with a warning;
+  - it fails a view built without the kit (`.kit-button` missing from `dist/view.html`);
+  - it records fixtures for tools that have a view.
+- SKILL.md:
+  - a Views section: use the kit and never hand-roll controls; empty, "off" and error states;
+    in-place rows; queued writes; refresh on return; shots;
+  - shallow GraphQL queries and page limits;
+  - feature-off returned as its own result;
+  - secrets are shared by every Profile on the machine;
+  - debugging stays in the plugin folder and the Profile, never the Keychain;
+  - smoke skips writes with a warning;
+  - the catalog skips the template's `shots/`.
+- Verified:
+  - the template copied to scratch: `bun install`, then `bun run check` (build, smoke, 20 shots)
+    passes, and `tsc` is clean on `ui/*.ts`, `shots*.ts` and `smoke.ts`;
+  - the lab `focus-probe` with the new UI, smoke and shots passes `check`;
+  - the lab browser: the first click registers, and an armed "Sure?" survives the focus
+    refresh and disarms after 3 s.
+
+### T6 to T8: host fixes, web UI issues, extension-authoring pointer
+
+- T6, `clients/web/src/apps/app-view.tsx`:
+  - `containerDimensions` is the frame's measured size: `{width, maxHeight: 560}` inline, and
+    `{width, height}` expanded. A `ResizeObserver` on the iframe sends `setHostContext` when the
+    width changes, or the height while expanded. Before, it sent a fixed `maxWidth: 760` even
+    at phone width, and the window size when expanded.
+  - The success, warning and danger tokens already mapped text and background. Added
+    `--color-border-*` and `--color-ring-*` for all three.
+  - The frame was 1 px short of `--app-height`: header 32 plus frame borders 2 is 34, not 33. That
+    gave every view a needless scrollbar. Lab check: iframe 227 = `--app-height` 227, and the
+    scrollbar is gone.
+  - `styles.css.fonts` is not passed. The web UI uses only a system font stack, which is already
+    in `--font-sans`. It loads no webfont, and the view CSP would block a remote one, so there is
+    no `@font-face` to pass.
+- T7:
+  - "Pinned conversation":
+    - Not a Step 3 regression. The pinned row took its subtitle from the live session list.
+      Any pinned chat whose session is live in the resident therefore showed "Conversation":
+      a new chat, or one opened since the resident started.
+    - The rule dates from the first web client (985f4ffe).
+    - Pinned chats now always say "Pinned conversation"; main and specialists keep theirs.
+    - `gateway.test` asserts it for a new chat. It fails without the fix.
+  - Dark selected sidebar title: did not reproduce at desktop or 375 px, before or after a live
+    theme switch. Computed: title L 0.96 on `--selected` L 0.27. Likely the stale-screenshot
+    artifact seen with the Step 3 theme-change report. No change.
+  - Phone tables:
+    - Radix ScrollArea wraps the transcript in a `display: table` box. That box grew to the
+      widest child, so `max-width: 100%` on tables resolved against the wide box and the
+      transcript clipped. Measured at 375 px: the content was 682 px.
+    - The sidebar already had the override; it now covers `.transcript-scroll` too.
+    - After the fix the table is 303 px and wraps or scrolls in place, and the viewport no longer
+      scrolls sideways.
+- T8: `extension-authoring` now sends new tools, connectors and views to `plugin-authoring`,
+  both in its description and at the top of its body. The catalog is regenerated.
+- Gates: `bun run check` exits 0 (web vitest 92), and `bun test test` passes 694. The lab resident
+  was restarted on the new web assets.
+
+### Review follow-ups
+
+- `shots` fails when any `dist/*.html` is newer than `shots/fixtures.json`. The view HTML it
+  checks is the copy smoke loaded, so a rebuild without smoke would have checked stale HTML.
+- `shots` deletes `shots/*.png` before rendering and keeps `fixtures.json`.
+- The stub host now sends Ziggy's real theme as `styles.variables`, light and dark: the colours,
+  fonts and radii from `app-view.tsx`'s mapping and the web `styles.css`. The template still
+  passes.
+  - Negative check: dark text at L 0.3 fails with 10 `color-contrast` findings.
+- axe's undecided `color-contrast` results are printed as warnings.
+- Ready signal: the kit's `query` sets `data-kit-state` (`pending`, `slow`, `data`, `error`) on
+  the view's root element.
+  - `shots` waits for `data` or `error`, or for `slow` in the loading state, then waits 150 ms
+    for the resize.
+  - A view that gives no signal is taken after 10 s, with a warning.
+  - This replaces the fixed 800 ms wait.
+- `.gitignore`: the template's `shots/`.
+- SKILL.md: shots uses Ziggy's theme. After a rebuild, run `check`, not `shots` alone.
+- Gates: `bun run check` exits 0 and `bun test test` passes 694. The scratch template's
+  `check` passes: 5 states × 4.
+
+### T10 lab proof
+
+B3 and B4 were rebuilt by the lab model from the briefs, on the fake Linear, using the Step 5 skill
+and kit. The old build was moved aside inside the lab. Scores are in `plugin-lab-notes/lab.md`,
+section "T10".
+
+- Kit consistency:
+  - no hand-rolled controls;
+  - the plugin's copy added a `confirmButton` variant and about 25 lines of row CSS;
+  - B4 used the kit's `datePresets`.
+- States: the loading skeleton, empty, "Triage off" and error with retry all render. "Off" showed
+  for real, because the fake had no `triageEnabled`.
+- Phone width: at 375 px the rows wrap and nothing clips. Step 3 clipped here.
+- First click: the first click arms Apply. Confirming within 3 s sent exactly one `issueUpdate`
+  to the fake. In B4, Snooze and a date worked on the first click. The Step 3 first-click loss did
+  not recur.
+- `shots` ran in every `check`:
+  - In B3, the agent's own mock gave the screenshots rows. In them the agent spotted a hidden
+    panel taking space, and fixed it.
+  - No contrast findings in B3 or B4.
+  - Smoke caught non-view tools that had been registered as views.
+- Time and turns:
+  - B3: 1 user turn, 31 tool calls, 6m50s;
+  - B4: 1 user turn, 17 tool calls, 2m48s.
+- Safety:
+  - The Keychain's real Linear key went only to the local fake. A guard pinned `LINEAR_API_URL` to
+    the fake the moment `mcp.json` appeared.
+  - No request reached api.linear.app, and smoke never called the external writes.
+- Plugin nit: the header count still includes snoozed issues.
+

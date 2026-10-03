@@ -1,44 +1,39 @@
----
-name: ziggy-operations
-description: Operate Ziggy Profiles — CLI help, models, auth, specialists, sessions, ACP, updates, automations, memory, resident serve, browser access, and channels. Read this before changing or inspecting Ziggy runtime operations.
----
+# Inspect stored sessions
 
-# Ziggy operations
+List a Profile's stored sessions or inspect one session's metadata:
 
-Use `ziggy_help` and this skill before guessing Ziggy behavior. Omit `topic` for the command index,
-then request the matching topic for exact version-matched usage. Read a reference file when the task
-matches it. Do not search a developer checkout for plans or `src/`.
+```sh
+ziggy sessions list squarey
+ziggy sessions show squarey SESSION_ID
+```
 
-## When to read what
+These commands are transcript-free. Their output is limited to paths, IDs, Pi session display names,
+lineage, timestamps, entry counts, model and thinking changes, usage, and safe terminal state. They
+never print prompts, replies, thinking, tool arguments, or tool output.
 
-- New Profile end-to-end setup → [references/web-access.md](references/web-access.md) (`init`, `serve install`, `pair`)
-- Automations, web UI management, pause/resume, wake, and run history → [references/automations.md](references/automations.md)
-- Profile memory, scopes, caps, backups, and inspection → [references/memory.md](references/memory.md)
-- Resident `ziggy serve` install/start/status/logs → [references/serve.md](references/serve.md)
-- Browser access, pairing, Tailscale, web ports, or revocation → [references/web-access.md](references/web-access.md)
-- Inspect stored session metadata → [references/sessions.md](references/sessions.md)
-- Update an installed bundled package → [references/extension-updates.md](references/extension-updates.md)
-- Connect Telegram → [references/telegram.md](references/telegram.md)
-- Connect Discord → [references/discord.md](references/discord.md)
-- Connect Slack → [references/slack.md](references/slack.md)
-- Initialize or list Profiles → `ziggy_help` topics `init` or `profiles`
-- Select or inspect a Profile model → `ziggy_help` topic `models`
-- Provider authentication → `ziggy_help` topic `auth`
-- Create, validate, inspect, or run specialists → `ziggy_help` topic `agents`
-- Open an Agent Client Protocol session → `ziggy_help` topic `acp`
-- Update the Ziggy executable → `ziggy_help` topic `update`
-- `ziggy <profile>` opens the running resident web UI (no terminal UI); one-shot prompts → `ziggy_help` topics `serve`, `web`, or `run`
-- Profile diagnosis or package selection → `ziggy_help` topics `doctor` or `extensions`
+Ziggy records the display name through Pi's native `session_info` entry. Existing names and explicit
+name clears remain authoritative. A new channel or stable local route starts with its available
+semantic identity and adds a bounded first-message topic; an otherwise unnamed conversation uses
+the topic alone. One-off specialist runs include both the agent identity and task topic. The direct
+UI agent route remains one continuing session per agent; its name does not create a second routing
+identity.
 
-## Rules
+## One writer per session
 
-- Profile Markdown is authority. Do not invent a second automation or session store.
-- Broken optional packages are skipped with diagnostics and their automations paused; see [references/extension-updates.md](references/extension-updates.md).
-- Bundled and Profile-owned packages are admitted only through the in-process `profile_extensions`
-  tool. Read `pi-packages` for selection and `extension-authoring` for the authoritative third-party
-  adoption procedure.
-- Specialists may use `pi_docs` or `ziggy_help` only when their Profile tool allowlist names them.
-  They never receive `profile_extensions`; hand validation and admission back to the parent Profile
-  agent.
-- Channel tokens stay out of docs, commits, and chat.
-- Cite the reference path you used.
+Each stored session has one writer at a time. The process that opens a session holds it until it
+closes or exits; separate lanes (each Slack or Discord thread, each `ui/<name>`, each automation
+run, each specialist task) have their own sessions and never contend. A second opener of the same
+session is refused instead of interleaving writes: the CLI prints "this session is open in another
+process (pid N); use the UI, or start a new session", the web UI shows the session as busy, and an
+automation delivery fails as retriable `session-held`. Retry later, use the process that holds it,
+or start a new session. `ziggy run --continue` and `--session` refuse a session the resident holds.
+
+## Resume and model in the web UI
+
+The resident web UI can resume an older web conversation (`local/main` or `ui/<name>`) from its
+session picker; group, specialist, automation, and channel transcripts cannot be resumed there.
+It can also change the model and thinking level of the open session. That change applies to that
+session only; the Profile default in `settings.json` is unchanged. Resume and model changes are
+refused while a turn is streaming, and other open clients reload after either one.
+
+Run `ziggy help sessions` for the version-matched command syntax and JSON options.

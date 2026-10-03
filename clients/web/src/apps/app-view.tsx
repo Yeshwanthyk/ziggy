@@ -65,7 +65,13 @@ const HOST_STYLE_VARIABLES: ReadonlyArray<readonly [keyof McpUiStyles, string]> 
   ["--color-text-warning", "--warning-foreground"],
   ["--color-border-primary", "--border"],
   ["--color-border-secondary", "--input"],
+  ["--color-border-danger", "--danger"],
+  ["--color-border-success", "--success"],
+  ["--color-border-warning", "--warning"],
   ["--color-ring-primary", "--ring"],
+  ["--color-ring-danger", "--danger"],
+  ["--color-ring-success", "--success"],
+  ["--color-ring-warning", "--warning"],
   ["--font-sans", "--font-sans"],
   ["--font-mono", "--font-mono"],
   ["--border-radius-sm", "--radius-sm"],
@@ -93,7 +99,21 @@ const hostStyles = (): McpUiStyles => {
   return variables as McpUiStyles;
 };
 
-const hostContext = (expanded: boolean): McpUiHostContext => ({
+/** The frame's size now; inline views grow in height up to the cap, so only the width is fixed. */
+type FrameSize = { readonly width: number; readonly height: number } | undefined;
+
+const containerDimensions = (
+  expanded: boolean,
+  size: FrameSize,
+): McpUiHostContext["containerDimensions"] => {
+  if (size === undefined) return { maxHeight: INLINE_MAX_HEIGHT, maxWidth: 760 };
+  const width = Math.round(size.width);
+  return expanded
+    ? { width, height: Math.round(size.height) }
+    : { width, maxHeight: INLINE_MAX_HEIGHT };
+};
+
+const hostContext = (expanded: boolean, size?: FrameSize): McpUiHostContext => ({
   theme: prefersDark() ? "dark" : "light",
   styles: { variables: hostStyles() },
   displayMode: expanded ? "fullscreen" : "inline",
@@ -101,9 +121,7 @@ const hostContext = (expanded: boolean): McpUiHostContext => ({
   platform: "web",
   locale: navigator.language,
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-  containerDimensions: expanded
-    ? { width: window.innerWidth, height: window.innerHeight }
-    : { maxHeight: INLINE_MAX_HEIGHT, maxWidth: 760 },
+  containerDimensions: containerDimensions(expanded, size),
 });
 
 const placeholderResult = (app: ZiggyToolApp): CallToolResult => {
@@ -166,6 +184,7 @@ export function AppView({
   const [expanded, setExpanded] = useState(false);
   const expandedRef = useRef(expanded);
   expandedRef.current = expanded;
+  const sizeRef = useRef<FrameSize>(undefined);
 
   useEffect(() => {
     let current = true;
@@ -198,6 +217,7 @@ export function AppView({
     const frame = frameRef.current;
     const target = frame?.contentWindow;
     if (load.kind !== "ready" || frame === null || target === null || target === undefined) return;
+    sizeRef.current = frame.getBoundingClientRect();
     const bridge = new AppBridge(
       null,
       { name: "Ziggy", version: "1" },
@@ -208,7 +228,7 @@ export function AppView({
         updateModelContext: { text: {} },
         message: { text: {} },
       },
-      { hostContext: hostContext(expandedRef.current) },
+      { hostContext: hostContext(expandedRef.current, sizeRef.current) },
     );
     bridge.oncalltool = async (params) => {
       try {
@@ -287,9 +307,23 @@ export function AppView({
       setLoad({ kind: "failed", message: "The view navigated away and was closed." });
     };
     window.addEventListener("message", guard, { capture: true });
+    // The view lays out for the frame it really has: tell it when the width changes (a narrow
+    // window, a phone), or the height too while expanded. Inline height follows the view itself.
+    const resize = new ResizeObserver(() => {
+      const before = sizeRef.current;
+      const after = frame.getBoundingClientRect();
+      sizeRef.current = after;
+      const changed =
+        before === undefined ||
+        Math.round(before.width) !== Math.round(after.width) ||
+        (expandedRef.current && Math.round(before.height) !== Math.round(after.height));
+      if (changed) bridge.setHostContext(hostContext(expandedRef.current, after));
+    });
+    resize.observe(frame);
     void bridge.connect(new PostMessageTransport(target, target));
     bridgeRef.current = bridge;
     return () => {
+      resize.disconnect();
       window.removeEventListener("message", guard, { capture: true });
       bridgeRef.current = undefined;
       void bridge
@@ -300,7 +334,7 @@ export function AppView({
   }, [load, boundRef, app.server, app.resourceUri]);
 
   useEffect(() => {
-    bridgeRef.current?.setHostContext(hostContext(expanded));
+    bridgeRef.current?.setHostContext(hostContext(expanded, sizeRef.current));
     if (!expanded) return;
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape") setExpanded(false);
@@ -312,7 +346,8 @@ export function AppView({
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const update = () => bridgeRef.current?.setHostContext(hostContext(expandedRef.current));
+    const update = () =>
+      bridgeRef.current?.setHostContext(hostContext(expandedRef.current, sizeRef.current));
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);

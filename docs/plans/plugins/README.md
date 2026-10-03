@@ -270,6 +270,49 @@ console. G9 (gallery preview of an unenabled plugin) stays open. The `ext-apps` 
 not run. App-kit candidates so far: a tiny view bridge, a theme-token CSS block, the refresh helper,
 list-row rendering, an input + button add control.
 
+### Step 5 — View quality (in progress)
+
+Goal: views come out consistent and verified, without the author hand-rolling UI. Learned from
+lab B1–B4, the real-Linear rerun, and Executor v2 (`executor@2.0.0-beta.6` hand-written React apps
+on their own origin: no kit, no screenshot loop; borrow its fixed query states and write queue,
+not its hosting or app-owned theming). Everything stays portable MCP Apps unless marked.
+
+Tasks, in order:
+
+- [x] T1 View kit in the template (`ui/kit.css`, `ui/kit.ts`, plain DOM, host variables only,
+  inlined by the single-file build): buttons (primary, secondary, danger), list rows keyed by id
+  and updated in place, tags, field, menu, one two-click confirm whose armed state survives
+  re-render, date presets; layout: stack, wrapping row, toolbar that folds into "More…" below
+  480 px; status line that collapses when empty; roles, labels, focus rings, touch-sized targets,
+  `aria-live` status.
+- [x] T2 Fixed states: a query helper returning data, pending and error; skeleton after ~300 ms;
+  empty vs "feature off" vs error with retry; a failed refresh keeps the last data. Writes queue
+  one at a time with a re-read between.
+- [x] T3 Lost first click: refresh-on-focus no longer rebuilds rows mid-click (rows update in
+  place; skip focus refresh while the pointer is down). Verify in the lab browser.
+- [x] T4 Screenshot check `bun run shots`: headless browser loads `dist/view.html` in a stub host
+  with fixtures; light, dark, 375 and 760 px; fails on horizontal overflow, console errors, axe
+  violations and low contrast; part of the template's `bun run check`.
+- [x] T5 Skill rules: use the kit, never hand-roll controls; design empty and "feature off"
+  states; smoke skips local writes with a warning when reads return no items; keep GraphQL
+  queries shallow and note page limits; secrets are shared by every Profile on the machine;
+  debugging stays inside the plugin folder and Profile. Smoke checks the view imports the kit.
+- [x] T6 Host fixes (`clients/web/src/apps/app-view.tsx`): pass `styles.css.fonts`, real
+  `containerDimensions`, success and warning colour tokens.
+- [x] T7 Web UI issues: pinned chats showing "Conversation" instead of "Pinned conversation"
+  after new chats; dark-mode selected sidebar title unreadable; chat markdown tables clipping at
+  phone width.
+- [x] T8 `extension-authoring` skill: send requests for UI to `plugin-authoring`.
+- [x] T9 Review, then commit Step 5 (approved; follow-ups applied).
+- [x] T10 Lab proof: rerun one brief (B3 on fake Linear, plus B4) with the kit; score consistency,
+  states, phone width, first click.
+- [ ] T11 Squarey acceptance: Linear triage plugin in squarey (real key already in the shared
+  Keychain item). Must handle Triage turned off for the team.
+
+Later, not in Step 5: host-drawn confirm and form dialogs (Ziggy-only unless the spec adds
+them); declarative JSON views (only if compiled to HTML); per-Profile secret scoping (secrets
+stay shared and documented for now); G9 gallery preview.
+
 ## Gaps tracked
 
 G1 secrets (step 2) · G2 a plugin UI reaches only its own server, so plugin servers call external
@@ -298,9 +341,6 @@ rules. A click in the plugin UI counts as user intent.
 - **Objective**: build steps 2, 4, then 3 (lab). Builder and read-only reviewer are Claude Opus 5.5
   subagents (Codex rejects `gpt-6.1-sol` on the ChatGPT account). Commit each step only after the
   reviewer approves.
-- **State**: branch `plugins`; Step 1 committed after review round 3 approved (history in
-  `step1-review.md`); Step 2 committed after review round 2 approved (minor fixes applied); Step 4 committed after review round 3 approved (follow-ups applied); Step 3 approved in review round 2 with follow-ups applied, not yet committed; lab B1–B4 scored (see `plugin-lab-notes/lab.md`).
-- **First next action**: commit Step 3; then, once the user's Linear key is stored, restart the
-  lab resident without `LINEAR_API_KEY=lab-fake`, point `linear-triage` at the real API and rerun
-  B3's views read-only (no mutations, no write clicks, counts only in notes). Web UI bugs 1 and 3
-  are verified in the browser.
+- **State**: branch `plugins`; steps 1–4 committed (Step 3 `c7cf6115`) after reviewer approval;
+  lab B1–B4 scored and B3 rerun read-only on real Linear (see `plugin-lab-notes/lab.md`).
+- **First next action**: Step 5 tasks T1–T11 above, in order; check each off as it lands.

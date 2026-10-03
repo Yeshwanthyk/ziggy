@@ -1,9 +1,13 @@
 ---
 name: extension-authoring
-description: Create or change a Profile-owned Pi extension package at extensions/<id>/. Read this before adding an extension. Ziggy does not load ~/.pi or .pi/extensions; new packages are admitted through profile_extensions.
+description: Create or change a Profile-owned Pi extension package at extensions/<id>/. Read this before adding an extension. Ziggy does not load ~/.pi or .pi/extensions; new packages are admitted through profile_extensions. For a new tool, connector or interactive view, use plugin-authoring instead.
 ---
 
 # Ziggy extension authoring
+
+Write a plugin instead (the `plugin-authoring` skill) for a new tool, connector or tracker, and for
+anything with a view the person clicks in: views (MCP Apps) come only from plugins. Write an
+extension only when the capability must hook Pi itself.
 
 Profile-owned extension packages live at `<profile>/extensions/<id>/` and use Pi's package contract
 directly. The lowercase kebab-case folder name and matching `extensions.json` entry are Ziggy's

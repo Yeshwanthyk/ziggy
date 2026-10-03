@@ -4,107 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Example</title>
-    <style>
-      /* Host theme variables (MCP Apps style variables) with light/dark fallbacks for other hosts. */
-      :root {
-        color-scheme: light dark;
-        --bg: var(--color-background-primary, light-dark(#fff, #18181b));
-        --bg-muted: var(--color-background-secondary, light-dark(#f4f4f5, #27272a));
-        --fg: var(--color-text-primary, light-dark(#18181b, #fafafa));
-        --fg-muted: var(--color-text-secondary, light-dark(#52525b, #a1a1aa));
-        --border: var(--color-border-primary, light-dark(#e4e4e7, #3f3f46));
-        --danger: var(--color-text-danger, light-dark(#b91c1c, #f87171));
-        --accent-bg: var(--color-background-inverse, light-dark(#18181b, #fafafa));
-        --accent-fg: var(--color-text-inverse, light-dark(#fafafa, #18181b));
-        --radius: var(--border-radius-md, 8px);
-      }
-      * {
-        box-sizing: border-box;
-      }
-      body {
-        margin: 0;
-        padding: 12px;
-        background: var(--bg);
-        color: var(--fg);
-        font: 14px/1.4 var(--font-sans, system-ui, sans-serif);
-      }
-      .add {
-        display: flex;
-        gap: 8px;
-        margin-bottom: 10px;
-      }
-      input[type="text"] {
-        flex: 1;
-        min-width: 0;
-        padding: 6px 10px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--bg);
-        color: var(--fg);
-        font: inherit;
-      }
-      button {
-        padding: 6px 12px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--bg-muted);
-        color: var(--fg);
-        font: inherit;
-        cursor: pointer;
-      }
-      button.primary {
-        background: var(--accent-bg);
-        color: var(--accent-fg);
-        border-color: transparent;
-      }
-      button:disabled {
-        opacity: 0.5;
-        cursor: default;
-      }
-      ul {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-      }
-      li {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 0;
-        border-bottom: 1px solid var(--border);
-      }
-      li .title {
-        flex: 1;
-        min-width: 0;
-        overflow-wrap: anywhere;
-      }
-      li.done .title {
-        color: var(--fg-muted);
-        text-decoration: line-through;
-      }
-      .empty,
-      .status {
-        color: var(--fg-muted);
-      }
-      .status {
-        margin: 8px 0 0;
-      }
-      .status:empty {
-        display: none;
-      }
-      .status.error {
-        color: var(--danger);
-      }
-    </style>
   </head>
   <body>
-    <!-- No <form>: the host frame is sandboxed without allow-forms, so submit never fires. -->
-    <div class="add">
-      <input id="title" type="text" placeholder="New item" maxlength="200" />
-      <button id="add" class="primary" type="button">Add</button>
-    </div>
-    <ul id="list"></ul>
-    <p id="status" class="status" role="status"></p>
+    <!-- Built by view.ts from the kit (kit.ts, kit.css); the build inlines all three. -->
+    <main id="root"></main>
     <script type="module" src="./view.ts"></script>
   </body>
 </html>

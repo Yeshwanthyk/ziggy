@@ -1,180 +1,112 @@
-# Automation operations
+/* eslint-disable ziggy-effect/no-native-promise-ownership -- Pi's exec and tool contracts are Promise adapter boundaries. */
+/* eslint-disable ziggy-effect/no-try-catch-or-throw -- Throwing from a Pi tool marks the tool result as failed. */
+/* eslint-disable ziggy-effect/no-error-constructor -- Pi tool failures cross this boundary as rejected Error values. */
+import { join } from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { fetchUrl, MAX_OUTPUT_CHARS } from "./fetch-url.ts";
 
-Automation Markdown in the Profile is the only authority for automation policy. SQLite under
-`.runtime/` contains scheduler projections, occurrence claims, and run truth; it never replaces or
-stores an authoritative definition.
+const TIMEOUT_MS = 30_000;
 
-## Definition filenames
+const OUTPUT_LIMIT = 24 * 1024;
 
-An automation's lifecycle is its filename:
+const executable = join(import.meta.dirname, "bin", "web-search.ts");
 
-```text
-automations/<id>.md         active
-automations/<id>.paused.md  paused
-```
+const Parameters = Type.Object(
+  { args: Type.Array(Type.String(), { description: "Query words and optional --n <count>." }) },
+  { additionalProperties: false },
+);
 
-Use lowercase kebab-case IDs. `ziggy automations list <profile>` and
-`ziggy automations validate <profile> [id]` show `active`, `paused`, or `conflict` explicitly.
-They inspect the Profile without creating or changing `.runtime`, SQLite, or definition files.
-Symlinked Profile roots, automation roots, and definition files are rejected.
+const FetchParameters = Type.Object(
+  {
+    url: Type.String({
+      minLength: 1,
+      maxLength: 4096,
+      description: "Public HTTP(S) URL to fetch.",
+    }),
+    jinaFallback: Type.Optional(
+      Type.Boolean({ description: "Use Jina Reader when direct extraction is blocked or poor." }),
+    ),
+    maxChars: Type.Optional(
+      Type.Integer({
+        minimum: 1000,
+        maximum: MAX_OUTPUT_CHARS,
+        description: "Maximum returned text length.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 
-Create an active starter with:
+const display = (value: string): string => {
+  if (Buffer.byteLength(value) <= OUTPUT_LIMIT) return value;
 
-```sh
-ziggy automations create <profile> <id>
-```
+  return `${Buffer.from(value).subarray(0, OUTPUT_LIMIT).toString()}\n[output truncated]`;
+};
 
-Creation refuses to proceed if either the active or paused form already exists. The resident web
-UI provides automation list, show, create, save, validate, pause, resume, run, and run-history
-actions. Its editor can change the complete Markdown; a save requires a valid definition, rejects
-bytes changed since the editor opened, and uses a same-directory atomic replacement. It does not
-create a second definition store or runtime owner. A normal editor can also change definitions;
-remove them with normal filesystem operations. Ziggy intentionally adds no CLI edit or remove
-command.
+export const runWebSearch = async (
+  pi: Pick<ExtensionAPI, "exec">,
+  args: string[],
+  cwd: string,
+  signal: AbortSignal | undefined,
+): Promise<{ stdout: string; stderr: string; code: number }> => {
+  const execOptions: Parameters<Pick<ExtensionAPI, "exec">["exec"]>[2] = {
+    cwd,
+    timeout: TIMEOUT_MS,
+  };
 
-The web UI reads the same Profile Markdown, scheduler projection, and fixed run ledger as the
-`ziggy automations` CLI. Use `ziggy serve <profile>` to run the resident; the web UI is the
-interactive face, and `ziggy web pair <profile>` pairs a browser. The CLI provides create, list,
-validate, pause, resume, status, and runs; `ziggy wake <profile> <id>` runs a definition manually.
-When the resident is running, `wake` asks it to run the automation and prints the same outcome and
-exit code as a local run; otherwise it runs in-process. If the request may have reached the resident
-but no answer came back, check `ziggy automations runs` before retrying. Schedules fire only while
-the resident runs: `automations status` warns when the resident service is not installed.
-The CLI has no show, save, or `automations run` subcommand. In the web UI, choose an automation to
-inspect its metadata, edit it, inspect run history, or change lifecycle; the scheduler overview
-shows heartbeat, tick, next-due, and latest-run state.
+  if (signal) {
+    execOptions.signal = signal;
+  }
 
-## Model override
+  const result = await pi.exec(process.execPath, [executable, ...args], execOptions);
+  const stdout = display(result.stdout);
+  const stderr = display(result.stderr);
+  const streams = `stdout:\n${stdout || "(empty)"}\nstderr:\n${stderr || "(empty)"}`;
 
-Optional `provider`, `model`, and `thinking` frontmatter select that automation's session model.
-`provider` and `model` must appear together. Omitted fields inherit the Profile default from
-`settings.json`. Registry, auth, and thinking support are checked when the run opens its session —
-the same gates as a Profile agent — and fail the run rather than silently falling back.
+  if (result.killed) {
+    const reason = signal?.aborted ? "was cancelled" : `timed out after ${TIMEOUT_MS}ms`;
+    throw new Error(`web_search ${reason}.\n${streams}`);
+  }
 
-A leading `@agent-id` still delegates the whole task to that Profile agent. The agent's own
-`agents/<id>.md` policy is then authoritative; automation model frontmatter applies only to the
-automation's own (untagged) session.
+  if (result.code !== 0) throw new Error(`web_search exited with code ${result.code}.\n${streams}`);
 
-## Multiple delivery destinations
+  return { stdout, stderr, code: result.code };
+};
 
-The comma-separated `broadcast` value can contain any mix of conversation, Telegram, Discord, and
-Slack targets. The web automation picker lists known destinations for the selected Profile and adds
-or removes each target independently. It stores the existing canonical target strings; display
-names never become delivery identity. `origin`, `all`, and targets entered through the full editor
-remain visible and removable even when they are not currently discoverable.
+export default function webSearch(pi: Pick<ExtensionAPI, "exec" | "registerTool">): void {
+  pi.registerTool({
+    name: "web_search",
+    label: "web_search",
+    description:
+      "Search the web through Exa. Pass a natural-language query in args and optionally --n <count>.",
+    parameters: Parameters,
+    executionMode: "parallel",
+    async execute(_toolCallId, { args }, signal, _onUpdate, ctx) {
+      const result = await runWebSearch(pi, args, ctx.cwd, signal);
 
-Channel targets are `slack:channel:<id>` or `slack:channel:<id>:thread:<ts>`,
-`discord:channel:<id>`, and `telegram:chat:<id>`. A Discord thread is a channel, so
-`discord:channel:<thread id>` posts into the thread. Each gateway splits a long result into its own
-message limit and posts with the bot token from its `slack.json`, `discord.json`, or `telegram.json`.
+      const text = result.stderr
+        ? `${result.stdout}\n\nstderr:\n${result.stderr}`.trim()
+        : result.stdout;
 
-Stored Pi sessions supply conversation targets without the sidebar's display limit. Channel
-residents contribute the actual signed Telegram chat ID, Discord channel or thread ID, and Slack
-channel or thread address they observe. Slack IDs configured in `slack.json` are also choices;
-Ziggy looks up one display name per known channel when the token permits it and otherwise shows the
-canonical ID. This discovery state is memory-only. Saved broadcast targets survive a resident
-restart, while a previously observed channel name can fall back to its ID until the channel is
-observed again.
+      return {
+        content: [{ type: "text", text }],
+        details: result,
+      };
+    },
+  });
 
-Add `conversation:<stored-session-id>` to append a completed result to an existing transcript in
-the same Profile. Selecting a Slack destination never changes the channel's `mention` or `always`
-inbound response policy in `slack.json`.
+  pi.registerTool({
+    name: "fetch_url",
+    label: "fetch_url",
+    description:
+      "Fetch a public HTTP(S) URL as readable text. Private and local addresses are refused; Jina Reader is the fallback for blocked or JavaScript-heavy pages.",
+    parameters: FetchParameters,
+    executionMode: "parallel",
+    async execute(_toolCallId, { url, jinaFallback = true, maxChars = 20_000 }, signal) {
+      const result = await fetchUrl(url, { jinaFallback, maxChars, signal });
 
-Conversation delivery appends history only. It does not start, steer, or queue a model turn, and it
-does not send the result through the destination channel. A busy destination fails as retriable;
-missing, deleted, invalid, or unavailable-owner destinations fail without choosing a replacement
-conversation. Delivery requires the resident process that owns the selected Profile. A standalone
-`ziggy wake` can run the automation, but reports `owner-unavailable` when no scoped resident can
-append the destination. Gateway history and live-event projections show the first 1,024 result code
-points; the destination Pi transcript retains the complete result.
-
-Each destination has an independent delivery outcome. The destination transcript deduplicates by
-automation and run ID. If the process crashes after the
-append but before the run ledger is finalized, the run may remain `unknown`; Ziggy does not retry it
-automatically.
-
-## Pause and resume
-
-```sh
-ziggy automations pause <profile> <id>
-ziggy automations resume <profile> <id>
-```
-
-Pause and resume preserve the exact Markdown bytes. The transition creates a same-directory hard
-link at the destination name with exclusive `EEXIST` refusal, verifies that both names identify the
-same physical regular file, and only then unlinks the source name. It never renames over or silently
-replaces a destination.
-
-A paused definition is excluded from scheduler admission. On the next resident scheduler scan its
-projected next occurrence is cleared. Resume makes it eligible on the next scan and scheduling
-restarts at a fresh future occurrence; paused time is not catch-up work.
-
-Manual `ziggy wake <profile> <id>` reports that a paused automation is paused rather than pretending
-it is missing.
-
-Pausing does not cancel an occurrence that was already claimed or a run that is already executing.
-That run may finish normally. Pause prevents later admission. If the transition itself leaves both
-filenames visible, no run is admitted from the conflicting pair.
-
-## Conflict recovery
-
-If both forms exist, list, validate, and scheduler discovery report one invalid conflict for the ID.
-The scheduler does not run it. This can happen after a source-unlink failure: keeping both names is
-the fail-closed outcome and preserves the definition bytes for recovery.
-
-Recover manually:
-
-1. Stop concurrent automation file operations for that Profile.
-2. Compare `automations/<id>.md` and `automations/<id>.paused.md` byte-for-byte.
-3. Decide whether the intended lifecycle is active or paused.
-4. Remove exactly the unwanted filename with a normal filesystem command.
-5. Run `ziggy automations validate <profile> <id>` and then `ziggy automations list <profile>`.
-
-Never resolve a conflict by copying one form over the other without first inspecting both. Ziggy
-will not choose or overwrite one on the operator's behalf.
-
-## Scheduled admission and sessions
-
-`ziggy serve <profile>` discovers active definitions and persists a future schedule cursor. When an
-occurrence is due, one SQLite transaction advances that cursor and writes the claimed run before
-executing a gate, creating a Pi session, printing output, or delivering it. Scheduled definitions
-without a gate are recorded as `skipped-gate`; add an explicit gate such as `gate: true` only when
-the scheduled model call is intended.
-
-Every admitted model-backed run receives a fresh Pi session under
-`sessions/automations/<automation-id>/`. The run ledger answers whether an occurrence was claimed,
-completed, skipped, failed, or became unknown; Pi JSONL remains the only transcript and model/tool
-history authority.
-
-Inspect both authorities from the CLI or the resident web UI automation view:
-
-```sh
-ziggy automations runs <profile> [id] [--json]
-ziggy sessions list <profile> [--json]
-```
-
-Use `--json` on `automations list`, `automations status`, and `automations runs` when a script
-needs the bounded projection rather than operator text. Session listings and details also accept
-`--json`; JSON session views never include transcript content.
-
-## Process failure and no replay
-
-Active scheduled rows are fenced by the resident owner UUID and PID. After a hard crash, the service
-manager starts a new `serve` process. Startup changes active rows belonging to the previous resident
-to terminal `unknown` with failure category `process-start`. It never returns them to `claimed` or
-`running`, and the already-advanced occurrence cursor means they are not replayed.
-
-A normal stop interrupts scoped workers and attempts one truthful terminal `failed/interrupted`
-write. If the process is force-killed before that write, startup records `unknown` instead of
-inferring success. There are no automatic run retries.
-
-Manual wakes have a separate process-local owner identity. Manual recovery can mark only dead manual
-owners unknown; it cannot recover, start, or finish a resident-owned scheduled claim.
-
-## Why there is no public tick
-
-`ziggy serve <profile>` is the supervised resident owner and the only production owner of the
-internal scheduler tick. There is no public `tick`, scheduler daemon, repair, replay, or retry
-command. A second tick surface would create competing admission owners and blur the existing
-Profile owner contract. Use `ziggy serve status`, `ziggy automations status`, and
-`ziggy automations runs` for read-only operational visibility.
+      return { content: [{ type: "text", text: result.text }], details: result.details };
+    },
+  });
+}

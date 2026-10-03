@@ -344,7 +344,10 @@
   min-height: 0;
 }
 
-.conversation-scroll [data-radix-scroll-area-viewport] > div {
+/* Radix wraps content in a display: table box that grows to its widest child; keep it at the
+   viewport's width so a wide table or code block scrolls inside itself instead of clipping. */
+.conversation-scroll [data-radix-scroll-area-viewport] > div,
+.transcript-scroll [data-radix-scroll-area-viewport] > div {
   display: block !important;
   min-width: 0 !important;
   width: 100%;
@@ -1311,7 +1314,8 @@
 
 /* MCP Apps views. The frame box is restyled, never moved, when expanded. */
 .app-view {
-  height: calc(var(--app-height) + 33px);
+  /* The view's height plus the 32 px header and the frame's 1 px top and bottom borders. */
+  height: calc(var(--app-height) + 34px);
   margin-top: 8px;
   max-width: 100%;
 }

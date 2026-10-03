@@ -8,7 +8,7 @@
 // against a copy of it.
 import { Database } from "bun:sqlite";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
@@ -19,7 +19,8 @@ import { checkPlugin, launch, type Secret, type StdioServer } from "./rules";
 // Reads: no side effects. They also run against a copy of the Profile's real data.
 const READS: ReadonlyArray<Call> = [{ tool: "list_items" }];
 // Local writes: effects stay in PLUGIN_DATA. Runs in order; `{ "$id": "add_item" }` stands for
-// the first item id that call returned.
+// the first item id that call returned. A call whose `$id` has no item (an empty read) is skipped
+// with a warning.
 const LOCAL_WRITES: ReadonlyArray<Call> = [
   { tool: "add_item", args: { title: "smoke item" } },
   { tool: "set_done", args: { id: { $id: "add_item" }, done: true } },
@@ -77,6 +78,15 @@ for (const warning of checked.warnings) console.warn(`warning: ${warning}`);
 const built = join(ROOT, "dist", "view.html");
 const html = existsSync(built) ? readFileSync(built, "utf8") : "";
 check(!/<(script|link)[^>]+(src|href)=["']?(https?:)?\/\//iu.test(html), "view loads remote files");
+// The kit's stylesheet is inlined only when the view imports ./kit.
+check(
+  !existsSync(join(ROOT, "ui")) || html.includes(".kit-button"),
+  "view does not use the kit: import it from ./kit in ui/view.ts and build controls from it",
+);
+
+// Every result smoke sees from a tool with a view, for `bun run shots` to render.
+const fixtures: Array<{ tool: string; uri: string; result: unknown }> = [];
+const views: Record<string, string> = {};
 
 // Spawn like Ziggy hands the server to Pi: Pi resolves a bare name from PATH; `bun` is the Bun
 // running this script, so the same runtime is used even when PATH has another.
@@ -99,8 +109,16 @@ const connect = async (server: StdioServer, data: string) => {
   return client;
 };
 
-const run = async (client: Client, calls: ReadonlyArray<Call>) => {
+const run = async (
+  client: Client,
+  calls: ReadonlyArray<Call>,
+  record?: ReadonlyMap<string, string>,
+) => {
   const ids = new Map<string, unknown>();
+  const sources = (args: Record<string, unknown> = {}) =>
+    Object.values(args).flatMap((value) =>
+      typeof value === "object" && value !== null && "$id" in value ? [String(value.$id)] : [],
+    );
   const resolveArgs = (args: Record<string, unknown> = {}) =>
     Object.fromEntries(
       Object.entries(args).map(([key, value]) => [
@@ -118,7 +136,17 @@ const run = async (client: Client, calls: ReadonlyArray<Call>) => {
       continue;
     }
 
+    const missing = sources(args).filter((source) => ids.get(source) === undefined);
+    if (missing.length > 0) {
+      console.warn(
+        `warning: ${tool} skipped: ${missing.join(", ")} returned no items, so there is no id to use`,
+      );
+      continue;
+    }
+
     const result = await client.callTool({ name: tool, arguments: resolveArgs(args) });
+    const uri = record?.get(tool);
+    if (uri) fixtures.push({ tool, uri, result });
     const text = (result.content as Array<{ type: string; text?: string }>)
       .map((part) => part.text ?? "")
       .join("");
@@ -169,11 +197,18 @@ try {
           "text" in (view ?? {}) && (view as { text: string }).text.length > 0,
           `${uri}: empty`,
         );
+        if (view && "text" in view) views[uri] = view.text;
       }
 
       // Calls go to the first server only; split the lists per server if you have several.
       if (key === checked.stdio[0]?.key) {
-        await run(client, [...READS, ...LOCAL_WRITES, ...READS]);
+        const withView = new Map(
+          tools.flatMap((tool) => {
+            const uri = ui(tool).resourceUri;
+            return uri ? [[tool.name, uri] as const] : [];
+          }),
+        );
+        await run(client, [...READS, ...LOCAL_WRITES, ...READS], withView);
       }
     } finally {
       await client.close();
@@ -209,6 +244,10 @@ try {
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
+
+// Only results from the scratch run, not from the copy of the Profile's data.
+mkdirSync(join(ROOT, "shots"), { recursive: true });
+writeFileSync(join(ROOT, "shots", "fixtures.json"), JSON.stringify({ views, fixtures }, null, 2));
 
 if (problems.length > 0) {
   console.error(`smoke FAILED:\n- ${problems.join("\n- ")}`);

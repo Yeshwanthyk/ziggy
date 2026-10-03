@@ -1506,6 +1506,10 @@ describe("useZiggyGateway", () => {
     expect(hook.result.current.selectedTitle).toBe("Planning");
     // The new chat serves views at once, before any sidebar refresh lists it as live.
     expect(hook.result.current.selectedServesViews).toBe(true);
+    // Live or not, a pinned chat is labelled as pinned.
+    expect(hook.result.current.pinnedConversations).toContainEqual(
+      expect.objectContaining({ ref, title: "Planning", subtitle: "Pinned conversation" }),
+    );
     expect(fixture.openMain).toHaveBeenCalledTimes(1);
   });
 

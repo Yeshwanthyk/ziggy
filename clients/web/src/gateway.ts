@@ -2290,7 +2290,12 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
             pinId: pin.id,
             ref: pin.ref,
             title: pin.label ?? conversation?.title ?? fallbackTitle,
-            subtitle: conversation?.subtitle ?? "Pinned conversation",
+            // A pinned chat says so whether or not its session is live right now; the main
+            // conversation and specialists keep their own subtitle.
+            subtitle:
+              conversation === undefined || conversation.subtitle === "Conversation"
+                ? "Pinned conversation"
+                : conversation.subtitle,
             active: conversation?.active ?? false,
           };
         }),

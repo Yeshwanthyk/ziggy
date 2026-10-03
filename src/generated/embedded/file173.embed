@@ -1,62 +1,43 @@
-# Updating bundled extensions
+---
+name: web-search
+description: Search the web for fresh facts through Exa and read public pages when local information cannot answer the request.
+---
 
-Bundled extension code ships inside the Ziggy executable. An installed Profile copy takes
-precedence over that bundle, so updating the executable does not replace installed packages.
+# Web Search
 
-Update one installed bundled package from the executable you are running:
+Use `web_search` with query words in `args`:
 
-```sh
-ziggy extensions update squarey computer-workflows
+```json
+{"args":["best time to visit the science museum this weekend"]}
+{"args":["hardware store opening hours","--n","3"]}
 ```
 
-If a managed resident (`ziggy serve install`) is running, add `--restart`:
+The result is:
 
-```sh
-ziggy extensions update squarey computer-workflows --restart
+```json
+{
+  "query": "...",
+  "answer": "...",
+  "results": [{ "title": "...", "url": "...", "highlight": "..." }]
+}
 ```
 
-With `--restart`, Ziggy stops the resident, applies the update under the Profile's extension
-lock, and starts the resident again. Without `--restart` the update is refused while the resident
-runs. The update stages the new package and checks it through Pi before swapping it in; if a step
-fails, either the old or the new version stays applied. The updater does not drain active work,
-schedule an update, or download another executable. Close web, run, ACP, wake, and specialist
-sessions from older Ziggy builds before the first update.
+Read the structured `results`; each `highlight` is the relevant excerpt. Cite
+one or two result URLs. `answer` is populated only when the endpoint response
+cannot be structured. No API key is required; `EXA_API_KEY` only raises service
+limits.
 
-## Adopt an existing installation
+Use this only for information that benefits from a current external search.
 
-Installations without an update receipt are treated as untracked. To explicitly replace an
-untracked package with the executable's bundled copy and begin tracking it:
+Use `fetch_url` to read a public HTTP(S) page, such as a search result worth
+verifying:
 
-```sh
-ziggy extensions update squarey computer-workflows --adopt
+```json
+{"url":"https://example.com/article"}
+{"url":"https://example.com/app","maxChars":8000}
 ```
 
-Adoption is a takeover of that package directory, not proof that its previous contents came
-from Ziggy. Inspect local changes first; the previous copy is not kept after a successful update.
-Once a receipt exists, modified package contents block updates; `--adopt` does not override
-that protection.
-
-## Boundaries
-
-- Only an explicitly named, already installed optional bundled extension is updated. Required
-  packages are read from Ziggy's own cache and update with Ziggy itself.
-- Package content hashes detect changes even when the package version is unchanged.
-- The selected extension set, browser profiles, saved workflows, and human-owned Profile
-  documents are not replaced.
-- Updates that change extension-owned automation definitions are rejected in this version.
-- The swap is two renames through `<id>.old`. If it stops between them, the next session open (for
-  a selected package), `add`, or `update` restores `<id>.old` under the extension lock, so the
-  Profile runs the previous version until you rerun the update. `doctor` only reports it.
-- If the update publishes but cannot record its receipt, it warns; the next `update` sees the
-  bytes already match this build and records the receipt.
-- The new tool code and skill instructions load together when the resident restarts; `--restart`
-  does this for you.
-
-A successful update verifies package installation and loading. It does not prove that a saved
-workflow completes on a live website.
-
-## In-process lifecycle
-
-The `profile_extensions` tool manages `list`, `add`, `remove`, and `validate` inside the resident
-without Bash, a Ziggy subprocess, or `PATH` lookup. Extensions that invoke ordinary external
-commands still use the managed service `PATH` documented in [Supervise `ziggy serve`](serve.md).
+It returns readable text and refuses private, local, and non-HTTP(S) targets,
+including redirects to them. Jina Reader is used only when direct extraction
+is blocked or yields a JavaScript shell; pass `"jinaFallback": false` to keep
+the fetch direct. Do not use it for authenticated content.
