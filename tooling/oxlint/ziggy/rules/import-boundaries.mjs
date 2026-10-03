@@ -2,7 +2,7 @@ import path from "node:path";
 import { piFiles, toRepoRelative } from "../../effect/utils.mjs";
 
 /** Folders whose files are private: code outside a folder imports only its `index.ts`. */
-const conceptFolders = ["profile", "session", "extensions", "agents", "memory"];
+const conceptFolders = ["profile", "session", "extensions", "agents", "memory", "devices"];
 
 const isPiPackage = (specifier) => specifier.startsWith("@earendil-works/");
 

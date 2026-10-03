@@ -11,9 +11,9 @@ The target layout is in `docs/plans/tight-core/README.md` §4; code moves there 
 - `src/platform/` holds shared low-level pieces with no Ziggy concepts: `file-lock.ts` (the one
   SQLite lock), `atomic-write.ts` and `paths.ts` (`ZiggyPaths`). It imports only `effect`,
   `node:*`, `bun:*` and other platform files.
-- The core is `profile/`, `session/` and `extensions/`. `agents/` and `memory/` are modules built
-  on it, and `resident/` and `cli/` sit on top. Dependencies point down that list; the core never
-  imports agents, memory or resident.
+- The core is `profile/`, `session/` and `extensions/`. `agents/`, `memory/` and `devices/` are
+  modules built on it, and `resident/` and `cli/` sit on top. Dependencies point down that list;
+  the core never imports agents, memory, devices or resident.
 - Code outside a concept folder imports only its `index.ts`.
 - Pi packages may be imported only in `src/adapters/pi/` and the files marked `[Pi]` in §4.
   Repository-owned `extensions/*` are isolated Pi packages and may import Pi at their entrypoints.

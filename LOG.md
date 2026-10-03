@@ -2056,3 +2056,15 @@ section "T10".
 ## 2026-10-03 — Devices S0: Noise
 
 **Noise_XX in `src/platform/noise.ts`.** Noise_XX_25519_AESGCM_SHA256 in both roles on `node:crypto`, as Effects with a `NoiseFailed` tagged error. A failed decrypt poisons that direction because Noise cannot resynchronise a nonce. The test checks the cacophony vector in both roles through transport, and checks that tampering fails and poisons. `test/platform/noise-interop.ts` runs Muse's own `noise_xx.py` (via `uv`) in each role against ours. Handshake hashes match and transport round-trips. Gotcha: Muse's `split()` zeroes `h`, so the hash must be read before splitting. The S0 working decisions (BOX-3 first; stub STT/TTS engines; hardware built as far as the toolchain allows) are recorded in the plan.
+
+## 2026-10-03 — Devices S1: ZDP/1
+
+**ZDP/1 spec and schemas.** `docs/devices/protocol.md` is the contract:
+- Transport: WebSocket at `/zdp/1`, with Noise XX (prologue `zdp/1`) and the device as initiator.
+- Frames: a `{` byte starts a JSON-RPC message; a `0x01` byte starts a stream chunk. Devices use odd stream ids and the hub even ones.
+- Pairing: a one-time URI carries the hub key and a ten-character base32 code, and the device's proof is an HMAC over the handshake hash.
+- Methods: the methods, the MCP tool shapes, chat and push.
+- Codes: the error codes and the 44xx close codes.
+- Versioning: a new field may only appear behind a hello capability, which is what lets every receiver decode strictly.
+
+`src/devices/protocol.ts` decodes all of it with `onExcessProperty: "error"`. A two-step decode tells an unknown method (-32601) apart from bad params (-32602). The test reads each fenced `json zdp` example from the spec and checks it decodes and re-encodes to the same bytes, so the spec and the schemas cannot drift apart.

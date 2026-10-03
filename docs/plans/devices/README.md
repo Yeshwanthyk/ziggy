@@ -117,9 +117,10 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 
 ### S1 — ZDP/1 spec and schemas
 
-- [ ] `docs/devices/protocol.md`: framing, handshake, every method and event, error codes,
-  timeouts, versioning rule.
-- [ ] `src/devices/protocol.ts`: Effect Schema for every message, `onExcessProperty: "error"`.
+- [x] `docs/devices/protocol.md`: framing, handshake, pairing URI and proof, every method and
+  event, error codes, close codes, timeouts, versioning rule.
+- [x] `src/devices/protocol.ts`: Effect Schema for every message, `onExcessProperty: "error"`;
+  frame codec; pairing URI codec. `devices` joins the concept folders in `ziggy/import-boundaries`.
 - Gate: schema round-trip tests over the spec's examples.
 
 ### S2 — Hub and pairing
@@ -216,7 +217,8 @@ Taken so slices can proceed without blocking; each can be changed later.
 | Slice | State | Proof |
 |---|---|---|
 | S0 | done | `bun test test/platform/noise.test.ts` (vector, both roles; tamper poisons); `bun test/platform/noise-interop.ts <muse-gadget-sdk>` → hash equal both roles |
-| S1–S12 | not started | |
+| S1 | done | `bun test test/devices/protocol.test.ts`: every `json zdp` example in the spec decodes strictly and re-encodes to the same text; every method is shown; bad input gets the right JSON-RPC code |
+| S2–S12 | not started | |
 
 ## Open decisions
 
