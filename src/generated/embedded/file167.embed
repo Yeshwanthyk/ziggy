@@ -1,109 +1,112 @@
-# Use Ziggy from a browser
+/* eslint-disable ziggy-effect/no-native-promise-ownership -- Pi's exec and tool contracts are Promise adapter boundaries. */
+/* eslint-disable ziggy-effect/no-try-catch-or-throw -- Throwing from a Pi tool marks the tool result as failed. */
+/* eslint-disable ziggy-effect/no-error-constructor -- Pi tool failures cross this boundary as rejected Error values. */
+import { join } from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { fetchUrl, MAX_OUTPUT_CHARS } from "./fetch-url.ts";
 
-Ziggy's web client is served by the resident on loopback. Configure one stable port per resident
-before pairing a browser. `squarey` below is the owner Profile passed to `ziggy serve`; it is not a
-machine or browser name. The `squarey` examples assume its managed resident is already installed.
+const TIMEOUT_MS = 30_000;
 
-For a new Profile and resident, initialize, configure, install, and pair in that order:
+const OUTPUT_LIMIT = 24 * 1024;
 
-```sh
-ziggy init my-bot
-ziggy web configure my-bot --port 8797
-ziggy serve install my-bot
-ziggy web pair my-bot
-```
+const executable = join(import.meta.dirname, "bin", "web-search.ts");
 
-`serve install` starts the new resident. Use `serve restart` after changing the configuration of an
-already installed resident.
+const Parameters = Type.Object(
+  { args: Type.Array(Type.String(), { description: "Query words and optional --n <count>." }) },
+  { additionalProperties: false },
+);
 
-## Local access
+const FetchParameters = Type.Object(
+  {
+    url: Type.String({
+      minLength: 1,
+      maxLength: 4096,
+      description: "Public HTTP(S) URL to fetch.",
+    }),
+    jinaFallback: Type.Optional(
+      Type.Boolean({ description: "Use Jina Reader when direct extraction is blocked or poor." }),
+    ),
+    maxChars: Type.Optional(
+      Type.Integer({
+        minimum: 1000,
+        maximum: MAX_OUTPUT_CHARS,
+        description: "Maximum returned text length.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 
-For a browser on the same machine, configure the port without a public URL:
+const display = (value: string): string => {
+  if (Buffer.byteLength(value) <= OUTPUT_LIMIT) return value;
 
-```sh
-ziggy web configure squarey --port 8797
-ziggy serve restart squarey
-ziggy web pair squarey
-```
+  return `${Buffer.from(value).subarray(0, OUTPUT_LIMIT).toString()}\n[output truncated]`;
+};
 
-Open the URL printed by `web pair`. The pairing code is single-use and expires after 10 minutes.
-After pairing, bookmark the base URL without the `#code=...` fragment. The HttpOnly browser cookie
-lasts 30 days and remains valid across resident restarts.
+export const runWebSearch = async (
+  pi: Pick<ExtensionAPI, "exec">,
+  args: string[],
+  cwd: string,
+  signal: AbortSignal | undefined,
+): Promise<{ stdout: string; stderr: string; code: number }> => {
+  const execOptions: Parameters<Pick<ExtensionAPI, "exec">["exec"]>[2] = {
+    cwd,
+    timeout: TIMEOUT_MS,
+  };
 
-## Remote access with Tailscale
+  if (signal) {
+    execOptions.signal = signal;
+  }
 
-Tailscale is optional. Use it when the browser is on another device in your tailnet. Replace
-`YOUR-MACHINE.YOUR-TAILNET.ts.net` with this machine's full Tailscale DNS name, then run:
+  const result = await pi.exec(process.execPath, [executable, ...args], execOptions);
+  const stdout = display(result.stdout);
+  const stderr = display(result.stderr);
+  const streams = `stdout:\n${stdout || "(empty)"}\nstderr:\n${stderr || "(empty)"}`;
 
-```sh
-ziggy web configure squarey --port 8797 --public-url https://YOUR-MACHINE.YOUR-TAILNET.ts.net:4173
-ziggy serve restart squarey
-tailscale serve --bg --https=4173 http://127.0.0.1:8797
-ziggy web pair squarey
-```
+  if (result.killed) {
+    const reason = signal?.aborted ? "was cancelled" : `timed out after ${TIMEOUT_MS}ms`;
+    throw new Error(`web_search ${reason}.\n${streams}`);
+  }
 
-The Tailscale mapping is backgrounded and persists. You do not repeat `tailscale serve` for each
-browser or after each Ziggy restart. Repeat it only when changing the public port, local port, or
-machine mapping. The configured public URL must exactly match the origin the browser uses.
+  if (result.code !== 0) throw new Error(`web_search exited with code ${result.code}.\n${streams}`);
 
-## Pairing additional browsers
+  return { stdout, stderr, code: result.code };
+};
 
-Run `ziggy web pair squarey` once for each new browser or device. Each command creates a new
-single-use link; opening the same link twice does not pair a second browser. Private-browsing
-windows lose their session when the private session ends and therefore need a fresh link next time.
+export default function webSearch(pi: Pick<ExtensionAPI, "exec" | "registerTool">): void {
+  pi.registerTool({
+    name: "web_search",
+    label: "web_search",
+    description:
+      "Search the web through Exa. Pass a natural-language query in args and optionally --n <count>.",
+    parameters: Parameters,
+    executionMode: "parallel",
+    async execute(_toolCallId, { args }, signal, _onUpdate, ctx) {
+      const result = await runWebSearch(pi, args, ctx.cwd, signal);
 
-All paired browsers for this resident can be revoked together:
+      const text = result.stderr
+        ? `${result.stdout}\n\nstderr:\n${result.stderr}`.trim()
+        : result.stdout;
 
-```sh
-ziggy web revoke squarey
-```
+      return {
+        content: [{ type: "text", text }],
+        details: result,
+      };
+    },
+  });
 
-Revocation closes an active browser connection on its next request or event. Every browser then
-needs a fresh pairing link.
+  pi.registerTool({
+    name: "fetch_url",
+    label: "fetch_url",
+    description:
+      "Fetch a public HTTP(S) URL as readable text. Private and local addresses are refused; Jina Reader is the fallback for blocked or JavaScript-heavy pages.",
+    parameters: FetchParameters,
+    executionMode: "parallel",
+    async execute(_toolCallId, { url, jinaFallback = true, maxChars = 20_000 }, signal) {
+      const result = await fetchUrl(url, { jinaFallback, maxChars, signal });
 
-## Profiles, residents, and ports
-
-One resident hosts a shared gateway. Every Profile registered with that resident is selectable in
-the web client, so selecting another Profile does not require another port or pairing link. Browser
-authorization applies to the gateway as a whole; it is not a per-Profile access list.
-
-Run separate residents only when you need separate owner processes or separate browser origins.
-Each resident needs a distinct local port and, for remote access, a distinct public origin. Pairing
-and revocation are scoped to the owner Profile's gateway. Separate origins create separate browser
-credentials, but they do not isolate Profiles while the residents expose the same registered
-Profile directory.
-
-## Updating the packaged guidance
-
-This guide also ships inside the required `ziggy-operations` package. Required packages refresh
-at resident start when their receipted copy is unchanged and the bundled content differs. Edited
-copies are left alone; `ziggy doctor` explains how to resolve them. For an older untracked
-installation, close active Profile sessions, stop the resident, then deliberately adopt the
-package from the updated executable:
-
-```sh
-ziggy extensions update squarey ziggy-operations --adopt
-```
-
-Use `--adopt` only for the initial takeover of an untracked package. Locally modified copies are
-not refreshed; resolve changes before updating. `--restart` on a managed resident avoids stopping
-it manually. See [Updating bundled extensions](extension-updates.md) for the resident, the extension lock and recovery.
-
-## Troubleshooting
-
-With an ephemeral port, `ziggy web pair squarey` uses the running resident's actual port. If no
-resident is running, start one or configure a nonzero port before pairing.
-
-If the resident fails after configuration, check whether another process or resident already owns
-the port:
-
-```sh
-ziggy serve status squarey
-ziggy serve logs squarey
-```
-
-If local access works but the remote URL does not, confirm that the Tailscale mapping targets the
-same loopback port and that `--public-url` matches the browser origin, including its HTTPS port.
-
-For service installation, lifecycle, logs, and restart behavior, see
-[Supervise `ziggy serve`](serve.md).
+      return { content: [{ type: "text", text: result.text }], details: result.details };
+    },
+  });
+}

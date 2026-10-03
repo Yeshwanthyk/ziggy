@@ -4,3 +4,5 @@ __pycache__/
 /dist/
 /clients/web/dist/
 docs/plans/tight-core/status.html
+/extensions/plugin-authoring/skills/plugin-authoring/template/dist/
+/extensions/plugin-authoring/skills/plugin-authoring/template/bun.lock

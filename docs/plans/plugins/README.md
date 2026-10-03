@@ -193,7 +193,7 @@ tool whose `_meta.ui` does not decode is hidden from the model and logged. App c
 Pi's connection is down. `app.js` stays at 653 kB (198 kB gzip); the ext-apps and MCP core code
 loads on first view as `assets/app-view.js` (241 kB, 62 kB gzip).
 
-### Step 3 — Plugin authoring, developed in a lab
+### Step 3 — Plugin authoring, developed in a lab (built; lab B1–B4 scored)
 
 - Bundled `extensions/plugin-authoring/`: skill + template (`plugin.json`, `mcp.json`, `server.ts`
   with the MCP SDK + `registerAppTool`/`registerAppResource`, `ui/` Vite single-file build, `skills/`,
@@ -208,6 +208,67 @@ loads on first view as `assets/app-view.js` (241 kB, 62 kB gzip).
     failures; text fallback useful; runs in the `ext-apps` reference host; app-only tools hidden;
     repeated hand-rolled UI → app-kit candidates.
 - Then squarey acceptance: the Linear triage plugin.
+
+- [x] `extensions/plugin-authoring/`: optional bundled package (not in `REQUIRED_PACKAGE_IDS`), one
+  skill `plugin-authoring` with `template/` beside its `SKILL.md`. Pi stops recursing at a folder
+  with `SKILL.md`, so `template/skills/example` is never loaded as a skill. The template is excluded
+  from the repo's tsconfig, oxlint and knip; it is embedded like any other package file.
+- [x] Template: `plugin.json`, `mcp.json` (stdio `bun --no-install server.ts`, cwd `${PLUGIN_ROOT}`),
+  `server.ts` (`McpServer` + `registerAppTool`/`registerAppResource`; `list_items`, `add_item`;
+  app-only `set_done`, `remove_item`; every result has text + `structuredContent`; `bun:sqlite` in
+  `$PLUGIN_DATA` with WAL + `busy_timeout`), `ui/` (Vite single file, host theme variables with
+  `light-dark()` fallbacks, refetch on load/focus/visibility for G6, no `<form>`), `skills/example`,
+  `rules.ts` (a dependency-free mirror of `src/extensions/plugin.ts`: exact `$schema`, strict
+  keys, command/cwd/env/url/header rules, `${NAME}` lookup, skills; kept in agreement by
+  `test/extensions/plugin-authoring.test.ts`), `smoke.ts` (applies `rules.ts`, spawns each stdio
+  server as Ziggy would, lists tools with visibility, reads each view, calls only declared reads
+  and `PLUGIN_DATA`-local writes, never external writes, and reruns the reads against a
+  `VACUUM INTO` copy of an existing `plugin-data/<id>/state.sqlite`).
+- [x] Dependencies: the template's `package.json` pins exact versions (ext-apps 2.0.3, MCP
+  server/client 2.2.0, zod 4.6.5, vite 8.3.2, vite-plugin-singlefile 2.3.3). The skill runs
+  `bun install` once in `plugins/<id>/`, so the plugin carries its own `node_modules` + `bun.lock`
+  and runs from any Profile outside the checkout. `mcp.json` uses `bun --no-install`, so loading never
+  fetches or writes (R4); a missing install fails fast.
+- [x] Skill: copy, rename, install, write, `bun run check`, `profile_extensions add` (claim success
+  only on `ok: true`), report. Rules lean on Steps 1/2/4 (command/cwd/env rules, `${NAME}` only in
+  env/headers/url, https, server naming, CSP from `_meta.ui.csp`, `ui/message` drafts only) and on
+  `smoke.ts` to check them. Secrets only through `ziggy plugin secret set`.
+- [x] Lab B1 (reading list, iteration 1): first-try build, 1 turn, 1m31s; view passes dark, light
+  and phone; app-only tools work from the view. Found: a new web UI chat does not serve views until
+  the sidebar refreshes (fixed); the header shows `Chat <uuid>` after reload (fixed); a live theme
+  switch seemed not to apply (not reproducible later). Scores in `lab.md`.
+- [x] Review round 2: SKILL.md frontmatter parsed as YAML (as Pi does), unset `${NAME}` is a smoke
+  warning that skips the server, no-stdio plugins get static checks only, parity tests for skills
+  and `<id>_<key>` naming.
+- [x] Review follow-ups (iteration 3): skill frontmatter must load in both Pi's and Ziggy's
+  readers, duplicate keys rejected, parity test over 9 SKILL.md texts; smoke fails a tool listed
+  twice and never calls EXTERNAL_WRITES.
+- [x] Lab B2–B4 against iteration 3, each 1 user turn: B2 PR inbox 2m09s, first try (`gh`
+  read-only, Approve app-only and never clicked); B3 Linear triage on a fake 5m33s (first check
+  failed on a gap in the fake; the subject read the lab notes, so they moved out of ZIGGY_HOME to
+  `/Users/yesh/code/personal/dump/plugin-lab-notes/lab.md`); B4 snooze 2m36s, first try, data kept.
+  Views pass light/dark/phone (B4 partial: a button row clips at 375 px).
+- [ ] B3 rerun read-only against the user's real Linear once their key is in the lab Profile's
+  Keychain entry.
+- [x] Browser check of web UI bugs 1 and 3 on a restarted resident (2026-10-03): a new chat
+  renders the view without a sidebar refresh; after a reload a pinned chat's header shows its pin
+  label.
+- [ ] Known issues from the lab, not fixed in Step 3:
+  - The first click into a view frame is often lost; a second click works (B3, B4). Host focus.
+  - Dark mode: the selected sidebar item's title is unreadable (web UI host styling).
+  - Phone width (375 px): chat markdown tables and wide button rows in views clip or scroll
+    sideways.
+- [x] Template-only lab iterations (scripted model, scratch ZIGGY_HOME): build + smoke first try;
+  view in dark, light, phone inline and sheet; refetch from history; app-only tools absent from the
+  model's tools and refused in codemode; text fallback. Found and fixed: the frame has no
+  `allow-forms`, so `<form>` submit never fires (now click + Enter); empty status margin caused a
+  phone scrollbar.
+
+Limits. `bun` must be on the resident PATH (launchd plist PATH under `serve install`). The view is
+237 kB (62 kB gzip), mostly ext-apps + zod. Errors inside the view frame do not show in the host
+console. G9 (gallery preview of an unenabled plugin) stays open. The `ext-apps` reference host was
+not run. App-kit candidates so far: a tiny view bridge, a theme-token CSS block, the refresh helper,
+list-row rendering, an input + button add control.
 
 ## Gaps tracked
 
@@ -238,5 +299,8 @@ rules. A click in the plugin UI counts as user intent.
   subagents (Codex rejects `gpt-6.1-sol` on the ChatGPT account). Commit each step only after the
   reviewer approves.
 - **State**: branch `plugins`; Step 1 committed after review round 3 approved (history in
-  `step1-review.md`); Step 2 committed after review round 2 approved (minor fixes applied); Step 4 committed after review round 3 approved (follow-ups applied).
-- **First next action**: build Step 3 (plugin-authoring skill + template), then run the lab.
+  `step1-review.md`); Step 2 committed after review round 2 approved (minor fixes applied); Step 4 committed after review round 3 approved (follow-ups applied); Step 3 approved in review round 2 with follow-ups applied, not yet committed; lab B1–B4 scored (see `plugin-lab-notes/lab.md`).
+- **First next action**: commit Step 3; then, once the user's Linear key is stored, restart the
+  lab resident without `LINEAR_API_KEY=lab-fake`, point `linear-triage` at the real API and rerun
+  B3's views read-only (no mutations, no write clicks, counts only in notes). Web UI bugs 1 and 3
+  are verified in the browser.

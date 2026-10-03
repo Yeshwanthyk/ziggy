@@ -666,6 +666,9 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
               context: { kind: "local" },
               name: conversation.ref.key.slice(3),
             });
+            // The open made it a live web UI session; don't wait for a sidebar refresh to say so.
+            const key = refKey(conversation.ref);
+            setUiLive((current) => (current.has(key) ? current : new Set([...current, key])));
           }
           await client.watchSession(conversation.ref);
         } catch (cause) {
@@ -903,10 +906,15 @@ export const useZiggyGateway = (connector: GatewayConnector = defaultConnector) 
           return;
         }
         if (nextConversations === undefined || pinResult.status !== "fulfilled") return;
+        const savedPin = pinResult.value.pins.find((pin) => sameRef(pin.ref, saved.ref));
+        const listed = nextConversations.find((candidate) => sameRef(candidate.ref, saved.ref));
+        // A pin label is the name the person gave the chat; it wins over the key-derived title.
         const conversation =
-          nextConversations.find((candidate) => sameRef(candidate.ref, saved.ref)) ??
-          pinResult.value.pins
-            .filter((pin) => sameRef(pin.ref, saved.ref))
+          (listed !== undefined && savedPin?.label !== undefined
+            ? { ...listed, title: savedPin.label }
+            : listed) ??
+          [savedPin]
+            .filter((pin) => pin !== undefined)
             .map((pin): ConversationSummary => ({
               ref: pin.ref,
               title:

@@ -1,199 +1,285 @@
-# Connect a Profile to Telegram
+/* eslint-disable ziggy-effect/no-native-promise-ownership -- Pi tool execution is a Promise adapter boundary. */
+/* eslint-disable ziggy-effect/no-try-catch-or-throw -- Throwing from a Pi tool marks the tool result as failed. */
+/* eslint-disable ziggy-effect/no-error-constructor -- Pi tool failures cross this boundary as rejected Error values. */
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 
-This guide connects one Ziggy Profile to Telegram through the Bot API's long-polling interface. The
-existing `ziggy serve <profile>` resident owns the Telegram loop alongside the automation scheduler
-and any other configured channels.
+const JINA_READER_URL = "https://r.jina.ai/";
 
-Keep the bot token and owner user ID out of documentation, commits, screenshots, logs, and chat
-transcripts. Treat the bot token like a password.
+const TIMEOUT_MS = 30_000;
 
-## What the gateway provides
+const MAX_REDIRECTS = 5;
 
-A Telegram-connected Profile uses the same SOUL, provider/model configuration, selected extension
-packages, and Pi runtime as its other faces. Telegram owns only message transport and chat-specific
-session routing.
+const USER_AGENT = "ziggy-web-search/0.1";
 
-- Only text messages authored by the configured `ownerUserId` are processed.
-- Private chats use owner memory and sessions under `sessions/telegram/user-<user-id>/`.
-- Group and supergroup chats use group memory and sessions under
-  `sessions/telegram/group-tg<absolute-chat-id>/`.
-- Each Telegram chat has one serialized Pi chat handle. Follow-up messages continue the same chat
-  session while separate chats remain isolated.
-- The exact owner-authored text `stop` or `/stop` aborts the active turn in that chat and replies
-  `Stopped.`. When no turn is active, Telegram replies `Nothing was running.`.
-- Replies are split at Telegram's 4,096 Unicode-code-point message limit. Specialist progress is
-  delivered as bounded text messages before the final reply when a specialist emits progress.
-- Messages from other users, unsupported chat types, and updates without text are ignored.
-- Request skills in natural language in Telegram or the resident web UI; do not send Pi's
-  `/skill:<name>` syntax as a Telegram command.
+const MAX_BYTES = 5 * 1024 * 1024;
 
-Telegram keeps the current update offset in process memory. On startup Ziggy performs a zero-timeout
-poll, advances past the returned updates, and logs that the pending backlog was discarded. A restart
-does not recover accepted Telegram work: pending messages can be discarded, and the offset is not a
-durable ingress journal. Telegram also has no Telegram health projection in the current
-implementation.
+export const MAX_OUTPUT_CHARS = 24 * 1024;
 
-## Prerequisites
-
-Before creating the bot:
-
-1. Initialize and configure the Profile.
-2. Confirm that its model and authentication work.
-3. Select any optional extension packages the gateway should admit.
-4. Install or run the resident owner.
-
-Useful checks:
-
-```sh
-ziggy doctor <profile>
-ziggy serve status <profile>
-```
-
-`doctor` validates a present `telegram.json` against Ziggy's strict local schema. `serve status`
-does not report a Telegram health projection; use `ziggy serve logs <profile>` and a live message
-round trip to prove Telegram connectivity.
-
-## 1. Create a bot with BotFather
-
-In Telegram, open [@BotFather](https://t.me/BotFather):
-
-1. Send `/newbot`.
-2. Choose a display name for the Profile.
-3. Choose a unique username ending in `bot`.
-4. Store the returned token securely for the Profile configuration step.
-
-Do not put the token in a shell command, source file, issue, or operations guide. If it is exposed,
-revoke it with BotFather and issue a replacement.
-
-## 2. Copy the owner user ID
-
-The owner ID is the only Telegram account Ziggy accepts. Use a trusted Telegram user-ID bot or an
-equivalent account-information method to obtain your numeric user ID. Use the user ID, not the bot
-ID, username, chat ID, or group ID.
-
-## 3. Create the Profile configuration
-
-Create `<profile>/telegram.json` with exactly these fields:
-
-```json
-{
-  "botToken": "replace-with-the-telegram-bot-token",
-  "ownerUserId": 123456789
+interface FetchDetails {
+  source: "direct" | "jina";
+  status: number;
+  url: string;
+  jinaFallbackError?: string;
 }
-```
 
-`ownerUserId` is a positive safe integer JSON number. The decoder rejects unknown fields, missing
-fields, empty tokens, non-integer IDs, and IDs outside JavaScript's safe integer range. Store the file
-privately:
+export interface FetchResult {
+  readonly text: string;
+  readonly details: FetchDetails;
+}
 
-```sh
-umask 077
-${EDITOR:-nano} <profile>/telegram.json
-chmod 600 <profile>/telegram.json
-```
+const fail = (message: string): never => {
+  throw new Error(message);
+};
 
-Do not commit this file. Managed service definitions contain the Profile path but no channel token.
+const clip = (value: string, max: number): string =>
+  value.length <= max ? value : `${value.slice(0, max)}\n[output truncated]`;
 
-## 4. Validate and restart the resident
+const isPrivateIpv4 = (ip: string): boolean => {
+  const [a = 0, b = 0] = ip.split(".").map(Number);
 
-Validate before restart:
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && (b === 0 || b === 168)) ||
+    (a === 198 && b >= 18 && b <= 19) ||
+    a >= 224
+  );
+};
 
-```sh
-ziggy doctor <profile>
-```
+/** Unknown address shapes count as private so the guard fails closed. */
+export const isPrivateIp = (value: string): boolean => {
+  const ip = value.toLowerCase().replace(/^\[|\]$/g, "");
 
-Then restart the existing resident so it rereads `telegram.json`:
+  if (isIP(ip) === 4) return isPrivateIpv4(ip);
 
-```sh
-ziggy serve restart <profile>
-ziggy serve logs <profile>
-```
+  if (isIP(ip) !== 6) return true;
 
-For a Profile without a managed service, install and start it instead:
+  const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
 
-```sh
-ziggy serve install <profile>
-```
+  if (mapped !== undefined) return isPrivateIpv4(mapped);
 
-Use one `ziggy serve` process for the scheduler and every configured channel loop. The compatibility
-foreground names are `ziggy serve <profile>` and `ziggy gateway <profile>`; there is no separate
-Telegram resident command.
+  return (
+    ip === "::" ||
+    ip === "::1" ||
+    ip.startsWith("::ffff:") ||
+    /^fe[89ab]/.test(ip) ||
+    ip.startsWith("fc") ||
+    ip.startsWith("fd")
+  );
+};
 
-## 5. Prove the live message path
+/** Rejects non-HTTP(S) URLs and any host that names or resolves to a private address. */
+export const assertPublicUrl = async (raw: string): Promise<URL> => {
+  const url = URL.parse(raw) ?? fail("URL must be a valid absolute HTTP(S) URL.");
 
-Follow the managed logs while testing:
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    fail("Only HTTP(S) URLs are supported.");
+  }
 
-```sh
-ziggy serve logs <profile> --follow
-```
+  const hostname = url.hostname.toLowerCase();
+  const literal = hostname.replace(/^\[|\]$/g, "");
 
-Send a short message from the configured owner account to the bot. A successful private-chat turn
-has these observations:
+  if (
+    !hostname ||
+    hostname === "localhost" ||
+    [".localhost", ".local", ".internal", ".home.arpa"].some((suffix) => hostname.endsWith(suffix))
+  ) {
+    fail("Private and local hostnames are not allowed.");
+  }
 
-1. Telegram receives a reply from the bot.
-2. The log contains a bounded line shaped like
-   `[gateway] user-<user-id> in:<count> out:<count> chars`.
-3. `ziggy sessions list <profile>` shows the Telegram session after the first turn.
+  if (isIP(literal) !== 0) {
+    if (isPrivateIp(literal)) fail("Private and local IP addresses are not allowed.");
 
-Send a follow-up to prove session continuity. Then test a group or supergroup separately if the bot
-is intended to operate there. Only the configured owner can trigger a turn, but every owner-authored
-text message in an admitted group is processed; restrict the bot's group membership accordingly.
+    return url;
+  }
 
-Send `stop` during a long-running turn to prove scoped cancellation. Test an automation with a
-`broadcast: telegram:chat:<chat-id>` target only after the resident and its Telegram configuration
-are healthy; automation delivery loads the same `telegram.json` and reports bounded delivery status.
+  let addresses: ReadonlyArray<{ readonly address: string }> = [];
 
-## Troubleshooting
+  try {
+    addresses = await lookup(hostname, { all: true, verbatim: true });
+  } catch {
+    fail(`Could not resolve hostname: ${hostname}`);
+  }
 
-### The resident is healthy but Telegram does not answer
+  if (addresses.length === 0 || addresses.some((address) => isPrivateIp(address.address))) {
+    fail("URL resolves to a private or local network address.");
+  }
 
-Check these in order:
+  return url;
+};
 
-1. `<profile>/telegram.json` exists under the resolved Profile path used by `serve`.
-2. `ziggy doctor <profile>` reports the gateway configuration as valid.
-3. The resident was restarted after creating or changing `telegram.json`.
-4. `botToken` is the current token from BotFather.
-5. The sending account's numeric user ID exactly matches `ownerUserId`.
-6. The message contains text and is sent in a private chat, group, or supergroup.
-7. `ziggy serve logs <profile>` has no `[gateway] Telegram stopped:` or Telegram API failure line.
+const requestSignal = (signal: AbortSignal | undefined): AbortSignal =>
+  signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(TIMEOUT_MS)])
+    : AbortSignal.timeout(TIMEOUT_MS);
 
-The process and scheduler can remain healthy while Telegram is disconnected because Telegram has no
-separate status projection. Inspect the logs and perform a fresh message proof.
+const fetchPublic = async (
+  raw: string,
+  signal: AbortSignal | undefined,
+): Promise<{ response: Response; url: URL }> => {
+  let current = await assertPublicUrl(raw);
 
-### The bot ignores a message in a group
+  for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
+    const response = await fetch(current, {
+      headers: {
+        accept: "text/html, text/plain, text/markdown, application/json;q=0.9, */*;q=0.1",
+        "user-agent": USER_AGENT,
+      },
+      redirect: "manual",
+      signal: requestSignal(signal),
+    });
 
-Confirm the sender is exactly `ownerUserId`, the update contains text, and the chat is a group or
-supergroup. Telegram privacy settings can prevent a bot from receiving ordinary group messages;
-adjust the bot's group privacy setting with BotFather when the bot must receive them. Ziggy does not
-implement mention-only admission or a multi-user allowlist.
+    const location = response.headers.get("location");
 
-### A message is missing after restart
+    if (![301, 302, 303, 307, 308].includes(response.status) || !location) {
+      return { response, url: current };
+    }
 
-The current Telegram adapter keeps its offset only in memory and discards pending startup backlog.
-A restart can therefore lose messages that were waiting in Telegram or still being processed. Inspect
-logs before repeating an operator action; do not assume Telegram delivery is durable or exactly once.
+    await response.body?.cancel();
+    current = await assertPublicUrl(new URL(location, current).toString());
+  }
 
-### A long reply is incomplete
+  return fail("Too many redirects.");
+};
 
-Telegram messages are split at 4,096 Unicode code points. Inspect the log's `out:<count>` value and
-confirm that all chunks arrived. A provider or Telegram API failure is logged as a bounded gateway
-failure; retry only after checking whether Telegram accepted the preceding chunk.
+/** Reads a response body, failing once it exceeds `maxBytes`. */
+export const readBounded = async (response: Response, maxBytes = MAX_BYTES): Promise<string> => {
+  if (Number(response.headers.get("content-length") ?? "0") > maxBytes) {
+    fail(`Response exceeds the ${maxBytes} byte limit.`);
+  }
 
-## Token rotation and removal
+  if (!response.body) return "";
 
-To rotate a Telegram bot token:
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let text = "";
 
-1. Revoke or regenerate the token with BotFather.
-2. Replace only `botToken` in `<profile>/telegram.json` without exposing either token.
-3. Preserve file mode `600`.
-4. Run `ziggy doctor <profile>`.
-5. Restart the resident and repeat the live message proof.
+  try {
+    for (let next = await reader.read(); !next.done; next = await reader.read()) {
+      total += next.value.byteLength;
 
-To disconnect Telegram without deleting sessions or memory:
+      if (total > maxBytes) fail(`Response exceeds the ${maxBytes} byte limit.`);
+      text += decoder.decode(next.value, { stream: true });
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // The body is already complete or failed; cancelling only releases the stream.
+    }
+  }
 
-1. Move `telegram.json` outside the Profile or delete it deliberately.
-2. Restart `serve`.
-3. Revoke the bot token with BotFather if the integration is no longer needed.
+  return text + decoder.decode();
+};
 
-Removing the configuration does not delete `sessions/telegram/`, memory, automation history, or the
-resident service.
+const NAMED_ENTITIES = new Map([
+  ["amp", "&"],
+  ["apos", "'"],
+  ["gt", ">"],
+  ["lt", "<"],
+  ["nbsp", " "],
+  ["quot", '"'],
+]);
+
+const decodeEntities = (value: string): string =>
+  value.replace(/&(#\d+|#x[\da-f]+|[a-z]+);/gi, (whole, entity: string) => {
+    const code = entity.startsWith("#x")
+      ? Number.parseInt(entity.slice(2), 16)
+      : entity.startsWith("#")
+        ? Number.parseInt(entity.slice(1), 10)
+        : undefined;
+
+    if (code === undefined) return NAMED_ENTITIES.get(entity.toLowerCase()) ?? whole;
+
+    return code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+  });
+
+const htmlToText = (html: string) => {
+  const rawTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "";
+
+  const text = html
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(script|style|noscript|svg|template)[^>]*>[\s\S]*?<\/\1>/gi, " ")
+    .replace(
+      /<\/(article|aside|blockquote|br|div|h[1-6]|li|main|p|pre|section|table|tr|ul)>/gi,
+      "\n",
+    )
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[ \t\r\f]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return {
+    title: decodeEntities(rawTitle.replace(/<[^>]+>/g, " ")).trim(),
+    text: decodeEntities(text),
+  };
+};
+
+const needsJina = (text: string, contentType: string, status: number): boolean =>
+  status >= 400 ||
+  (contentType.includes("html") &&
+    (text.length < 240 ||
+      /enable javascript|checking your browser|captcha|cookie consent/i.test(text)));
+
+/** Fetches a public URL as readable text, falling back to Jina Reader for blocked or script-only pages. */
+export const fetchUrl = async (
+  raw: string,
+  options: {
+    readonly jinaFallback: boolean;
+    readonly maxChars: number;
+    readonly signal: AbortSignal | undefined;
+  },
+): Promise<FetchResult> => {
+  const direct = await fetchPublic(raw, options.signal);
+  const contentType = direct.response.headers.get("content-type")?.toLowerCase() ?? "";
+  const body = await readBounded(direct.response);
+  const parsed = contentType.includes("html") ? htmlToText(body) : { title: "", text: body.trim() };
+
+  const directText = clip(
+    parsed.title ? `# ${parsed.title}\n\n${parsed.text}` : parsed.text,
+    options.maxChars,
+  );
+
+  const directResult = (jinaFallbackError?: string): FetchResult => {
+    const details: FetchDetails = {
+      source: "direct",
+      status: direct.response.status,
+      url: direct.url.toString(),
+    };
+
+    if (jinaFallbackError !== undefined) details.jinaFallbackError = jinaFallbackError;
+
+    return { text: directText, details };
+  };
+
+  if (!options.jinaFallback || !needsJina(parsed.text, contentType, direct.response.status)) {
+    return directResult();
+  }
+
+  try {
+    const jina = await fetch(`${JINA_READER_URL}${direct.url.toString()}`, {
+      headers: { accept: "text/markdown, text/plain;q=0.9", "user-agent": USER_AGENT },
+      signal: requestSignal(options.signal),
+    });
+
+    const jinaBody = await readBounded(jina);
+
+    if (!jina.ok) fail(`Jina returned HTTP ${jina.status}.`);
+
+    return {
+      text: clip(jinaBody.trim(), options.maxChars),
+      details: { source: "jina", status: jina.status, url: direct.url.toString() },
+    };
+  } catch (error) {
+    if (options.signal?.aborted || !direct.response.ok || parsed.text.length === 0) throw error;
+
+    return directResult(String(error));
+  }
+};

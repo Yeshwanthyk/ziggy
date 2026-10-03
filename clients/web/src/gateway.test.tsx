@@ -1139,6 +1139,44 @@ describe("useZiggyGateway", () => {
     );
   });
 
+  it("restores a named chat under its pin label, not its key", async () => {
+    // Stored selections pass the protocol's ref check, which needs a real Profile id.
+    const named = { ...profile, profileId: "prf_0123456789abcdef01234567" } as const;
+    const main = { profileId: named.profileId, kind: "live", key: "local/main" } as const;
+    const chatRef = { profileId: named.profileId, kind: "live", key: "ui/chat-0b1c" } as const;
+    sessionStorage.setItem(
+      `ziggy:selected:v1:${named.profileId}`,
+      JSON.stringify({ version: 1, target: { kind: "ref", ref: chatRef } }),
+    );
+    const { client } = makeClient({
+      listProfiles: vi.fn(async () => ({ profiles: [named] })),
+      currentProfile: vi.fn(async () => ({
+        profileId: named.profileId,
+        name: named.name,
+        cliTarget: "squarey",
+      })),
+      openMain: vi.fn(async () => main),
+      listSessions: vi.fn(async () => ({
+        profileId: named.profileId,
+        live: [
+          { ref: main, kind: "ui" as const, idle: true },
+          { ref: chatRef, kind: "ui" as const, idle: true },
+        ],
+        stored: [],
+      })),
+      listPins: vi.fn(async () => ({
+        profileId: named.profileId,
+        revision: 2,
+        pins: [{ id: "chat-pin", ref: chatRef, label: "B1 try", order: 0 }],
+      })),
+    });
+    vi.spyOn(client, "request").mockResolvedValue({ ref: chatRef });
+    const hook = await connectHook(client);
+    await waitFor(() => expect(hook.result.current.selectedRef).toEqual(chatRef));
+
+    expect(hook.result.current.selectedTitle).toBe("B1 try");
+  });
+
   it("uses the latest pin revision and updates automation lifecycle after acknowledged actions", async () => {
     const { client, fixture } = makeClient({
       listPins: vi.fn(async () => ({ profileId: profile.profileId, revision: 7, pins: [] })),
@@ -1466,6 +1504,8 @@ describe("useZiggyGateway", () => {
     );
     expect(hook.result.current.selectedRef).toEqual(ref);
     expect(hook.result.current.selectedTitle).toBe("Planning");
+    // The new chat serves views at once, before any sidebar refresh lists it as live.
+    expect(hook.result.current.selectedServesViews).toBe(true);
     expect(fixture.openMain).toHaveBeenCalledTimes(1);
   });
 

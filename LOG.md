@@ -1747,3 +1747,107 @@ Automation delivery to a channel goes through one seam, `Deliver = (profile, tar
   open a tab; `makeLinkGate` dropped its redundant `pending` flag; `selectedServesViews` uses the `ui`
   allow list above and the note says "live". `bun run check` passes; `bun test test` 689 pass;
   web `vp test` 91 pass.
+
+## Plugins Step 3: plugin authoring
+
+- New optional bundled package `extensions/plugin-authoring/`: skill `plugin-authoring` plus
+  `template/` (plugin.json, mcp.json, Bun MCP server with `registerAppTool`/`registerAppResource`,
+  Vite single-file view on host theme variables, `skills/example`, `smoke.ts`, SQLite WAL + busy
+  timeout in `PLUGIN_DATA`, refetch on load/focus/visibility). Registered in `catalog.json`; the
+  template is excluded from tsconfig, oxlint and knip; catalog and embeds regenerated.
+- Dependencies: exact pins in the template `package.json`, `bun install` once inside
+  `plugins/<id>/`, and `bun --no-install` in `mcp.json`, so a plugin outside the checkout resolves
+  its own packages and loading never installs (R4).
+- Lab: no provider credentials in the environment and real Profiles are off limits, so B1–B4 were
+  not run. `dump/plugin-lab/lab.md` has the setup, briefs, rubric and a fake Linear for B3.
+- Template-only check in a scratch ZIGGY_HOME with a scripted model, following the skill by hand:
+  build + smoke first try; view rendered dark/light/phone (inline and sheet), refetched from
+  history; app-only tools never offered to the model and refused in codemode. Fixed from it: the
+  view frame lacks `allow-forms`, so the template no longer uses `<form>` (button click + Enter),
+  the skill says the frame is scripts-only, and the empty status line no longer adds a scrollbar.
+
+### Step 3 review round 1
+
+- `template/rules.ts`: dependency-free mirror of `src/extensions/plugin.ts` (exact plugin.json and
+  mcp.json `$schema`, strict keys as with `onExcessProperty: "error"`, server key, command, cwd,
+  reserved env, `${NAME}` from Keychain then env, url and header rules, skills from `<name>/SKILL.md`
+  only). Stricter on purpose: plugin.json name = folder, skill name = folder, no `${NAME}` in
+  command/args/cwd. `test/extensions/plugin-authoring.test.ts` runs the same bad and good inputs
+  through `pluginMcp`/`extensions.show` and `checkPlugin` and requires the same verdict.
+- `smoke.ts` rewritten on it: spawns like Ziggy (literal env, PLUGIN_* substituted in args, `bun`
+  -> `process.execPath`, other bare names from PATH, Ziggy's cwd), calls only `READS` and
+  `LOCAL_WRITES`, lists `EXTERNAL_WRITES` without calling them, and reruns the reads against a
+  `VACUUM INTO` copy of `plugin-data/<id>/state.sqlite` when it exists (a read-only handle cannot
+  create the copy, so the source opens read-write and is only read).
+- `server.ts` fails fast without `PLUGIN_DATA`; title is `trim().min(1)`; `view.ts` ignores the
+  initial tool result once a refresh has rendered. Skill: `mkdir -p plugins`, existing
+  `plugin-data/<id>/` handling, the exact `ziggy plugin secret set "<pwd>" NAME` command, the
+  smoke safety rule and the strict-key rule. Template `dist/` and `bun.lock` are gitignored and
+  skipped by the catalog generator.
+- Verified: check, 692 tests, template build + smoke in scratch (`.DS_Store` in `skills/`, bad
+  `$schema`/extra key fail; the scratch lab `todo` plugin ran its reads against a copy of its data
+  and left the source unchanged).
+
+### Step 3 review round 2 and lab B1
+
+- M1: `template/rules.ts` reads SKILL.md frontmatter as YAML (`Bun.YAML.parse`, Pi's extraction:
+  `---` start, first `\n---` end). Pi parses with `yaml` and drops a skill whose YAML fails, which
+  made Ziggy drop the plugin while the old lenient parser passed smoke. A parse error is now a
+  problem; the skill says to quote `description:`, and the template's skill description is quoted.
+- m1: an unset `${NAME}` is a warning; `checkPlugin` returns `unset` server keys and smoke skips
+  them (as Ziggy does) and ends "smoke ok for the rest; not started until their secrets are set".
+  Step 5 tells the agent to give the `ziggy plugin secret set` command and rerun.
+- m2: no stdio server means static checks only, not a failure (`dist/view.html` optional too).
+- m3 and parity: tests add a remote unset-secret case, a two-server `<id>_<key>` naming case
+  against `pluginMcp`, and five frontmatter cases run through Pi's `loadSkillsFromDir` and
+  `checkPlugin` (plain, quoted colon, unquoted colon, empty, folded).
+- n1: SKILL.md must be a regular file. n2: comment reworded and `PRAGMA busy_timeout = 5000`
+  before `VACUUM INTO`.
+- Skill: rename before `bun install` (B1's agent installed first, `bun.lock` kept "example").
+- Lab B1 (reading list, iteration 1): first-try build, 1 turn, 1m31s; view passes dark, light and
+  phone; mark read, add and two-click delete work from the view; app-only tools never used by the
+  model. Found: a new web UI chat shows "view available only in live web UI conversations" until
+  the sidebar refreshes (`uiLive` filled only on sessions refresh); a live theme switch is not
+  applied until reload; the header shows `Chat <uuid>` after reload. Scores in the lab's `lab.md`.
+- Lab B2 started at 11:53 and stopped on provider 429s (rate limit); nothing built, no `gh` call.
+- Verified: `bun run check` exit 0, `bun test test` 694 pass, template check in scratch, and the
+  unset-secret path in scratch.
+
+### Step 3 review follow-ups, lab B2 and B3, web UI fixes
+
+- Frontmatter: `template/rules.ts` requires a skill to load in both readers: Pi's (BOM strip,
+  `---` to `\n---`, YAML, now also rejecting duplicate top-level keys) and Ziggy's lenient
+  `parseFrontmatter` with its name/description checks. The parity test runs 9 whole SKILL.md texts
+  (adding duplicate `description:`, `name: sample # c`, a leading BOM, a closing `---more`) and
+  requires smoke to load exactly when both `loadSkillsFromDir` and `extensions.show` do. SKILL.md
+  says: one line each for name and description, no comments or repeated keys, closing `---`.
+- `template/smoke.ts`: a tool in more than one of READS, LOCAL_WRITES and EXTERNAL_WRITES fails,
+  and the calls step refuses any EXTERNAL_WRITES name.
+- Web UI bug 1: `selectConversation` adds a chat it just opened with `session.open` to `uiLive`,
+  so a new chat serves views without a sidebar refresh (asserted in the "creates and pins a
+  separate named chat" test).
+- Web UI bug 3: restoring a stored selection uses the pin label when the chat is pinned, so the
+  header shows the chat's name, not `Chat <key>`. New test "restores a named chat under its pin
+  label, not its key" fails without the fix.
+- Web UI bug 2 (theme change not reaching an open view): not reproducible on the current host.
+  Light to dark, dark to light, the expanded sheet and 375 px all followed. B1's report was most
+  likely browser-pane screenshot lag. No change.
+- Lab B2 (PR inbox, iteration 3): first-try build, 1 turn, 2m09s; light, dark and phone pass;
+  `gh` read-only; `approve_pr` app-only, in EXTERNAL_WRITES, never called (no Approve clicked).
+  Found: no loading state while `gh` runs (5 to 8 s blank).
+- Lab B3 (Linear triage, fake Linear, iteration 3): 1 turn, 5m33s; the first check failed on a
+  gap in the lab fake (`viewer.teams`), fixed in the fake. Three writes app-only, each sent one
+  `issueUpdate` from the view. The subject read the lab notes and fake source while debugging,
+  so the lab notes moved out of ZIGGY_HOME to `dump/plugin-lab-notes/`. Scores in its `lab.md`.
+- Lab B4 (snooze, edits B3's plugin): first-try check, 1 turn, 2m36s; snooze is an app-only
+  local write in `state.sqlite` (no Linear write), the rules file and B3's data were kept. Found:
+  the first click into a view frame is often lost (host focus, B3 and B4), and a four-button row
+  clips at 375 px. App-kit candidates now include a loading state, a smoke stub for external
+  services and a date control.
+- Verified: `bun run check` exit 0 (web assets regenerated), `bun test test` 694 pass, web
+  vitest 92 pass.
+- Step 3 review round 3 (delta): approved, no new findings. Bugs 1 and 3 verified in the browser
+  on a restarted lab resident. SKILL.md step 5 now keeps debugging inside the plugin folder and
+  the Profile (the B3 subject grepped the person's shell config file names). Known lab issues
+  (lost first click into a view, dark sidebar title, clipping at phone width) are in the plan.
+  Real-Linear read-only rerun of B3 waits on a Linear key in the lab Profile.

@@ -92,6 +92,12 @@
       "path": "./extensions/pi-packages"
     },
     {
+      "id": "plugin-authoring",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/plugin-authoring"
+    },
+    {
       "id": "qmd",
       "version": "0.1.0",
       "source": "bundled",
