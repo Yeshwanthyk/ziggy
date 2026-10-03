@@ -1,11 +1,14 @@
 {
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
-  "mcpServers": {
-    "server": {
-      "type": "stdio",
-      "command": "bun",
-      "args": ["--no-install", "server.ts"],
-      "cwd": "${PLUGIN_ROOT}"
-    }
-  }
+  "name": "@ziggy/obsidian",
+  "private": true,
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  },
+  "version": "0.1.0"
 }

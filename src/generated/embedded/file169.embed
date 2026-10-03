@@ -1,223 +1,132 @@
-/* eslint-disable ziggy-effect/no-native-promise-ownership -- This executable owns its HTTP Promise boundary. */
-/* eslint-disable ziggy-effect/no-try-catch-or-throw -- This executable converts process failures into JSON and exit codes. */
-/* eslint-disable ziggy-effect/no-error-constructor -- HTTP and protocol failures terminate this executable boundary. */
-/* eslint-disable ziggy-effect/no-json-parse -- TypeBox validates every parsed unknown value immediately. */
-/* eslint-disable ziggy-effect/no-instanceof-error -- The executable normalizes unknown top-level failures for stderr-safe output. */
+/* oxlint-disable ziggy-effect/no-native-promise-ownership -- Pi extension callbacks are the package filesystem boundary. */
+/* oxlint-disable ziggy-effect/no-try-catch-or-throw -- Pi tools return bounded, stable boundary errors. */
+/* oxlint-disable ziggy-effect/no-promise-catch -- Observer cleanup is intentionally best effort. */
 import { Type } from "typebox";
 import { Check } from "typebox/value";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  appendReviewLog,
+  decodeSessionEntries,
+  observeCompletedForegroundSession,
+  readStatus,
+  writeCuratorExtension,
+  type ExtensionWriteInput,
+  type ReviewLogInput,
+} from "./src/manager.ts";
 
-const MCP_URL = "https://mcp.exa.ai/mcp";
+const ErrorMessage = Type.Object({ message: Type.String() }, { additionalProperties: true });
 
-const REQUEST_TIMEOUT_MS = 30_000;
-
-const McpMessage = Type.Object(
-  {
-    error: Type.Optional(Type.Object({ message: Type.String() }, { additionalProperties: true })),
-    result: Type.Optional(
-      Type.Object(
-        {
-          content: Type.Array(Type.Object({ text: Type.String() }, { additionalProperties: true })),
-        },
-        { additionalProperties: true },
-      ),
-    ),
-  },
-  { additionalProperties: true },
-);
-
-const ExaResults = Type.Object(
-  {
-    results: Type.Array(
-      Type.Object(
-        {
-          title: Type.Optional(Type.String()),
-          url: Type.Optional(Type.String()),
-          text: Type.Optional(Type.String()),
-          summary: Type.Optional(Type.String()),
-          highlights: Type.Optional(Type.Array(Type.String())),
-        },
-        { additionalProperties: true },
-      ),
-    ),
-  },
-  { additionalProperties: true },
-);
-
-interface SearchResult {
-  title: string;
-  url: string;
-  highlight: string;
-}
-
-interface SearchOutput {
-  query: string;
-  answer: string;
-  results: SearchResult[];
-}
-
-const parseArgs = (args: string[]) => {
-  let count = 5;
-  const words: string[] = [];
-
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index];
-
-    if (argument === "--n") {
-      const value = args[index + 1];
-
-      if (value !== undefined) {
-        const parsed = Number.parseInt(value, 10);
-
-        if (Number.isFinite(parsed)) count = parsed;
-        index += 1;
-      }
-    } else if (argument !== undefined && !argument.startsWith("--")) {
-      words.push(argument);
-    }
-  }
-
-  return { query: words.join(" ").trim(), count: Math.max(1, count) };
-};
-
-const clip = (value: string, maximum: number): string => value.slice(0, maximum);
-
-const canned = (query: string, count: number): SearchOutput => ({
-  query,
-  answer: `(offline) Top result for: ${query}`,
-  results: Array.from({ length: Math.min(3, count) }, (_, index) => ({
-    title: `Result ${index + 1} for ${query}`,
-    url: `https://example.com/${index + 1}`,
-    highlight: "...",
-  })),
+const jsonResult = <T>(payload: T) => ({
+  content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+  details: payload,
 });
 
-const parseJsonResults = (text: string, count: number): SearchResult[] => {
-  let value: unknown;
-
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return [];
-  }
-
-  if (!Check(ExaResults, value)) return [];
-
-  return value.results.slice(0, count).map((item) => ({
-    title: item.title ?? "",
-    url: item.url ?? "",
-    highlight: clip(item.highlights?.[0] ?? item.text ?? item.summary ?? "", 300),
-  }));
-};
-
-const parseDigest = (text: string, count: number): SearchResult[] => {
-  const results: SearchResult[] = [];
-
-  for (const block of text.split("\n---\n")) {
-    let title = "";
-    let url = "";
-    let inHighlights = false;
-    const highlights: string[] = [];
-
-    for (const line of block.split("\n")) {
-      const value = line.trim();
-
-      if (value.startsWith("Title:")) {
-        title = value.slice(6).trim();
-        inHighlights = false;
-      } else if (value.startsWith("URL:")) {
-        url = value.slice(4).trim();
-        inHighlights = false;
-      } else if (value.startsWith("Published:") || value.startsWith("Author:")) {
-        inHighlights = false;
-      } else if (value.startsWith("Highlights:")) {
-        inHighlights = true;
-      } else if (inHighlights && value && value !== "[...]") {
-        highlights.push(value);
-      }
-    }
-
-    if (url) results.push({ title, url, highlight: clip(highlights.join(" "), 300) });
-
-    if (results.length >= count) break;
-  }
-
-  return results;
-};
-
-const mcpCall = async (endpoint: string, query: string, count: number): Promise<string> => {
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: {
-        name: "web_search_exa",
-        arguments: { query, numResults: count, type: "auto", livecrawl: "fallback" },
-      },
-    }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+const errorResult = (cause: unknown) =>
+  jsonResult({
+    ok: false,
+    error: Check(ErrorMessage, cause) ? cause.message : String(cause),
   });
 
-  const body = await response.text();
+const logParameters = Type.Object({
+  decision: Type.Union([
+    Type.Literal("applied"),
+    Type.Literal("no-op"),
+    Type.Literal("staged"),
+    Type.Literal("error"),
+  ]),
+  detail: Type.String({ minLength: 1, maxLength: 2_000 }),
+  evidence: Type.Optional(Type.String({ maxLength: 500 })),
+  clearReady: Type.Optional(Type.Boolean()),
+});
 
-  if (!response.ok) {
-    throw new Error(`Exa MCP status ${response.status}: ${clip(body.trim(), 200)}`);
-  }
+const writeParameters = Type.Object({
+  id: Type.String({ minLength: 1, maxLength: 64 }),
+  body: Type.String({ minLength: 1, maxLength: 64 * 1024 }),
+  replace: Type.Optional(Type.Boolean()),
+  expectedOldSha256: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })),
+});
 
-  let payload = "";
+export default function selfImprovement(pi: ExtensionAPI): void {
+  pi.on("agent_settled", (_event, ctx) => {
+    if (!ctx.isIdle()) return;
+    void observeCompletedForegroundSession({
+      profilePath: ctx.cwd,
+      sessionFile: ctx.sessionManager.getSessionFile(),
+      entries: decodeSessionEntries(ctx.sessionManager.getEntries()),
+    }).catch(() => undefined);
+  });
 
-  for (const line of body.split("\n")) {
-    const trimmed = line.trim();
+  pi.registerTool({
+    name: "self_improvement_status",
+    label: "self_improvement_status",
+    description: "Show bounded Curator observation state and whether a review is ready.",
+    parameters: Type.Object({}, { additionalProperties: false }),
+    executionMode: "sequential",
+    async execute(_toolCallId, _parameters, _signal, _onUpdate, ctx) {
+      try {
+        return jsonResult(await readStatus(ctx.cwd));
+      } catch (cause) {
+        return errorResult(cause);
+      }
+    },
+  });
 
-    if (!trimmed.startsWith("data:")) continue;
-    let value: unknown;
+  pi.registerTool({
+    name: "self_improvement_log",
+    label: "self_improvement_log",
+    description: "Append one bounded, reviewable Curator decision and optionally clear readiness.",
+    parameters: logParameters,
+    executionMode: "sequential",
+    async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
+      try {
+        const logInput: ReviewLogInput = {
+          decision: parameters.decision,
+          detail: parameters.detail,
+        };
 
-    try {
-      value = JSON.parse(trimmed.slice(5).trim());
-    } catch {
-      continue;
-    }
+        if (parameters.evidence !== undefined) {
+          logInput.evidence = parameters.evidence;
+        }
 
-    if (!Check(McpMessage, value)) continue;
+        if (parameters.clearReady !== undefined) {
+          logInput.clearReady = parameters.clearReady;
+        }
 
-    if (value.error) throw new Error(value.error.message);
-    const text = value.result?.content[0]?.text;
+        const result = await appendReviewLog(ctx.cwd, logInput);
 
-    if (text) payload = text;
-  }
+        return jsonResult({ ok: true, ...result });
+      } catch (cause) {
+        return errorResult(cause);
+      }
+    },
+  });
 
-  if (!payload) throw new Error("no content in Exa response");
+  pi.registerTool({
+    name: "self_improvement_extension_write",
+    label: "self_improvement_extension_write",
+    description:
+      "Create a real Profile-local skill-only package, or replace the skill in one visibly Curator-managed package.",
+    parameters: writeParameters,
+    executionMode: "sequential",
+    async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
+      try {
+        const writeInput: ExtensionWriteInput = {
+          id: parameters.id,
+          body: parameters.body,
+        };
 
-  return payload;
-};
+        if (parameters.replace !== undefined) {
+          writeInput.replace = parameters.replace;
+        }
 
-const search = async (query: string, count: number, key: string): Promise<SearchOutput> => {
-  if (key.startsWith("fake")) return canned(query, count);
-  const endpoint = key ? `${MCP_URL}?exaApiKey=${encodeURIComponent(key)}` : MCP_URL;
-  const text = await mcpCall(endpoint, query, count);
-  const results = parseJsonResults(text, count);
-  const parsed = results.length > 0 ? results : parseDigest(text, count);
+        if (parameters.expectedOldSha256 !== undefined) {
+          writeInput.expectedOldSha256 = parameters.expectedOldSha256;
+        }
 
-  return { query, answer: parsed.length > 0 ? "" : text, results: parsed };
-};
-
-const { query, count } = parseArgs(process.argv.slice(2));
-
-if (!query) {
-  process.stdout.write(`${JSON.stringify({ error: "empty query" }, null, 2)}\n`);
-  process.exit(2);
-}
-
-try {
-  const result = await search(query, count, process.env.EXA_API_KEY?.trim() ?? "");
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-} catch (cause: unknown) {
-  const message = cause instanceof Error ? cause.message : "unknown search failure";
-  process.stdout.write(`${JSON.stringify({ error: `search failed: ${message}` }, null, 2)}\n`);
-  process.exit(1);
+        return jsonResult(await writeCuratorExtension(ctx.cwd, writeInput));
+      } catch (cause) {
+        return errorResult(cause);
+      }
+    },
+  });
 }

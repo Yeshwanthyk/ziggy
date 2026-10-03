@@ -1,98 +1,34 @@
 ---
-name: imsg
-description: "iMessage/SMS CLI for listing chats, history, and sending messages via Messages.app."
+name: github
+description: Interact with GitHub through the authenticated `github` Pi tool.
 ---
 
-# imsg
+# GitHub
 
-Use `imsg` to read and send iMessage/SMS via macOS Messages.app.
+Pass the `gh` subcommand and flags as the `args` array. Use `--repo owner/repo`
+outside a Git repository, or use a GitHub URL directly.
 
-## When to Use
+Prefer structured output with `--json` and `--jq`.
 
-✅ **USE this skill when:**
+Before any mutation, state the exact repository/resource target and intended
+effect. Mutations remain normal `github` tool calls.
 
-- User explicitly asks to send iMessage or SMS
-- Reading iMessage conversation history
-- Checking recent Messages.app chats
-- Sending to phone numbers or Apple IDs
+Examples:
 
-## When NOT to Use
-
-❌ **DON'T use this skill when:**
-
-- Messages on services other than iMessage or SMS
-- Group chat management (adding/removing members) → not supported
-- Bulk/mass messaging → always confirm with user first
-- Replying in the current conversation
-
-## Requirements
-
-- macOS with Messages.app signed in
-- Full Disk Access for terminal
-- Automation permission for Messages.app (for sending)
-
-## Common Commands
-
-### List Chats
-
-```bash
-imsg chats --limit 10 --json
+```json
+{"args":["pr","checks","55","--repo","owner/repo"]}
 ```
 
-### View History
-
-```bash
-# By chat ID
-imsg history --chat-id 1 --limit 20 --json
-
-# With attachments info
-imsg history --chat-id 1 --limit 20 --attachments --json
+```json
+{"args":["run","view","12345","--repo","owner/repo","--log-failed"]}
 ```
 
-### Watch for New Messages
-
-```bash
-imsg watch --chat-id 1 --attachments
+```json
+{"args":["issue","list","--repo","owner/repo","--json","number,title"]}
 ```
 
-### Send Messages
+Use `api` when a typed `gh` subcommand does not expose the needed operation:
 
-```bash
-# Text only
-imsg send --to "+14155551212" --text "Hello!"
-
-# With attachment
-imsg send --to "+14155551212" --text "Check this out" --file /path/to/image.jpg
-
-# Specify service
-imsg send --to "+14155551212" --text "Hi" --service imessage
-imsg send --to "+14155551212" --text "Hi" --service sms
-```
-
-## Service Options
-
-- `--service imessage` — Force iMessage (requires recipient has iMessage)
-- `--service sms` — Force SMS (green bubble)
-- `--service auto` — Let Messages.app decide (default)
-
-## Safety Rules
-
-1. **Always confirm recipient and message content** before sending
-2. **Never send to unknown numbers** without explicit user approval
-3. **Be careful with attachments** — confirm file path exists
-4. **Rate limit yourself** — don't spam
-
-## Example Workflow
-
-User: "Text mom that I'll be late"
-
-```bash
-# 1. Find mom's chat
-imsg chats --limit 20 --json | jq '.[] | select(.displayName | contains("Mom"))'
-
-# 2. Confirm with user
-# "Found Mom at +1555123456. Send 'I'll be late' via iMessage?"
-
-# 3. Send after confirmation
-imsg send --to "+1555123456" --text "I'll be late"
+```json
+{"args":["api","repos/owner/repo/pulls/55","--jq",".title, .state, .user.login"]}
 ```

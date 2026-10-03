@@ -2156,3 +2156,14 @@ section "T10".
   - U3: `device_show` reaches a screen and fails on a device without one; the device that chatted is listed by `destination.list`.
 - `[push]` U1–U4 were driven by hand: two `ziggy-device run` devices, `ziggy wake`, a chat that calls `device_show`, and the web picker. Evidence is in `/tmp/ziggy-devices-proof/s6-20261003-142144`.
 - Full `bun test`: 722 pass, 0 fail. `bun run check` exit 0.
+
+## 2026-10-03 — Devices S12: device-authoring
+
+- New bundled extension `extensions/device-authoring` (in `catalog.json`). Its skill copies a template into `device-kits/<id>/` and writes `commands.ts`. The person copies the folder to the device and runs `ziggy-device run --commands <id>/commands.ts`.
+- The template needs nothing installed. `device.ts` holds only types, and `rules.ts` copies Ziggy's checks: the command name regex, the 64-character tool name, duplicates, the description and an object schema. `smoke.ts` loads the commands against a recording device, reports `problem`, `fail`, `warning` and `ok`, and calls only the commands listed in `CALLS`.
+- Reordered the rest: S12 first because it needs no hardware. Then the software halves of S10, S8 and S9 (renderer, stub STT/TTS engines). S7 and S11 last; they need ESP-IDF and the board.
+
+**Proof.**
+- `test/extensions/device-authoring.test.ts`: `rules.ts` accepts exactly the names `ZiggyDevice.command` accepts, and flags exactly the commands whose tools the Profile skips for length.
+- **Found while proving.** smoke passed `checkCommands` a Map, so a command defined twice was never reported. The recorder now keeps every registration in order.
+- `[authoring]` A1–A3 were driven by hand: the template copied into a sandbox Profile, smoke ok, a module with bad commands (smoke prints a `problem` for each and exits 1), then `ziggy-device run --commands` with a scripted model calling `device__demo__counter_add` and `counter_read` on the device. Evidence is in `/tmp/ziggy-devices-proof/s12-20261003-143043`.

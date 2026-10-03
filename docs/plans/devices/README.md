@@ -226,7 +226,13 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 
 ### S12 — `device-authoring`
 
-- [ ] Skill and template like `plugin-authoring`: describe a device, Ziggy writes its commands.
+- [x] Bundled extension `extensions/device-authoring`: a skill and a template copied to
+  `device-kits/<id>/` (`commands.ts`, types-only `device.ts`, `rules.ts`, `smoke.ts`). The
+  template needs no `node_modules`, so it runs from a Profile and on the device.
+- [x] `smoke.ts` loads the commands against a recording device, checks them with `rules.ts`, and
+  calls the commands listed in `CALLS`. It never calls the ones in `ON_DEVICE`.
+- [x] `test/extensions/device-authoring.test.ts` keeps `rules.ts` in agreement with
+  `ZiggyDevice.command` and the tools the Profile offers.
 
 ## Working decisions
 
@@ -251,7 +257,8 @@ Taken so slices can proceed without blocking; each can be changed later.
 | S4 | done | `bun test test/e2e/device-chat.test.ts` (T1 status, deltas, done; T2 one session that continues; T3 abort → chat.error; T4 busy -32001, text never sent; T5 provider failure → chat.error); recipe T1, T2 `/tmp/ziggy-devices-proof/s4-20261003-140448` |
 | S5 | done | `bun test test/e2e/device-tools.test.ts` (K1 tool listed, none in `ziggy run`; K2 call and result reach the model; K3 offline fails at once; K4 specialist allowlist; K5 a command added online reaches later sessions); recipe K1, K2 `/tmp/ziggy-devices-proof/s5-20261003-141513` |
 | S6 | done | `bun test test/e2e/device-push.test.ts` (U1 broadcast `device:<id>` → `notify`; U2 offline → transport retriable, unpaired → destination-missing; U3 `device_show` on a screen, error without one, chatting device listed as a destination); recipe U1–U3 and web picker `/tmp/ziggy-devices-proof/s6-20261003-142144` |
-| S7–S12 | not started | |
+| S12 | done | `bun test test/extensions/device-authoring.test.ts` (command names agree with `ZiggyDevice.command`; flagged names are exactly the tools the Profile skips); recipe A1–A3 `/tmp/ziggy-devices-proof/s12-20261003-143043` |
+| S7–S11 | not started | Order: S10, S8 and S9 software first (stub engines), then S7 and S11, which need a board and ESP-IDF |
 
 ## Open decisions
 

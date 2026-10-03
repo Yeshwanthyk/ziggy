@@ -33,6 +33,7 @@
   "ignore": [
     "extensions/computer-use/dist/**",
     "extensions/computer-use/scripts/**",
+    "extensions/device-authoring/skills/device-authoring/template/**",
     "extensions/plugin-authoring/skills/plugin-authoring/template/**",
     "clients/web/src/vendor/bloub/**"
   ],

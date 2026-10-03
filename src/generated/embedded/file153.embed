@@ -1,12 +1,23 @@
----
-name: example
-description: "Keep the person's example list. Use when they ask to see, add to or check off their example items."
----
-
-# Example list
-
-- Show the list with `list_items`; it opens an interactive view in the web UI and returns the
-  same list as text everywhere else.
-- Add with `add_item` when the person asks for it.
-- Checking items off and removing them happens in the view. If the person asks for that in chat,
-  tell them to use the view.
+{
+  "name": "example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "smoke": "bun --no-install smoke.ts",
+    "shots": "bun --no-install shots.ts",
+    "check": "vite build && bun --no-install smoke.ts && bun --no-install shots.ts --if-browser"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "2.0.3",
+    "@modelcontextprotocol/server": "2.2.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.2.0",
+    "axe-core": "4.13.0",
+    "vite": "8.3.2",
+    "vite-plugin-singlefile": "2.3.3"
+  }
+}
