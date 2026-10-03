@@ -2032,3 +2032,23 @@ section "T10".
   index.
 - Lab removed: the lab resident, fake Linear and URL guard are stopped. `dump/plugin-lab` and
   `dump/plugin-lab-notes` were moved to the Trash.
+
+## Devices plan and verify-ziggy-devices (2026-10-03)
+
+- Research: Muse gadgets (facebookincubator/muse-gadget-sdk) are thin clients of Meta's cloud
+  agent. The stock server contract was extracted from firmware source; we chose not to build a
+  Muse-compatible edge. Ziggy gets its own protocol (ZDP/1: WebSocket + Noise_XX with keys pinned
+  at pairing + JSON-RPC with MCP-shaped tools) and its own SDKs, borrowing Muse's Apache-2.0
+  drivers, `noise_core`, UI, audio and pairing crypto.
+- Plan: `docs/plans/devices/README.md`, requirements R0–R8, slices S0–S12 with a Mermaid DAG and
+  milestones M1 (Pi via `@ziggy/device`), M2 (ESP32-S3-BOX-3), M3 (voice parity, then spoken
+  replies). Listed in the plans index.
+- Skill: `.agents/skills/verify-ziggy-devices/` (launch, doctor, drive, evidence, cleanup) on top
+  of the `verify-ziggy` sandbox, with nine feature recipes that are each slice's gate.
+- Proof: `devices-off` (R0) is green, following SKILL.md verbatim. Evidence is in
+  `/tmp/ziggy-devices-proof/20261003-130607`: doctor all OK, one listener `127.0.0.1:51670` equal
+  to the UI port, resident exit 0, lock gone, nothing left running. The other eight features are
+  "not built" and recorded as unreachable until their slice lands.
+- Cleanup fix found while proving: `pgrep -f`/`pkill -f` matched an unrelated shell whose command
+  line contained the pattern. The skill now stops processes by the PIDs captured at launch and
+  polls for exit.

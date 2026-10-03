@@ -9,6 +9,7 @@ Completed and superseded plans are removed; use Git history to read them.
 - [Proactive curator](proactive-curator.md): pending/reviewed state, foreground eligibility, adoption, scheduling, and empty-reply handling remain unfinished.
 - [Profile extension lifecycle](profile-extension-lifecycle.md): retain for safe runtime rollover; much of the transactional lifecycle has shipped.
 - [Channel delivery](channel-delivery-idempotency.md): retain for outstanding live verification, not a new delivery subsystem.
+- [Devices](devices/README.md): Ziggy Devices — ZDP/1, the device hub, `@ziggy/device`, an ESP32 port borrowed from muse-gadget-sdk, voice; slices S0–S12 with a DAG and gates in `verify-ziggy-devices`.
 - [Standalone executable](standalone-executable-and-source-lookup.md): reconcile its compile-all claims with current Profile-local loading and repeat clean-room release proof.
 
 ## Plugins later

@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-03
+
+### Fixed
+
+- Slack streams no longer fail with `cannot_provide_both_markdown_text_and_chunks`: text goes out as a `markdown_text` chunk beside other chunks.
+
 ## [0.4.0] - 2026-10-03
 
 ### Added
