@@ -29,6 +29,8 @@ const environment = (profile: ScratchProfile) => ({
   ZIGGY_HOME: profile.home,
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: transpilerCache,
   NO_COLOR: "1",
+  // A scratch HOME has no Keychain, and proofs must never touch the real one.
+  ZIGGY_DEVICE_KEYSTORE: "file",
 });
 
 export const ziggy = (

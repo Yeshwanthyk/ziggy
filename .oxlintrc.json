@@ -6,6 +6,7 @@
     "extensions/computer-use/dist/**",
     "extensions/computer-use/native/**",
     "extensions/computer-use/scripts/**",
+    "extensions/device-authoring/skills/device-authoring/template/**",
     "extensions/plugin-authoring/skills/plugin-authoring/template/**",
     "vendor/effect/**",
     "src/generated/**",

@@ -5,27 +5,67 @@ past Muse, says it out loud.
 
 ## Behaviors
 
-- **V1** PTT audio (16 kHz PCM16, 0.3–20 s) reaches the hub and is transcribed.
-- **V2** The transcript is shown on the device and sent as the turn's user text.
-- **V3** The reply streams on screen; first text within 60 s.
-- **V4** The reply is spoken (`audio.play` MP3) (S9).
-- **V5** A clip under 0.3 s or silence gets a "didn't catch that", not an empty turn.
+- **V1** A recording (16 kHz PCM16 mono, 0.3–20 s, streamed in chunks on an odd stream) reaches
+  the hub and is transcribed by the Profile's `speech.transcribe` command.
+- **V2** The device gets `{turn}`, then `chat.transcript` with the text, and the text is the turn's
+  user message.
+- **V3** The reply streams as for typed text.
+- **V4** On a device that plays `mp3`, with `speech.speak` set, the reply to a spoken turn
+  follows as `audio.play` MP3. A typed turn's reply is not spoken.
+- **V5** Under 0.3 s, over 20 s, no speech heard, or a failing engine: the request is refused and
+  no turn starts.
+- **V6** Without `speech.transcribe` in `devices.json`, audio is refused with a hint (`-32002`).
 
 ## User entry points
 
-- BOX-3 button; harness fake sending a WAV fixture.
+- `ziggy-device` stdin: `/audio <file.wav>`. `ZiggyDevice.sendAudio(pcm)` in code.
+- BOX-3 push-to-talk (S7, not built).
 
 ## Drive
 
-Not built (S8, S9). Planned: fake sends a fixed WAV whose transcript is known; scripted model
-replies; then the BOX-3 by hand.
+Tests: `bun test test/e2e/device-voice.test.ts` (V1–V5 with script engines: one names the WAV size,
+the other writes `ID3` and the text) and `bun test test/e2e/device-chat.test.ts` (V6).
+
+By hand, with a real local engine, after the SKILL.md launch steps (sandbox, `devices configure`):
+
+1. Get the engine: `whisper-cli` (`brew install whisper-cpp`) and a model, e.g.
+   `curl -sSL -o /tmp/ggml-tiny.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin`.
+2. Add to `"$PROFILE/devices.json"`:
+   `"speech": {"transcribe": {"command": ["whisper-cli", "-m", "/tmp/ggml-tiny.en.bin", "-nt", "-np", "-f", "{wav}"]}}`.
+   On Linux without whisper-cli, Cactus Whistle works the same way: `python3 -m venv w &&
+   w/bin/pip install cactus-needle`, then a two-line script that prints
+   `needle.transcribe(sys.argv[1])["text"]` with `NEEDLE_TELEMETRY=0`, as
+   `"command": ["/path/whistle-transcribe", "{wav}"]`. The first call downloads the 17 MB model.
+   Linux has no `say`; record the question on a Mac or with any TTS, and use the stand-in speaker
+   from the tests (`printf 'ID3%s'`) unless a real one such as piper is installed.
+   For V4 add a speaker to `speech`, here macOS `say` and ffmpeg:
+   `"speak": {"command": ["/bin/sh", "-c", "say -o \"$0.aiff\" \"$1\" && ffmpeg -loglevel error -y -i \"$0.aiff\" -ac 1 -b:a 48k \"$0\"", "{mp3}", "{text}"]}`.
+   Then start `serve`; the hub reads it at start.
+3. Make recordings: `say -o light.wav --data-format=LEI16@16000 "Turn on the kitchen light please."`
+   and a too-short one, `ffmpeg -i light.wav -t 0.1 -c:a pcm_s16le short.wav`.
+4. Pair and `run` `ziggy-device --speaker heard` with a fifo on stdin, then write
+   `/audio short.wav`, `/audio light.wav` and a typed line to it.
+5. Listen to `heard/audio-1.mp3`, or transcribe it back:
+   `ffmpeg -i heard/audio-1.mp3 -ac 1 -ar 16000 -c:a pcm_s16le a.wav && whisper-cli -m /tmp/ggml-tiny.en.bin -nt -np -f a.wav`.
+
+A full script: `drive.sh` in `/tmp/ziggy-devices-proof/s9-20261003-150121`.
 
 ## Proof
 
-Transcript text vs the fixture's known text; `$REQUESTS` user message; screen photo; audio
-recording for V4.
+- `run.out`: `chat refused: chat.send: a recording must last at least 0.3 seconds`, then
+  `chat t1 transcript Turn on the kitchen light please.` before `chat t1 thinking` and
+  `chat t1 done …`.
+- `run.out`: `audio mp3 <n> bytes saved …/audio-1.mp3` after `chat t1 done`, and none after the
+  typed turn's `done`.
+- The clip transcribed back says the reply's text.
+- `model-requests.jsonl`: the transcript is the user message; the refusal reached no model.
 
 ## Gotchas
 
-- A cloud STT call costs money and leaves the machine; the fixture path must use the local or a
-  stub engine.
+- The hub reads `devices.json` when the resident starts; restart it after changing `speech`.
+- A speaker that fails or writes something that is not an MP3 is logged in the resident's log
+  (`could not speak a reply`); the device still has the text.
+- whisper-cli prints a leading space and a newline; the hub trims stdout.
+- The sandbox flushes model requests every 100 ms; wait for the file before copying it.
+- A cloud engine costs money and sends the recording off the machine; tests and the recipe use a
+  script or a local engine.

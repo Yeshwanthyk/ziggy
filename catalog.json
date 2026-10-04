@@ -32,6 +32,12 @@
       "path": "./extensions/computer-workflows"
     },
     {
+      "id": "device-authoring",
+      "version": "0.1.0",
+      "source": "bundled",
+      "path": "./extensions/device-authoring"
+    },
+    {
       "id": "executor",
       "version": "0.1.0",
       "source": "bundled",

@@ -20,6 +20,7 @@ import { SlackGatewayLive } from "./application/slack-gateway";
 import { Extensions, extensionTools, PluginSecrets } from "./extensions";
 import { Memory, memoryPrompt, memoryTools } from "./memory";
 import { TerminalStyle } from "./faces/terminal-ui";
+import { DeviceLinks, deviceTools } from "./devices";
 import { Auth, Models, Profiles } from "./profile";
 import { Sessions } from "./session";
 
@@ -32,14 +33,15 @@ const ZiggyAgentLayer = Layer.effect(
   Effect.gen(function* () {
     const extensions = yield* Extensions;
     const secrets = yield* PluginSecrets;
+    const links = yield* DeviceLinks;
 
     return makeZiggyAgent({
-      tools: [memoryTools, extensionTools(extensions)],
+      tools: [memoryTools, extensionTools(extensions), deviceTools(links)],
       prompts: [memoryPrompt],
       secrets,
     });
   }),
-).pipe(Layer.provide(Layer.merge(Extensions.layer, PluginSecrets.layer)));
+).pipe(Layer.provide(Layer.mergeAll(Extensions.layer, PluginSecrets.layer, DeviceLinks.layer)));
 
 const DoctorLayer = DoctorLive.pipe(
   Layer.provide(Layer.mergeAll(Auth.layer, Models.layer, Extensions.layer, DoctorChecksLive)),
@@ -49,7 +51,9 @@ const SetupLayer = SetupLive.pipe(
   Layer.provide(Layer.mergeAll(Profiles.layer, Auth.layer, Models.layer, DoctorLayer)),
 );
 
-const AutomationsLayer = AutomationsLive.pipe(Layer.provide(ZiggyAgentLayer));
+const AutomationsLayer = AutomationsLive.pipe(
+  Layer.provide(Layer.merge(ZiggyAgentLayer, DeviceLinks.layer)),
+);
 
 const AutomationSchedulerLayer = AutomationSchedulerLive.pipe(Layer.provide(AutomationsLayer));
 
@@ -79,6 +83,7 @@ const ResidentGatewayLayer = ResidentGatewayLive.pipe(
       DoctorLayer,
       MemoryLayer,
       PluginSecrets.layer,
+      DeviceLinks.layer,
       ZiggyPathsLive,
     ),
   ),

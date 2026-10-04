@@ -2052,3 +2052,155 @@ section "T10".
 - Cleanup fix found while proving: `pgrep -f`/`pkill -f` matched an unrelated shell whose command
   line contained the pattern. The skill now stops processes by the PIDs captured at launch and
   polls for exit.
+
+## 2026-10-03 — Devices S0: Noise
+
+**Noise_XX in `src/platform/noise.ts`.** Noise_XX_25519_AESGCM_SHA256 in both roles on `node:crypto`, as Effects with a `NoiseFailed` tagged error. A failed decrypt poisons that direction because Noise cannot resynchronise a nonce. The test checks the cacophony vector in both roles through transport, and checks that tampering fails and poisons. `test/platform/noise-interop.ts` runs Muse's own `noise_xx.py` (via `uv`) in each role against ours. Handshake hashes match and transport round-trips. Gotcha: Muse's `split()` zeroes `h`, so the hash must be read before splitting. The S0 working decisions (BOX-3 first; stub STT/TTS engines; hardware built as far as the toolchain allows) are recorded in the plan.
+
+## 2026-10-03 — Devices S1: ZDP/1
+
+**ZDP/1 spec and schemas.** `docs/devices/protocol.md` is the contract:
+- Transport: WebSocket at `/zdp/1`, with Noise XX (prologue `zdp/1`) and the device as initiator.
+- Frames: a `{` byte starts a JSON-RPC message; a `0x01` byte starts a stream chunk. Devices use odd stream ids and the hub even ones.
+- Pairing: a one-time URI carries the hub key and a ten-character base32 code, and the device's proof is an HMAC over the handshake hash.
+- Methods: the methods, the MCP tool shapes, chat and push.
+- Codes: the error codes and the 44xx close codes.
+- Versioning: a new field may only appear behind a hello capability, which is what lets every receiver decode strictly.
+
+`src/devices/protocol.ts` decodes all of it with `onExcessProperty: "error"`. A two-step decode tells an unknown method (-32601) apart from bad params (-32602). The test reads each fenced `json zdp` example from the spec and checks it decodes and re-encodes to the same bytes, so the spec and the schemas cannot drift apart.
+
+## 2026-10-03 — Devices S2: hub and pairing
+
+**The resident serves ZDP/1 when the Profile has `devices.json`.** The resident gateway gains a devices branch. Without `devices.json` nothing listens. A hub that fails logs `[gateway] devices stopped: …` and leaves Telegram and the UI running.
+- `src/devices/hub.ts` handles each link in order: the Noise responder handshake, then pairing or a known key, then `device.hello`, then serving. It keeps `.runtime/device-hub.json` (`{port, online}`) current and removes it on stop.
+- Close codes: 4401 for an unknown or revoked key, 4409 when a newer link replaces an older one, 4426 for another `zdp` version, and 4408 after 60 s of silence. The hub pings any link idle for 20 s.
+- `src/devices/registry.ts`: each paired device is stored as `devices/<id>.json` and holds only public facts. Pairing codes are stored as SHA-256 hashes, are single-use, and expire after ten minutes. Every write happens under the one file lock.
+- `src/devices/keys.ts`: the hub's static key is kept in the macOS Keychain (`ziggy-device-hub`, one account per Profile). With `ZIGGY_DEVICE_KEYSTORE=file`, or on another OS, it goes in `.gateway/device-hub.key` (0600) instead. The Keychain calls moved into `src/platform/keychain.ts`, and plugin secrets share them.
+- CLI: `ziggy devices configure|pair|list|rename|revoke`. `pair` prints the `zdp://` URI with the live port and a LAN address in place of `0.0.0.0`.
+
+**Design change: pairing proves the code by sending it.** The device pins the hub key from the URI, so the Noise channel already reaches the right hub and is encrypted. `device.pair` therefore carries `{code, name, model}`, and the HMAC proof is gone. The spec and schemas were changed to match.
+
+**Proof.** `test/e2e/devices.test.ts` (6 tests) runs against a real resident:
+- devices off;
+- pair, pin and list as online;
+- refusing a spent code;
+- dropping an unknown key;
+- hello before serving;
+- one link replacing another;
+- refusing another version;
+- revoking a live link and refusing its reconnect;
+- an in-process hub with short timings for pings and the 4408 close.
+
+`test/harness/device-cli.ts` drives the recipes from a shell. The pairing and connection recipes ran by hand in the sandbox; evidence is in `/tmp/ziggy-devices-proof/s2-20261003-134705`. C4, the device reconnect loop, waits for S3. Gotcha: a scratch `HOME` has no Keychain, so a sandbox drive must export `ZIGGY_DEVICE_KEYSTORE=file`.
+
+## 2026-10-03 — Devices S3: `@ziggy/device`
+
+**The device SDK.** `packages/device` is plain TypeScript on `node:crypto`. It has no Effect and no Ziggy imports, so a Pi can run it on its own.
+- Noise: the SDK has its own Noise XX initiator. It matches the published vector byte for byte, and a tampered message poisons the direction.
+- `ZiggyDevice`: `pair(uri)` pins the hub key and refuses a hub that proves any other key, *before* the code is sent. The code is therefore never spent on an impostor, and the test checks that.
+- After pairing, `start()` says hello, answers `ping`, `tools/list` and `tools/call` (commands added with `command(name, spec, fn)`), pings an idle hub and drops a silent one.
+- Reconnect: backoff runs 1 → 15 s with jitter. It stops for good on 4401 (revoked), 4409 (replaced) and 4426 (version).
+- When the hub refuses a request it then closes with its own code. The SDK waits for that close rather than closing first with 1000.
+- `bin/ziggy-device`: `pair` and `run` (`--commands` takes a module that adds commands). The state file holds the private key and is written 0600.
+
+**Proof.**
+- `test/e2e/device-conformance.test.ts` runs against a real resident: pair and pin, forged key, reconnect across a hub restart, revoke, replace. It passed three runs in a row.
+- `[connection]` C4 was driven by hand: `run.out` shows offline, connecting and online, then `stopped (4401 revoked)`. Evidence is in `/tmp/ziggy-devices-proof/s3-20261003-135654`.
+- Found while driving: a separate `ziggy-device chat` process with the same identity replaced the running device (4409), so that subcommand was dropped. S4 will read chat from `run`'s stdin instead.
+- Bug fixed: a link that never opened left a rejected promise with no handler.
+
+## 2026-10-03 — Devices S4: device chat
+
+**What shipped.**
+- A device that declared `chat` talks to the Profile. `chat.send` is answered `{turn}`, then the turn streams as `chat.status` (thinking, or tool with its name), `chat.delta` and exactly one of `chat.done` or `chat.error`.
+- `src/devices/chat.ts` is the `DeviceChat` port. The hub owns turn ids and wire order: notifications are held until the `{turn}` reply is queued, so the reply always arrives first. A refused send does not use up a turn id.
+- `src/resident/device-chat.ts` implements the port on live sessions. Each device has one session under `sessions/device/<id>` (`session: "continue"`, named `Device · <name>`), kept live as `device/<id>`. Busy comes from `runExclusive` (-32001). Abort calls Pi's abort, interrupts the turn and ends it with `chat.error` "the turn was aborted".
+- `device` joins the live session kinds on the UI wire and in `@ziggy/ui-sdk`, so the web UI lists and watches device chats.
+- `ziggy-device run` sends each stdin line as chat, and `/abort` aborts.
+- Moved to S6: remembering `device:<id>` as a destination. It needs the automation target S6 adds.
+
+**Proof.**
+- `test/e2e/device-chat.test.ts` covers T1–T5 against a real resident and a scripted model.
+- `[chat]` T1 and T2 were driven by hand through `ziggy-device run` on a fifo: two turns, one `.jsonl`, and the second request carries both messages. Evidence is in `/tmp/ziggy-devices-proof/s4-20261003-140448`.
+- A model failure reaches the device as "provider request failed", the same sanitized text the UI gets.
+
+## 2026-10-03 — Devices S5: device tools
+
+**What shipped.**
+- A device's commands are Profile tools named `device__<id>__<cmd>`. After the hello, and on every `notifications/tools/list_changed`, the hub calls `tools/list` and stores the list in the device's registry entry (`DeviceRecord.tools`).
+- `src/devices/links.ts` adds the `DeviceLinks` service: which Profiles have a hub in this process, and the live link for each connected device. A call to a device that is not connected fails at once with "`<id>` is offline".
+- The hub sends its own requests (`tools/list`, `tools/call`, pings) with one id counter per link. They go through the link's outbox, so the device sees `chat.status tool` before the call. An answer settles its pending request; a missing answer fails after `requestMs` (30 s); the link ending fails every request still waiting.
+- `src/devices/tools.ts` (`[Pi]`) contributes the tools through `SessionTools`, only while this process runs the Profile's hub. A tool's `isError` result or a failed call rejects, so Pi marks the call failed. Names over 64 characters are skipped with a warning.
+- `test/harness/sandbox.ts --script` scripts the hand-drive model, so a recipe can make the model call a tool.
+
+**Bug fixed.** The link's fibers raced with `Effect.raceAll`, which waits for the first *success*. When a device closed, `serve` failed and the link stayed online until the next idle ping, up to 20 s later. It is now `raceAllFirst`.
+
+**Proof.**
+- `test/e2e/device-tools.test.ts` covers K1–K5 against a real resident: tool listed and absent from `ziggy run`; call and result; offline fails at once; a specialist allowlist hides it; a command added while online reaches later sessions.
+- `[tools]` K1 and K2 were driven by hand through `ziggy-device run --commands` with a scripted model. Evidence is in `/tmp/ziggy-devices-proof/s5-20261003-141513`.
+- Full `bun test`: 719 pass, 0 fail.
+
+## 2026-10-03 — Devices S6: push
+
+- `device:<id>` is an automation target. Delivery pushes `notify {title: <Profile name>, text}` over the device's live link (`DeviceLinks.push`), cut at 4000 code points. If the device is offline, the delivery fails as `transport`: it is marked retriable but not retried, and a push is never queued for later. A device that is not paired fails as `destination-missing`.
+- The model's `device_show` tool (`{device, text}`) sends `display.show` text. It is offered while this process runs the hub and at least one device is paired. A device whose hello declared no `screen` fails the call. Images move to S10 with the renderer.
+- When a device chats, the resident remembers `device:<id>` (labelled with the device name) in its destination book, so the web destination picker lists it under a new **Devices** filter. The UI SDK, the gateway projections and the web client accept the `device` kind and category.
+- `ziggy-device run --screen <w>x<h>` declares a screen and logs `display …` lines.
+
+**Found while proving.** A web bundle built before a new destination kind rejects the whole `destination.list`, and the sidebar says "Some sidebar data could not be refreshed". The fix was to rebuild with `bun run generate:web-assets`, which builds `clients/web` first; `tooling/generate-web-assets.mjs` alone embeds the old `dist`.
+
+**Proof.**
+- `test/e2e/device-push.test.ts` runs against a real resident:
+  - U1: a broadcast to `device:kitchen` arrives as `notify`.
+  - U2: an offline device fails as transport, retriable; an unpaired device fails as destination-missing.
+  - U3: `device_show` reaches a screen and fails on a device without one; the device that chatted is listed by `destination.list`.
+- `[push]` U1–U4 were driven by hand: two `ziggy-device run` devices, `ziggy wake`, a chat that calls `device_show`, and the web picker. Evidence is in `/tmp/ziggy-devices-proof/s6-20261003-142144`.
+- Full `bun test`: 722 pass, 0 fail. `bun run check` exit 0.
+
+## 2026-10-03 — Devices S12: device-authoring
+
+- New bundled extension `extensions/device-authoring` (in `catalog.json`). Its skill copies a template into `device-kits/<id>/` and writes `commands.ts`. The person copies the folder to the device and runs `ziggy-device run --commands <id>/commands.ts`.
+- The template needs nothing installed. `device.ts` holds only types, and `rules.ts` copies Ziggy's checks: the command name regex, the 64-character tool name, duplicates, the description and an object schema. `smoke.ts` loads the commands against a recording device, reports `problem`, `fail`, `warning` and `ok`, and calls only the commands listed in `CALLS`.
+- Reordered the rest: S12 first because it needs no hardware. Then the software halves of S10, S8 and S9 (renderer, stub STT/TTS engines). S7 and S11 last; they need ESP-IDF and the board.
+
+**Proof.**
+- `test/extensions/device-authoring.test.ts`: `rules.ts` accepts exactly the names `ZiggyDevice.command` accepts, and flags exactly the commands whose tools the Profile skips for length.
+- **Found while proving.** smoke passed `checkCommands` a Map, so a command defined twice was never reported. The recorder now keeps every registration in order.
+- `[authoring]` A1–A3 were driven by hand: the template copied into a sandbox Profile, smoke ok, a module with bad commands (smoke prints a `problem` for each and exits 1), then `ziggy-device run --commands` with a scripted model calling `device__demo__counter_add` and `counter_read` on the device. Evidence is in `/tmp/ziggy-devices-proof/s12-20261003-143043`.
+
+## 2026-10-03 — Devices S10: images on small screens
+
+- `device_show` takes `image: "<path in the Profile>"` as well as `text`, exactly one of them. The hub decodes the PNG or JPEG, fits it inside the device's screen (shrinks only, centred on black, never cropped) and sends `display.show {image: {stream, format, width, height}}` followed by the bytes in 16 KiB chunks on an even hub stream id. It sends `rgb565` (little-endian) when the device lists it, otherwise `jpeg`. A file that is not a PNG or JPEG, is over 20 MiB, or lies outside the Profile fails the call with that message.
+- New `src/devices/image.ts`. PNG decoding is our own, on `node:zlib` (every colour type and bit depth; interlaced is refused). JPEG uses the new dependency `jpeg-js@0.4.4` (BSD-3, pure JS, no dependencies).
+- The hub's outbox now carries chunks as well as messages, so an image's message and chunks leave together and in order.
+- `ziggy-device run` takes `--formats rgb565,jpeg` and `--display-dir <dir>`, which saves each image (rgb565 converted to PNG) so a person can look at it.
+- Not done: rendering an MCP Apps view to an image needs a headless browser hosting the view bridge. It is deferred until there is a view worth showing on a device. Wrapping long text belongs to the board's firmware (S7).
+
+**Proof.**
+- `test/devices/image.test.ts`: eight PNG fixtures written by Pillow decode to exactly Pillow's RGBA; a JPEG to within 4; fitting letterboxes, centres and never crops; rgb565 byte order; format choice.
+- `test/e2e/device-push.test.ts` U5: through a real resident, an rgb565 device gets 320×240×2 bytes, black at the corner and the picture at the centre; a jpeg-only device gets a JPEG; a text file and `../outside.png` are refused.
+- `[screen]` S3 and S4 were driven by hand: a 640×360 PNG with text shown on a `ziggy-device --screen 320x240`. The saved frame is letterboxed and readable. Evidence is in `/tmp/ziggy-devices-proof/s10-20261003-144148`.
+
+## 2026-10-03 — Devices S8: voice in
+
+- A device sends speech with `chat.send {audio: {stream, format: "pcm16/16000"}}` and then streams the recording on that odd stream. The hub collects one recording at a time, refuses one under 0.3 s or over 20 s, and transcribes it off the receive loop. It answers `{turn}`, then `chat.transcript`, then the turn as for text. Silence (an empty transcript) and a failing engine are refused, and a refused recording spends no turn number.
+- Speech-to-text is a command the Profile names in `devices.json`: `speech.transcribe.command` (with `{wav}` for the recording) and an optional `timeoutSeconds` (default 60). `src/adapters/bun/speech-command.ts` writes the recording as a WAV in a temporary folder, runs the command without a shell, and caps its stdout. The trimmed stdout is the transcript. Without the setting, audio is refused with a hint. This settles the "whisper.cpp or cloud" decision: either fits, and nothing leaves the machine unless the named command sends it.
+- `@ziggy/device` gains `sendAudio(pcm)`; `ziggy-device` reads `/audio <file.wav>` on stdin.
+- Not done: push-to-talk and showing the transcript on the BOX-3 (S7).
+
+**Proof.**
+- `test/e2e/device-voice.test.ts`: through a real resident, with a script engine that prints the size of the WAV it was given, a 1.5 s recording (three chunks) becomes `{turn: t1}`, then the transcript, then the reply, and the transcript is the model's user text (V1–V3). Too short, too long, silent and failing recordings are refused and reach no model; the next recording is still t1 (V5). `device-chat.test.ts` V6: without `speech.transcribe`, -32002 and the link stays up.
+- Driven by hand with a real engine: `say` recorded "Turn on the kitchen light please." at 16 kHz and whisper-cli with `ggml-tiny.en` transcribed it exactly. The 0.1 s clip was refused first. Evidence is in `/tmp/ziggy-devices-proof/s8-20261003-145555`.
+
+## 2026-10-03 — Devices S9: spoken replies
+
+- `devices.json` `speech.speak.command` names a text-to-speech program: `{text}` is the reply and `{mp3}` the file it writes. It runs through the same adapter as speech-to-text (no shell, temporary folder, timeout). The result must start like an MP3 (ID3 or a frame sync) and be at most 8 MiB.
+- After `chat.done` of a turn started from speech, the hub speaks the reply and pushes `audio.play {stream, format: "mp3"}` with the MP3 in 16 KiB chunks. This only happens when the device lists `mp3` in `audio.out`. One fiber per link speaks replies in order. A typed turn's reply is not spoken, and a failing speaker is logged while the device keeps the text.
+- `ziggy-device --speaker <dir>` declares MP3 playback and saves each clip as `audio-<n>.mp3`. The CLI now always declares `audio.in`.
+- Not done: playback on the BOX-3 (S7).
+
+**Proof.**
+- `test/e2e/device-voice.test.ts` V4: a 21 KB spoken reply arrives as one MP3 stream across chunks, a typed turn in between gets no clip, and the next spoken turn's clip follows in order.
+- Driven by hand: whisper-cli transcribed the question, the model answered, and `say` + ffmpeg spoke the answer to `heard/audio-1.mp3`. whisper-cli transcribed that clip back as "The kitchen light is on.", the reply's text. Evidence is in `/tmp/ziggy-devices-proof/s9-20261003-150121`.
+
+**Live Profile + devices drive on Linux and macOS; branched tool schemas fixed.** A squarey-like scratch Profile (squarey's SOUL, vibeproxy Sonnet 5.5, thinking low) drove every verify-ziggy and verify-ziggy-devices recipe on slumbers (Arch, through an ssh reverse tunnel to vibeproxy) and devices + voice on the Mac. Linux: `bun test` 743 pass, check passes once `clients/web` has its own `bun install`. All recipes pass except one real bug: `profile_extensions` reached Anthropic models with an empty schema — Pi's anthropic-messages provider keeps only `properties` and `required`, and the tool's top-level union had neither, so the model's first call was `{}`. `pi_docs` had the same shape. Both schemas now also list every branch's fields flat with `required: ["action"]`; Pi still validates each branch. Tests in `test/extensions/tool.test.ts` and `pi-docs.test.ts` pin that every branch field is visible; live, Sonnet's first call became `{"action":"add","id":"weather","source":"shelf"}`. Cactus Whistle (`pip install cactus-needle`, Apache-2.0, 17 MB, CPU) works as `speech.transcribe` on Linux through a tiny Python wrapper: "Turn on a kitchen light and tell me the time." through the hub, real model reply, MP3 back. Evidence: `/tmp/ziggy-live/macdev-190134/evidence/`, slumbers `~/scratch/ziggy-esp-20261003/live-{core,dev}/evidence/`.

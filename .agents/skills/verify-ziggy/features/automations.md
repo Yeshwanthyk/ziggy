@@ -37,6 +37,7 @@ Write `automations/<id>.md`:
 version: 1
 cron: 0 9 * * *
 timezone: UTC
+gate: true
 broadcast: conversation:<session-header-id>
 ---
 
@@ -56,6 +57,8 @@ ui-sdk `automation-result` event; `chat.posts` paths and bodies for channel targ
 
 - A cron that never fires makes the definition invalid, so it is not a "never scheduled" value:
   use `0 9 * * *` and keep runs away from 09:00 UTC.
+- A scheduled definition without `gate:` is recorded `skipped-gate` and never calls the model;
+  `gate: true` makes the run real (`docs/operations/automations.md`).
 - Do not quote `cron`; the frontmatter parser keeps the quotes and the cron is invalid.
 - Receipts are `custom_message` entries with `customType: ziggy.automation-result`, not
   messages: `transcript.text` does not include them.

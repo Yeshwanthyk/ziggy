@@ -18,6 +18,7 @@ export const ziggyHelpTopics = [
   "memory",
   "serve",
   "web",
+  "devices",
   "gateway",
 ] as const;
 
@@ -63,6 +64,7 @@ const generalHelp = `Usage:
   ziggy web configure <name|path> --port <port> [--public-url <url>]
   ziggy web pair <name|path>
   ziggy web revoke <name|path>
+  ziggy devices configure|pair|list|rename|revoke ... [--json on list]
   ziggy gateway <name|path>  # compatibility alias
   ziggy help [command]
   ziggy version
@@ -95,6 +97,8 @@ const topicHelp = {
     "usage:\n  ziggy memory list [<name|path>] [--json]\n  ziggy memory show <name|path> <shared|user:<id>|group:<id>> [--json]",
   serve: serveHelp,
   web: "usage:\n  ziggy web configure <name|path> --port <port> [--public-url <url>]\n  ziggy web pair <name|path>\n  ziggy web revoke <name|path>",
+  devices:
+    "usage:\n  ziggy devices configure <name|path> [--host <host>] [--port <port>]\n  ziggy devices pair <name|path>\n  ziggy devices list <name|path> [--json]\n  ziggy devices rename <name|path> <device-id> <name...>\n  ziggy devices revoke <name|path> <device-id>\n  configure writes devices.json (default 0.0.0.0:7316); restart the resident to apply it.",
   gateway: "usage: ziggy gateway <name|path> (compatibility alias for serve)",
 } satisfies Record<HelpTopic, string>;
 

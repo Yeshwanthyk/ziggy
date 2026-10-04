@@ -25,5 +25,7 @@
     ]
   },
   "include": ["src", "test", "extensions/**/*.ts"],
-  "exclude": ["extensions/computer-use/dist", "extensions/plugin-authoring/skills/plugin-authoring/template"]
+  "exclude": ["extensions/computer-use/dist", "extensions/plugin-authoring/skills/plugin-authoring/template",
+    "extensions/device-authoring/skills/device-authoring/template"
+  ]
 }

@@ -80,7 +80,7 @@ export type UiSessionName = typeof UiSessionName.Type;
 export const UiSessionKey = Schema.String.check(
   Schema.makeFilter(
     (value) =>
-      (/^(?:ui|telegram|discord|slack)\/[A-Za-z0-9._%~-]{1,240}$/u.test(value) ||
+      (/^(?:ui|telegram|discord|slack|device)\/[A-Za-z0-9._%~-]{1,240}$/u.test(value) ||
         /^local\/(?:main|agents\/[a-z0-9]+(?:-[a-z0-9]+)*)$/u.test(value)) &&
       noDotPathSegments(value) &&
       utf8Length(value) <= 256,

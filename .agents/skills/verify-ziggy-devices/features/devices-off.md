@@ -5,7 +5,7 @@ With no `devices.json`, a Profile's resident exposes nothing to the network beyo
 ## Behaviors
 
 - **D0.1** No `devices.json` → the resident's only TCP listener is the web UI on `127.0.0.1`.
-- **D0.2** Doctor reports no device configuration and stays all `OK`.
+- **D0.2** Doctor prints no device line and stays all `OK`.
 
 ## User entry points
 

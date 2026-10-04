@@ -5,6 +5,7 @@ import {
   inspectGatewayOwner,
   type GatewayOwnerHandle,
 } from "../adapters/bun/gateway-owner";
+import { commandSpeaker, commandTranscriber } from "../adapters/bun/speech-command";
 import {
   openUiServer,
   removeStaleUiServerProjection,
@@ -34,8 +35,10 @@ import { Automations, type AutomationsApi } from "./automations";
 import { Doctor, type DoctorApi } from "./doctor";
 import { Memory, type MemoryApi } from "../memory";
 import { ProfileAgents, type ProfileAgentsApi } from "../agents";
+import { DeviceLinks, type DeviceLinksApi, readDevicesConfig, runDeviceHub } from "../devices";
 import { ZiggyAgent, type ZiggyAgentApi } from "../session";
 import { makeDestinationBook, type DestinationBook } from "../resident/destinations";
+import { makeDeviceChat } from "../resident/device-chat";
 import { makeLiveSessions, type LiveSessionsApi } from "../resident/live-sessions";
 import {
   DiscordGateway,
@@ -123,6 +126,61 @@ export interface ResidentUiRuntime {
     destinations: DestinationBook,
   ) => Effect.Effect<never, UiServerError, Scope.Scope>;
 }
+
+/** The device hub branch; it never fails the resident, only logs and stops itself. */
+export interface ResidentDevicesRuntime {
+  readonly run: (
+    target: ProfileTarget,
+    live: LiveSessionsApi,
+    destinations: DestinationBook,
+    logError: (message: string) => Effect.Effect<void>,
+  ) => Effect.Effect<never, never, Scope.Scope>;
+}
+
+const disabledDevicesRuntime: ResidentDevicesRuntime = {
+  run: () => Effect.never,
+};
+
+/** Serves ZDP/1 when `devices.json` exists; without it no port is opened. */
+const makeLiveDevicesRuntime = (
+  agent: ZiggyAgentApi,
+  links: DeviceLinksApi,
+): ResidentDevicesRuntime => ({
+  run: (target, live, destinations, logError) =>
+    Effect.gen(function* () {
+      const config = yield* readDevicesConfig(target.path);
+
+      if (config === undefined) return yield* Effect.never;
+
+      const transcribe = config.speech?.transcribe;
+
+      const speak = config.speech?.speak;
+
+      const hub = yield* runDeviceHub({
+        profilePath: target.path,
+        profileName: target.name,
+        hostname: config.listen.host,
+        port: config.listen.port,
+        chat: makeDeviceChat(target, agent, live, destinations),
+        links,
+        log: logError,
+        ...(transcribe && {
+          transcribe: commandTranscriber(transcribe.command, transcribe.timeoutSeconds),
+        }),
+        ...(speak && { speak: commandSpeaker(speak.command, speak.timeoutSeconds) }),
+      });
+
+      yield* logError(`[gateway] devices listening on ${config.listen.host}:${hub.port}`);
+
+      return yield* Effect.never;
+    }).pipe(
+      Effect.catch((failure) =>
+        logError(`[gateway] devices stopped: ${failure.message}`).pipe(
+          Effect.andThen(Effect.never),
+        ),
+      ),
+    ),
+});
 
 const liveRuntime: ResidentGatewayRuntime = {
   loadConfig: loadResidentGatewayConfig,
@@ -268,6 +326,7 @@ export const makeResidentGateway = (
   slack: SlackGatewayApi,
   runtime: ResidentGatewayRuntime = liveRuntime,
   ui: ResidentUiRuntime = disabledUiRuntime,
+  devices: ResidentDevicesRuntime = disabledDevicesRuntime,
 ): ResidentGatewayApi => ({
   status: (target) => runtime.inspectOwner(target),
   run: (target) =>
@@ -292,6 +351,7 @@ export const makeResidentGateway = (
                   runtime.logError(`[gateway] UI server stopped: ${failure.message}`),
                 ),
               ),
+            devices.run(target, live, destinations, runtime.logError),
           ];
 
           if (config.telegram !== undefined)
@@ -378,6 +438,7 @@ export const ResidentGatewayLive = Layer.effect(
         paths.profilesRegistry,
         paths.profilesDirectory,
       ),
+      makeLiveDevicesRuntime(yield* ZiggyAgent, yield* DeviceLinks),
     );
   }),
 );

@@ -37,6 +37,7 @@ import { deliverTelegram } from "./gateway";
 import { deliverSlack } from "./slack-gateway";
 import { type ProfileTarget } from "../profile";
 import type { LiveSessionsApi } from "../resident/live-sessions";
+import { DeviceLinks, type DeviceLinksApi, listDevices } from "../devices";
 
 export type AutomationError =
   | AutomationInvalid
@@ -74,21 +75,59 @@ export interface AutomationCapabilities {
   readonly deliver: Deliver;
 }
 
-/** Each gateway owns its config, chunking and send. */
-const deliverToGateway: Deliver = (profile, target, text) =>
-  Match.valueTags(target, {
-    telegram: (telegram) => deliverTelegram(profile, telegram, text),
-    discord: (discord) => deliverDiscord(profile, discord, text),
-    slack: (slack) => deliverSlack(profile, slack, text),
+/** A device shows a notice, not a transcript; this keeps one well inside a ZDP message. */
+const DEVICE_NOTICE_CODE_POINTS = 4000;
+
+/** An unpaired id will not start working by itself; an offline device may come back. */
+const deliverDevice = (
+  links: DeviceLinksApi,
+  profile: ProfileTarget,
+  deviceId: string,
+  text: string,
+): Effect.Effect<void, DeliveryFailure> =>
+  Effect.gen(function* () {
+    const paired = yield* listDevices(profile.path).pipe(
+      Effect.mapError((): DeliveryFailure => ({ category: "write", retriable: true })),
+    );
+
+    if (!paired.some((device) => device.id === deviceId))
+      return yield* Effect.fail<DeliveryFailure>({
+        category: "destination-missing",
+        retriable: false,
+      });
+
+    const points = [...text];
+
+    yield* links
+      .push(profile.path, deviceId, {
+        method: "notify",
+        title: profile.name,
+        text:
+          points.length > DEVICE_NOTICE_CODE_POINTS
+            ? `${points.slice(0, DEVICE_NOTICE_CODE_POINTS - 1).join("")}…`
+            : text,
+      })
+      .pipe(Effect.mapError((): DeliveryFailure => ({ category: "transport", retriable: true })));
   });
 
-const liveCapabilities: AutomationCapabilities = {
+/** Each gateway owns its config, chunking and send; a device gets the reply over the hub. */
+const deliverToGateway =
+  (links: DeviceLinksApi): Deliver =>
+  (profile, target, text) =>
+    Match.valueTags(target, {
+      telegram: (telegram) => deliverTelegram(profile, telegram, text),
+      discord: (discord) => deliverDiscord(profile, discord, text),
+      slack: (slack) => deliverSlack(profile, slack, text),
+      device: (device) => deliverDevice(links, profile, device.deviceId, text),
+    });
+
+const liveCapabilities = (links: DeviceLinksApi): AutomationCapabilities => ({
   gate: liveAutomationGate,
   files: automationFileStore,
   printReply: (reply) => Effect.sync(() => console.log(reply)),
   appendStoredResult: appendStoredAutomationResult,
-  deliver: deliverToGateway,
-};
+  deliver: deliverToGateway(links),
+});
 
 const readAutomation = (
   files: AutomationFileStore,
@@ -283,7 +322,7 @@ const chatModelOverride = (automation: Automation): Pick<OpenSession, "model"> =
 
 export const makeAutomations = (
   agent: ZiggyAgentApi,
-  capabilities: AutomationCapabilities = liveCapabilities,
+  capabilities: AutomationCapabilities,
   runtime: AutomationRunRuntime = liveRunRuntime,
 ): AutomationsApi => ({
   run: (target, automationIdSource, trigger, context) =>
@@ -522,6 +561,6 @@ export const AutomationsLive = Layer.effect(
   Effect.gen(function* () {
     const agent = yield* ZiggyAgent;
 
-    return makeAutomations(agent);
+    return makeAutomations(agent, liveCapabilities(yield* DeviceLinks));
   }),
 );

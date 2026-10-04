@@ -29,11 +29,14 @@ Build status is per feature in [`features/README.md`](features/README.md). A fea
    ```
 
    This exports `ZIGGY_HOME`, `SCRATCH_HOME`, `PROFILE`, `MODEL_URL` and `REQUESTS`.
+   Add `--script replies.json` to script the model: a JSON array of `{"text": …}` or
+   `{"tools": [{"name": …, "arguments": {…}}]}`, taken in order before the default `ok`.
 
-2. Hub config (only for features past `devices-off`; lands in S2):
+2. Hub config (only for features past `devices-off`):
 
    ```bash
-   printf '{"version":1,"listen":{"host":"127.0.0.1","port":0}}\n' > "$PROFILE/devices.json"
+   export ZIGGY_DEVICE_KEYSTORE=file   # a scratch HOME has no Keychain; never use the real one
+   HOME=$SCRATCH_HOME bun src/main.ts devices configure "$PROFILE" --host 127.0.0.1 --port 0
    ```
 
    Use `127.0.0.1` for the harness fake. Use the machine's LAN address only for the `hardware`
@@ -46,11 +49,11 @@ Build status is per feature in [`features/README.md`](features/README.md). A fea
    until [ -f "$PROFILE/.runtime/ui-server.json" ]; do sleep 0.25; done
    ```
 
-   Ready when `ui-server.json` exists (and, once S2 lands, `.runtime/device-hub.json` with the hub
-   port and Ziggy's public key).
+   Ready when `ui-server.json` exists, and with `devices.json` also `.runtime/device-hub.json`
+   (`{"version":1,"port":…,"online":[…]}`); `serve.log` says `[gateway] devices listening on …`.
 
-Automated: once S3 lands, `bun run test:e2e test/e2e/devices.test.ts` does all of this per test
-with `startResident` and `test/harness/device.ts`, and cleans up.
+Automated: `bun test test/e2e/devices.test.ts` does all of this per test with `startResident`
+and `test/harness/device.ts`, and cleans up.
 
 ## Doctor
 
@@ -72,14 +75,30 @@ the configured host. Anything on `*` or a LAN address you did not configure: sto
 
 ## Drive
 
-- **Harness fake (default, from S3):** `test/harness/device.ts` `startDevice(resident, {name,
-  commands})` pairs through `ziggy devices pair`, connects, and records every ZDP frame in both
-  directions. `device.chat(text)` sends `chat.send`; `device.frames` is the transcript.
+- **Harness device (default):** from a shell, `bun test/harness/device-cli.ts pair '<uri>'
+  <key-file> [name] [--hold ms]` or `connect <port> <key-file> [--hold ms]`; it prints one JSON
+  line per event (`handshake` with `pinned`, each reply, `received`, `closed` with the code). In
+  tests, `connectDevice({port, keyPair})` from `test/harness/device.ts` gives `request`,
+  `received`, `mute` and `closed`. It answers the hub's pings unless muted. It never reconnects;
+  use it for protocol violations and exact frames.
+- **SDK device:** `packages/device` (`@ziggy/device`). From a shell,
+  `bun packages/device/bin/ziggy-device.ts pair '<uri>' --state <file> [--name …] [--model …]`,
+  then `run --state <file> [--commands <module>] [--screen 320x240] [--formats rgb565,jpeg]
+  [--display-dir <dir>] [--speaker <dir>]`; `run` logs `[ziggy-device] <state> (<close>)`, `notify …` and
+  `display …` for pushes (`display image <w>x<h> <format> <n> bytes saved <dir>/display-<n>.png`
+  with `--display-dir`, which writes each image as a viewable PNG, or JPEG as sent), and
+  reconnects with backoff until revoked (4401), replaced (4409) or refused (4426). Each stdin line
+  is a chat message; `/audio <file.wav>` (16 kHz mono 16-bit) sends a recording instead, logged as
+  `chat <turn> transcript …`. `--speaker <dir>` declares MP3 playback and saves each spoken reply
+  as `<dir>/audio-<n>.mp3`, logged as `audio mp3 <n> bytes saved …`. In tests,
+  `new ZiggyDevice({…, timing, trace})`; `trace` sees every decrypted frame both ways.
 - **Model:** `test/harness/provider.ts` scripts replies; use `tools(...)` to make the model call
   a `device__<id>__<cmd>` tool and `held(...)` to hold a turn for abort.
 - **CLI:** `HOME=$SCRATCH_HOME bun src/main.ts devices pair|list|revoke|rename "$PROFILE" …`.
-- **Pi (M1):** on the Pi, `ziggy-device pair <code>` then `ziggy-device run commands.ts`; the
-  resident must listen on the LAN address for this run only.
+- **Pi (M1):** on the Pi, `ziggy-device pair '<uri>' --state device.json` then
+  `ziggy-device run --state device.json --commands commands.ts`; the resident must listen on the
+  LAN address for this run only. One identity runs in one process: a second connect replaces the
+  first (4409).
 - **ESP32 board (S7):** flash `devices/esp32` with `idf.py -p <port> flash monitor`, provision
   with `ziggy devices pair --serial <port> "$PROFILE"`, drive from the board's controls. The
   serial monitor is the device-side transcript.

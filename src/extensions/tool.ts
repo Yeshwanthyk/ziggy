@@ -24,8 +24,23 @@ const variants = Type.Union([
   Type.Object({ action: Type.Literal("validate") }, strict),
 ]);
 
-// Providers want a top-level object schema; each branch stays strict.
-const parameters = Type.Unsafe<Static<typeof variants>>({ ...variants, type: "object" });
+// Providers want a top-level object schema, and Anthropic keeps only its `properties` and
+// `required`, so every branch's fields are listed flat too; validation still runs each branch.
+const parameters = Type.Unsafe<Static<typeof variants>>({
+  ...variants,
+  type: "object",
+  properties: {
+    action: Type.Union([
+      Type.Literal("list"),
+      Type.Literal("add"),
+      Type.Literal("remove"),
+      Type.Literal("validate"),
+    ]),
+    id,
+    source: Type.Union([Type.Literal("shelf"), Type.Literal("catalog")]),
+  },
+  required: ["action"],
+});
 
 type Action = Static<typeof parameters>;
 

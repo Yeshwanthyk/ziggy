@@ -4,14 +4,41 @@
  * `<root>/model-requests.jsonl`, and on SIGINT/SIGTERM stops the server. The home is kept as
  * evidence; delete it when done.
  *
- *   bun test/harness/sandbox.ts
+ *   bun test/harness/sandbox.ts [--script replies.json]
+ *
+ * A script is a JSON array of replies taken in order before the default "ok":
+ * `{"text": "…"}` or `{"tools": [{"name": "…", "arguments": {…}}]}`.
  */
-import { appendFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { startModelServer } from "./provider";
+import { Schema } from "effect";
+import { type Reply, startModelServer, text, tools } from "./provider";
 import { scratchProfile } from "./profile";
 
-const server = startModelServer();
+const ScriptedReply = Schema.Union([
+  Schema.Struct({ text: Schema.String }),
+  Schema.Struct({
+    tools: Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        arguments: Schema.Record(Schema.String, Schema.Json),
+      }),
+    ),
+  }),
+]);
+
+const decodeScript = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(ScriptedReply)));
+
+const scriptAt = process.argv.indexOf("--script");
+
+const script: ReadonlyArray<Reply> =
+  scriptAt === -1
+    ? []
+    : decodeScript(await readFile(process.argv[scriptAt + 1] ?? "", "utf8")).map((reply) =>
+        "text" in reply ? text(reply.text) : tools(...reply.tools),
+      );
+
+const server = startModelServer(...script);
 
 const profile = await scratchProfile(server);
 

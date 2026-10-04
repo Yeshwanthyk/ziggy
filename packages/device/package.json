@@ -1,0 +1,17 @@
+{
+  "name": "@ziggy/device",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "ziggy-device": "./bin/ziggy-device.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "oxlint -c .oxlintrc.json src test bin",
+    "test": "bun test ./test",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

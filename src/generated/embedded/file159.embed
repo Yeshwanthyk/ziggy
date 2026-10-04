@@ -1,14 +1,12 @@
-// Builds ui/view.html into one self-contained file, dist/view.html: the host loads the view with
-// no network, so scripts and styles must be inline.
-import { defineConfig } from "vite";
-import { viteSingleFile } from "vite-plugin-singlefile";
+---
+name: example
+description: "Keep the person's example list. Use when they ask to see, add to or check off their example items."
+---
 
-export default defineConfig({
-  root: "ui",
-  plugins: [viteSingleFile()],
-  build: {
-    outDir: "../dist",
-    emptyOutDir: true,
-    rollupOptions: { input: "ui/view.html" },
-  },
-});
+# Example list
+
+- Show the list with `list_items`; it opens an interactive view in the web UI and returns the
+  same list as text everywhere else.
+- Add with `add_item` when the person asks for it.
+- Checking items off and removing them happens in the view. If the person asks for that in chat,
+  tell them to use the view.

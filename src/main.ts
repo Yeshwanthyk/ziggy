@@ -25,6 +25,7 @@ import { type MemoryCommand, runMemoryCommand } from "./faces/commands/memory";
 import { type ModelsCommand, runModelsCommand } from "./faces/commands/models";
 import { type PluginsCommand, runPluginsCommand } from "./faces/commands/plugins";
 import { type ProfileCommand, runProfileCommand } from "./faces/commands/profile";
+import { type DevicesCommand, runDevicesCommand } from "./faces/commands/devices";
 import { type ResidentCommand, runResidentCommand } from "./faces/commands/resident";
 import { type RunCommand, runRunCommand } from "./faces/commands/run";
 import { type ServeCommand, runServeCommand } from "./faces/commands/serve";
@@ -56,6 +57,9 @@ const automationsArea = (command: AutomationsCommand) =>
 
 const residentArea = (command: ResidentCommand) =>
   runResidentCommand(command).pipe(Effect.provide(ResidentCommandsLayer));
+
+const devicesArea = (command: DevicesCommand) =>
+  runDevicesCommand(command).pipe(Effect.provide(ResidentCommandsLayer));
 
 const serveArea = (command: ServeCommand) =>
   runServeCommand(command).pipe(Effect.provide(ServeCommandsLayer));
@@ -120,6 +124,11 @@ const dispatch = (command: CliCommand) =>
     WebConfigure: residentArea,
     WebPair: residentArea,
     WebRevoke: residentArea,
+    DevicesConfigure: devicesArea,
+    DevicesPair: devicesArea,
+    DevicesList: devicesArea,
+    DevicesRename: devicesArea,
+    DevicesRevoke: devicesArea,
     Gateway: serveArea,
     UnsupportedResidentAlias: residentArea,
     Open: residentArea,

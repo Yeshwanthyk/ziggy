@@ -1,180 +1,223 @@
-# Automation operations
+/* eslint-disable ziggy-effect/no-native-promise-ownership -- This executable owns its HTTP Promise boundary. */
+/* eslint-disable ziggy-effect/no-try-catch-or-throw -- This executable converts process failures into JSON and exit codes. */
+/* eslint-disable ziggy-effect/no-error-constructor -- HTTP and protocol failures terminate this executable boundary. */
+/* eslint-disable ziggy-effect/no-json-parse -- TypeBox validates every parsed unknown value immediately. */
+/* eslint-disable ziggy-effect/no-instanceof-error -- The executable normalizes unknown top-level failures for stderr-safe output. */
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 
-Automation Markdown in the Profile is the only authority for automation policy. SQLite under
-`.runtime/` contains scheduler projections, occurrence claims, and run truth; it never replaces or
-stores an authoritative definition.
+const MCP_URL = "https://mcp.exa.ai/mcp";
 
-## Definition filenames
+const REQUEST_TIMEOUT_MS = 30_000;
 
-An automation's lifecycle is its filename:
+const McpMessage = Type.Object(
+  {
+    error: Type.Optional(Type.Object({ message: Type.String() }, { additionalProperties: true })),
+    result: Type.Optional(
+      Type.Object(
+        {
+          content: Type.Array(Type.Object({ text: Type.String() }, { additionalProperties: true })),
+        },
+        { additionalProperties: true },
+      ),
+    ),
+  },
+  { additionalProperties: true },
+);
 
-```text
-automations/<id>.md         active
-automations/<id>.paused.md  paused
-```
+const ExaResults = Type.Object(
+  {
+    results: Type.Array(
+      Type.Object(
+        {
+          title: Type.Optional(Type.String()),
+          url: Type.Optional(Type.String()),
+          text: Type.Optional(Type.String()),
+          summary: Type.Optional(Type.String()),
+          highlights: Type.Optional(Type.Array(Type.String())),
+        },
+        { additionalProperties: true },
+      ),
+    ),
+  },
+  { additionalProperties: true },
+);
 
-Use lowercase kebab-case IDs. `ziggy automations list <profile>` and
-`ziggy automations validate <profile> [id]` show `active`, `paused`, or `conflict` explicitly.
-They inspect the Profile without creating or changing `.runtime`, SQLite, or definition files.
-Symlinked Profile roots, automation roots, and definition files are rejected.
+interface SearchResult {
+  title: string;
+  url: string;
+  highlight: string;
+}
 
-Create an active starter with:
+interface SearchOutput {
+  query: string;
+  answer: string;
+  results: SearchResult[];
+}
 
-```sh
-ziggy automations create <profile> <id>
-```
+const parseArgs = (args: string[]) => {
+  let count = 5;
+  const words: string[] = [];
 
-Creation refuses to proceed if either the active or paused form already exists. The resident web
-UI provides automation list, show, create, save, validate, pause, resume, run, and run-history
-actions. Its editor can change the complete Markdown; a save requires a valid definition, rejects
-bytes changed since the editor opened, and uses a same-directory atomic replacement. It does not
-create a second definition store or runtime owner. A normal editor can also change definitions;
-remove them with normal filesystem operations. Ziggy intentionally adds no CLI edit or remove
-command.
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
 
-The web UI reads the same Profile Markdown, scheduler projection, and fixed run ledger as the
-`ziggy automations` CLI. Use `ziggy serve <profile>` to run the resident; the web UI is the
-interactive face, and `ziggy web pair <profile>` pairs a browser. The CLI provides create, list,
-validate, pause, resume, status, and runs; `ziggy wake <profile> <id>` runs a definition manually.
-When the resident is running, `wake` asks it to run the automation and prints the same outcome and
-exit code as a local run; otherwise it runs in-process. If the request may have reached the resident
-but no answer came back, check `ziggy automations runs` before retrying. Schedules fire only while
-the resident runs: `automations status` warns when the resident service is not installed.
-The CLI has no show, save, or `automations run` subcommand. In the web UI, choose an automation to
-inspect its metadata, edit it, inspect run history, or change lifecycle; the scheduler overview
-shows heartbeat, tick, next-due, and latest-run state.
+    if (argument === "--n") {
+      const value = args[index + 1];
 
-## Model override
+      if (value !== undefined) {
+        const parsed = Number.parseInt(value, 10);
 
-Optional `provider`, `model`, and `thinking` frontmatter select that automation's session model.
-`provider` and `model` must appear together. Omitted fields inherit the Profile default from
-`settings.json`. Registry, auth, and thinking support are checked when the run opens its session —
-the same gates as a Profile agent — and fail the run rather than silently falling back.
+        if (Number.isFinite(parsed)) count = parsed;
+        index += 1;
+      }
+    } else if (argument !== undefined && !argument.startsWith("--")) {
+      words.push(argument);
+    }
+  }
 
-A leading `@agent-id` still delegates the whole task to that Profile agent. The agent's own
-`agents/<id>.md` policy is then authoritative; automation model frontmatter applies only to the
-automation's own (untagged) session.
+  return { query: words.join(" ").trim(), count: Math.max(1, count) };
+};
 
-## Multiple delivery destinations
+const clip = (value: string, maximum: number): string => value.slice(0, maximum);
 
-The comma-separated `broadcast` value can contain any mix of conversation, Telegram, Discord, and
-Slack targets. The web automation picker lists known destinations for the selected Profile and adds
-or removes each target independently. It stores the existing canonical target strings; display
-names never become delivery identity. `origin`, `all`, and targets entered through the full editor
-remain visible and removable even when they are not currently discoverable.
+const canned = (query: string, count: number): SearchOutput => ({
+  query,
+  answer: `(offline) Top result for: ${query}`,
+  results: Array.from({ length: Math.min(3, count) }, (_, index) => ({
+    title: `Result ${index + 1} for ${query}`,
+    url: `https://example.com/${index + 1}`,
+    highlight: "...",
+  })),
+});
 
-Channel targets are `slack:channel:<id>` or `slack:channel:<id>:thread:<ts>`,
-`discord:channel:<id>`, and `telegram:chat:<id>`. A Discord thread is a channel, so
-`discord:channel:<thread id>` posts into the thread. Each gateway splits a long result into its own
-message limit and posts with the bot token from its `slack.json`, `discord.json`, or `telegram.json`.
+const parseJsonResults = (text: string, count: number): SearchResult[] => {
+  let value: unknown;
 
-Stored Pi sessions supply conversation targets without the sidebar's display limit. Channel
-residents contribute the actual signed Telegram chat ID, Discord channel or thread ID, and Slack
-channel or thread address they observe. Slack IDs configured in `slack.json` are also choices;
-Ziggy looks up one display name per known channel when the token permits it and otherwise shows the
-canonical ID. This discovery state is memory-only. Saved broadcast targets survive a resident
-restart, while a previously observed channel name can fall back to its ID until the channel is
-observed again.
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return [];
+  }
 
-Add `conversation:<stored-session-id>` to append a completed result to an existing transcript in
-the same Profile. Selecting a Slack destination never changes the channel's `mention` or `always`
-inbound response policy in `slack.json`.
+  if (!Check(ExaResults, value)) return [];
 
-Conversation delivery appends history only. It does not start, steer, or queue a model turn, and it
-does not send the result through the destination channel. A busy destination fails as retriable;
-missing, deleted, invalid, or unavailable-owner destinations fail without choosing a replacement
-conversation. Delivery requires the resident process that owns the selected Profile. A standalone
-`ziggy wake` can run the automation, but reports `owner-unavailable` when no scoped resident can
-append the destination. Gateway history and live-event projections show the first 1,024 result code
-points; the destination Pi transcript retains the complete result.
+  return value.results.slice(0, count).map((item) => ({
+    title: item.title ?? "",
+    url: item.url ?? "",
+    highlight: clip(item.highlights?.[0] ?? item.text ?? item.summary ?? "", 300),
+  }));
+};
 
-Each destination has an independent delivery outcome. The destination transcript deduplicates by
-automation and run ID. If the process crashes after the
-append but before the run ledger is finalized, the run may remain `unknown`; Ziggy does not retry it
-automatically.
+const parseDigest = (text: string, count: number): SearchResult[] => {
+  const results: SearchResult[] = [];
 
-## Pause and resume
+  for (const block of text.split("\n---\n")) {
+    let title = "";
+    let url = "";
+    let inHighlights = false;
+    const highlights: string[] = [];
 
-```sh
-ziggy automations pause <profile> <id>
-ziggy automations resume <profile> <id>
-```
+    for (const line of block.split("\n")) {
+      const value = line.trim();
 
-Pause and resume preserve the exact Markdown bytes. The transition creates a same-directory hard
-link at the destination name with exclusive `EEXIST` refusal, verifies that both names identify the
-same physical regular file, and only then unlinks the source name. It never renames over or silently
-replaces a destination.
+      if (value.startsWith("Title:")) {
+        title = value.slice(6).trim();
+        inHighlights = false;
+      } else if (value.startsWith("URL:")) {
+        url = value.slice(4).trim();
+        inHighlights = false;
+      } else if (value.startsWith("Published:") || value.startsWith("Author:")) {
+        inHighlights = false;
+      } else if (value.startsWith("Highlights:")) {
+        inHighlights = true;
+      } else if (inHighlights && value && value !== "[...]") {
+        highlights.push(value);
+      }
+    }
 
-A paused definition is excluded from scheduler admission. On the next resident scheduler scan its
-projected next occurrence is cleared. Resume makes it eligible on the next scan and scheduling
-restarts at a fresh future occurrence; paused time is not catch-up work.
+    if (url) results.push({ title, url, highlight: clip(highlights.join(" "), 300) });
 
-Manual `ziggy wake <profile> <id>` reports that a paused automation is paused rather than pretending
-it is missing.
+    if (results.length >= count) break;
+  }
 
-Pausing does not cancel an occurrence that was already claimed or a run that is already executing.
-That run may finish normally. Pause prevents later admission. If the transition itself leaves both
-filenames visible, no run is admitted from the conflicting pair.
+  return results;
+};
 
-## Conflict recovery
+const mcpCall = async (endpoint: string, query: string, count: number): Promise<string> => {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "web_search_exa",
+        arguments: { query, numResults: count, type: "auto", livecrawl: "fallback" },
+      },
+    }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
 
-If both forms exist, list, validate, and scheduler discovery report one invalid conflict for the ID.
-The scheduler does not run it. This can happen after a source-unlink failure: keeping both names is
-the fail-closed outcome and preserves the definition bytes for recovery.
+  const body = await response.text();
 
-Recover manually:
+  if (!response.ok) {
+    throw new Error(`Exa MCP status ${response.status}: ${clip(body.trim(), 200)}`);
+  }
 
-1. Stop concurrent automation file operations for that Profile.
-2. Compare `automations/<id>.md` and `automations/<id>.paused.md` byte-for-byte.
-3. Decide whether the intended lifecycle is active or paused.
-4. Remove exactly the unwanted filename with a normal filesystem command.
-5. Run `ziggy automations validate <profile> <id>` and then `ziggy automations list <profile>`.
+  let payload = "";
 
-Never resolve a conflict by copying one form over the other without first inspecting both. Ziggy
-will not choose or overwrite one on the operator's behalf.
+  for (const line of body.split("\n")) {
+    const trimmed = line.trim();
 
-## Scheduled admission and sessions
+    if (!trimmed.startsWith("data:")) continue;
+    let value: unknown;
 
-`ziggy serve <profile>` discovers active definitions and persists a future schedule cursor. When an
-occurrence is due, one SQLite transaction advances that cursor and writes the claimed run before
-executing a gate, creating a Pi session, printing output, or delivering it. Scheduled definitions
-without a gate are recorded as `skipped-gate`; add an explicit gate such as `gate: true` only when
-the scheduled model call is intended.
+    try {
+      value = JSON.parse(trimmed.slice(5).trim());
+    } catch {
+      continue;
+    }
 
-Every admitted model-backed run receives a fresh Pi session under
-`sessions/automations/<automation-id>/`. The run ledger answers whether an occurrence was claimed,
-completed, skipped, failed, or became unknown; Pi JSONL remains the only transcript and model/tool
-history authority.
+    if (!Check(McpMessage, value)) continue;
 
-Inspect both authorities from the CLI or the resident web UI automation view:
+    if (value.error) throw new Error(value.error.message);
+    const text = value.result?.content[0]?.text;
 
-```sh
-ziggy automations runs <profile> [id] [--json]
-ziggy sessions list <profile> [--json]
-```
+    if (text) payload = text;
+  }
 
-Use `--json` on `automations list`, `automations status`, and `automations runs` when a script
-needs the bounded projection rather than operator text. Session listings and details also accept
-`--json`; JSON session views never include transcript content.
+  if (!payload) throw new Error("no content in Exa response");
 
-## Process failure and no replay
+  return payload;
+};
 
-Active scheduled rows are fenced by the resident owner UUID and PID. After a hard crash, the service
-manager starts a new `serve` process. Startup changes active rows belonging to the previous resident
-to terminal `unknown` with failure category `process-start`. It never returns them to `claimed` or
-`running`, and the already-advanced occurrence cursor means they are not replayed.
+const search = async (query: string, count: number, key: string): Promise<SearchOutput> => {
+  if (key.startsWith("fake")) return canned(query, count);
+  const endpoint = key ? `${MCP_URL}?exaApiKey=${encodeURIComponent(key)}` : MCP_URL;
+  const text = await mcpCall(endpoint, query, count);
+  const results = parseJsonResults(text, count);
+  const parsed = results.length > 0 ? results : parseDigest(text, count);
 
-A normal stop interrupts scoped workers and attempts one truthful terminal `failed/interrupted`
-write. If the process is force-killed before that write, startup records `unknown` instead of
-inferring success. There are no automatic run retries.
+  return { query, answer: parsed.length > 0 ? "" : text, results: parsed };
+};
 
-Manual wakes have a separate process-local owner identity. Manual recovery can mark only dead manual
-owners unknown; it cannot recover, start, or finish a resident-owned scheduled claim.
+const { query, count } = parseArgs(process.argv.slice(2));
 
-## Why there is no public tick
+if (!query) {
+  process.stdout.write(`${JSON.stringify({ error: "empty query" }, null, 2)}\n`);
+  process.exit(2);
+}
 
-`ziggy serve <profile>` is the supervised resident owner and the only production owner of the
-internal scheduler tick. There is no public `tick`, scheduler daemon, repair, replay, or retry
-command. A second tick surface would create competing admission owners and blur the existing
-Profile owner contract. Use `ziggy serve status`, `ziggy automations status`, and
-`ziggy automations runs` for read-only operational visibility.
+try {
+  const result = await search(query, count, process.env.EXA_API_KEY?.trim() ?? "");
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+} catch (cause: unknown) {
+  const message = cause instanceof Error ? cause.message : "unknown search failure";
+  process.stdout.write(`${JSON.stringify({ error: `search failed: ${message}` }, null, 2)}\n`);
+  process.exit(1);
+}

@@ -1,6 +1,14 @@
 {
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "example",
-  "version": "0.1.0",
-  "description": "Example list of items with an interactive view"
+  "name": "@ziggy/pi-packages",
+  "private": true,
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  },
+  "version": "0.1.0"
 }

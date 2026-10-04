@@ -109,56 +109,84 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 
 ### S0 — Noise spike
 
-- [ ] `src/platform/noise.ts`: Noise_XX_25519_AESGCM_SHA256 initiator and responder on WebCrypto
-  (X25519, AES-GCM, SHA-256, HKDF).
-- [ ] Interop test against the muse Linux SDK: its `noise_xx.py` vectors and a run against its
-  `NoiseXXResponder`. Proves the borrowed crypto is the crypto we think it is.
+- [x] `src/platform/noise.ts`: Noise_XX_25519_AESGCM_SHA256 initiator and responder on
+  `node:crypto` (X25519, AES-256-GCM, SHA-256, HKDF).
+- [x] Interop against the muse Linux SDK: `test/platform/noise-interop.ts` runs its `noise_xx.py`
+  in both roles against ours; CI keeps the cacophony vector in `test/platform/noise.test.ts`.
 - Gate: `bun test test/platform/noise.test.ts`.
 
 ### S1 — ZDP/1 spec and schemas
 
-- [ ] `docs/devices/protocol.md`: framing, handshake, every method and event, error codes,
-  timeouts, versioning rule.
-- [ ] `src/devices/protocol.ts`: Effect Schema for every message, `onExcessProperty: "error"`.
+- [x] `docs/devices/protocol.md`: framing, handshake, pairing URI and proof, every method and
+  event, error codes, close codes, timeouts, versioning rule.
+- [x] `src/devices/protocol.ts`: Effect Schema for every message, `onExcessProperty: "error"`;
+  frame codec; pairing URI codec. `devices` joins the concept folders in `ziggy/import-boundaries`.
 - Gate: schema round-trip tests over the spec's examples.
 
 ### S2 — Hub and pairing
 
-- [ ] `devices.json` `{version:1, listen:{host, port}}` decoded in the gateway config loader;
-  absent → no listener (R0).
-- [ ] Ziggy static keypair in Keychain (Linux: env/file fallback documented, same as plugin secrets).
-- [ ] Registry `<profile>/devices/<id>.json` `{id, name, publicKey, pairedAt, commands}`.
-- [ ] `ziggy devices pair <profile>` prints a one-time code; the device redeems it once and
-  exchanges static keys. `list`, `revoke`, `rename`.
-- [ ] Resident branch: listener, handshake, `device.hello`, liveness, refuse unknown keys (R1).
+- [x] `devices.json` `{version:1, listen:{host, port}}` decoded strictly by `src/devices/config.ts`
+  (`ziggy devices configure` writes it); absent → no listener (R0).
+- [x] Hub static key per Profile in the Keychain (service `ziggy-device-hub`); elsewhere, or with
+  `ZIGGY_DEVICE_KEYSTORE=file`, `.gateway/device-hub.key` (0600). `src/platform/keychain.ts` is
+  shared with plugin secrets.
+- [x] Registry `<profile>/devices/<id>.json` `{version, id, name, model, publicKey, pairedAt}`;
+  commands are not stored, they come from the live device (S5). Open codes are kept hashed in
+  `.gateway/device-pairing.json`; every write holds the devices file lock.
+- [x] `ziggy devices pair <profile>` prints a one-time URI; the device redeems it once
+  (`device.pair {code}`; the HMAC proof was dropped because the device already pins the hub key).
+  `list`, `revoke`, `rename`.
+- [x] Resident branch: listener, handshake, `device.hello`, liveness, refuse unknown keys (R1),
+  4409 on reconnect, revoked links dropped within 2 s; `.runtime/device-hub.json` lists who is
+  online. A failing hub logs and stops alone.
 - Gate: `[pairing]`, `[connection]`, and `[devices-off]` still green.
 
 ### S3 — `@ziggy/device` and the harness fake
 
-- [ ] `packages/device` (Bun/TS): connect, pair, `command(name, schema, fn)`, `chat.send`,
-  events. Command shape borrowed from musegadget's `executor`.
-- [ ] `test/harness/device.ts`: the same client driven from tests, recording every frame.
-- [ ] `bin/ziggy-device` for a Pi: `pair <code>`, `run` with a commands file.
-- Gate: conformance suite passes against the S2 hub.
+- [x] `packages/device` (`@ziggy/device`, plain TS on `node:crypto`, no Ziggy imports): its own
+  Noise initiator (checked against the published vector), frames, URI; `ZiggyDevice` with `pair`,
+  `start`, `stop`, `command(name, spec, fn)`, `send`, `abort`, and `state`, `chat`, `notify`,
+  `display`, `audio` events. It answers `ping`, `tools/list`, `tools/call`; pings when idle, drops
+  a silent hub, reconnects 1 → 15 s with jitter, and stops for good on 4401, 4409 and 4426.
+- [x] Frames for tests: the SDK's `trace` option sees every decrypted frame both ways;
+  `test/harness/device.ts` stays the raw device for protocol violations.
+- [x] `bin/ziggy-device` for a Pi: `pair '<uri>' --state <file>`, `run --state <file>
+  [--commands <module>]`; the state file is written 0600. Chat from the shell waits for S4 (it
+  will read lines on `run`'s stdin: a second process with the same identity would replace it).
+- Gate: `test/e2e/device-conformance.test.ts` against the S2 hub, plus `[connection]` C4.
 
 ### S4 — Device chat
 
-- [ ] `LiveSessionKind: "device"`, sessions under `sessions/device/<id>`, `live.acquire`.
-- [ ] `chat.send` → `handle.prompt` → `chat.delta`/`chat.status`/`chat.done`; abort; busy.
-- [ ] Destination remembered as `device:<id>`.
+- [x] `LiveSessionKind: "device"`, sessions under `sessions/device/<id>`, `live.acquire`; the
+  web UI lists and watches them as `device/<id>`.
+- [x] `chat.send` → `handle.prompt` → `chat.delta`/`chat.status`/`chat.done`; abort; busy. The
+  hub owns turn ids and wire order through the `DeviceChat` port (`src/devices/chat.ts`); the
+  resident implements it (`src/resident/device-chat.ts`).
+- [x] `ziggy-device run` sends stdin lines as chat; `/abort` aborts.
+- Moved to S6: remembering `device:<id>` as a destination needs the automation target S6 adds.
 - Gate: `[chat]`.
 
 ### S5 — Device tools
 
-- [ ] On `device.hello` and `tools/list_changed`, store the command list in the registry.
-- [ ] `src/devices/tools.ts` adds `device__<id>__<cmd>` through `SessionTools`; calls go over the
-  live connection; offline → immediate tool error (R3).
+- [x] On `device.hello` and `tools/list_changed`, store the command list in the registry
+  (`setDeviceTools`; `DeviceRecord.tools`).
+- [x] `src/devices/tools.ts` adds `device__<id>__<cmd>` through `SessionTools`. Calls go over the
+  live link through `DeviceLinks` (`src/devices/links.ts`); offline → immediate tool error (R3).
+- [x] Found while proving: the link's fibers raced with `raceAll`, which waits for a *success*,
+  so a closed device stayed online until the next ping. It is now `raceAllFirst`.
 - Gate: `[tools]`.
 
 ### S6 — Push
 
-- [ ] `device:<id>` automation target in `domain/automation.ts`; delivery via `notify`.
-- [ ] `display.show {text | image}` from tools and automations.
+- [x] `device:<id>` automation target in `domain/automation.ts`; delivery via `notify`
+  (`DeviceLinks.push`). Offline → `transport`, retriable, not retried; unpaired →
+  `destination-missing`.
+- [x] Remember `device:<id>` as a destination when a device chats (moved from S4).
+- [x] `display.show {text}` from the `device_show` tool; a device without a screen fails the call.
+- Moved to S10: `display.show {image}` needs the renderer.
+- [x] Found while proving: a web bundle built before a new destination kind rejects the whole
+  `destination.list`, so the sidebar shows "could not be refreshed". Rebuild with
+  `bun run generate:web-assets`, not only `tooling/generate-web-assets.mjs`.
 - Gate: `[push]`.
 
 ### S7 — ESP32 port (ESP32-S3-BOX-3 first)
@@ -174,19 +202,36 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 
 ### S8 — Voice in
 
-- [ ] STT adapter (local whisper.cpp or a cloud API; decision pending).
-- [ ] Binary audio frames, PTT on the device, transcript shown, reply streamed on screen.
-- Gate: `[voice]` V1–V3.
+- [x] Speech-to-text is a command the Profile names in `devices.json`
+  (`speech.transcribe.command`, `{wav}` for the recording; stdout is the transcript), run by
+  `src/adapters/bun/speech-command.ts`. Any local engine fits (whisper.cpp's `whisper-cli` is the
+  proven one); nothing leaves the machine unless the command sends it.
+- [x] The hub collects the recording's chunks (0.3–20 s, one at a time), transcribes it off the
+  receive loop, and answers `{turn}`, `chat.transcript`, then the reply. `ZiggyDevice.sendAudio`
+  and `ziggy-device`'s `/audio <file.wav>` send one.
+- [ ] PTT on the BOX-3, transcript shown on its screen (S7).
+- Gate: `[voice]` V1–V3, V5, V6.
 
 ### S9 — Spoken replies
 
-- [ ] TTS adapter, `audio.play` MP3 frames, playback on the BOX-3. Muse's stock firmware cannot
-  do this.
+- [x] Text-to-speech is a command the Profile names (`speech.speak.command`, `{text}` and `{mp3}`),
+  run by the same adapter as S8. It must write an MP3 (ID3 or frame sync), at most 8 MiB.
+- [x] The reply to a spoken turn goes to the speaker after `chat.done`; the MP3 follows as
+  `audio.play` on an even hub stream, in order. Only devices with `audio.out: ["mp3"]` get it.
+  `ziggy-device --speaker <dir>` declares that and saves each clip.
+- [ ] Playback on the BOX-3 (S7). Muse's stock firmware cannot do this.
 - Gate: `[voice]` V4.
 
 ### S10 — Small-screen views
 
-- [ ] Render a reply or an MCP Apps view to JPEG / RGB565 at the device's reported resolution.
+- [x] `src/devices/image.ts`: PNG (every colour type and depth, not interlaced) and JPEG decode,
+  fit inside the screen (shrink only, centred on black, never cropped), encode as RGB565 or
+  JPEG (`jpeg-js`, BSD-3, pure JS). Checked against Pillow's decode of each fixture.
+- [x] `display.show {image}` from `device_show {image: <path in the Profile>}`, streamed in 16 KiB
+  chunks on even hub stream ids. `ziggy-device --display-dir` saves what arrives.
+- [ ] Render an MCP Apps view to an image. It needs a headless browser hosting the view's bridge;
+  deferred until a view worth showing on a device exists.
+- [ ] Images from automations: a broadcast carries text only, so this waits for a reason.
 - Gate: `[screen]`.
 
 ### S11 — BLE pairing and OTA
@@ -197,11 +242,48 @@ Parallel lanes: S0 ∥ S1; S2 ∥ S3; S4 ∥ S5; after M1, S6 ∥ S7, and S12 ca
 
 ### S12 — `device-authoring`
 
-- [ ] Skill and template like `plugin-authoring`: describe a device, Ziggy writes its commands.
+- [x] Bundled extension `extensions/device-authoring`: a skill and a template copied to
+  `device-kits/<id>/` (`commands.ts`, types-only `device.ts`, `rules.ts`, `smoke.ts`). The
+  template needs no `node_modules`, so it runs from a Profile and on the device.
+- [x] `smoke.ts` loads the commands against a recording device, checks them with `rules.ts`, and
+  calls the commands listed in `CALLS`. It never calls the ones in `ON_DEVICE`.
+- [x] `test/extensions/device-authoring.test.ts` keeps `rules.ts` in agreement with
+  `ZiggyDevice.command` and the tools the Profile offers.
+
+## Working decisions
+
+Taken so slices can proceed without blocking; each can be changed later.
+
+- First board: ESP32-S3-BOX-3.
+- STT/TTS: each engine is a command named in `devices.json`, so tests use a script and people
+  plug in whisper.cpp, `say`, piper or a cloud CLI without code changes.
+- Hardware slices (S7, S11, and the hardware parts of S8–S10) are built and checked here as far as
+  the toolchain allows; flashing and on-device proof wait for a board on the desk.
+- Muse interop for S0 is proven with a one-off run against Muse's own Python Noise code, and kept
+  in CI with the standard Noise test vectors (no Python needed).
+
+## Progress
+
+| Slice | State | Proof |
+|---|---|---|
+| S0 | done | `bun test test/platform/noise.test.ts` (vector, both roles; tamper poisons); `bun test/platform/noise-interop.ts <muse-gadget-sdk>` → hash equal both roles |
+| S1 | done | `bun test test/devices/protocol.test.ts`: every `json zdp` example in the spec decodes strictly and re-encodes to the same text; every method is shown; bad input gets the right JSON-RPC code |
+| S2 | done | `bun test test/e2e/devices.test.ts` (devices off; pair, spent code, unknown key, reconnect and 4409, version 4426, revoke, ping and 4408); recipe run `/tmp/ziggy-devices-proof/s2-20261003-134705` |
+| S3 | done | `bun test test/e2e/device-conformance.test.ts` (pair and pin, forged key refused before the code is sent, reconnect across a hub restart, revoke 4401, replace 4409); `bun run check:device` (vector, tamper); recipe C4 `/tmp/ziggy-devices-proof/s3-20261003-135654` |
+| S4 | done | `bun test test/e2e/device-chat.test.ts` (T1 status, deltas, done; T2 one session that continues; T3 abort → chat.error; T4 busy -32001, text never sent; T5 provider failure → chat.error); recipe T1, T2 `/tmp/ziggy-devices-proof/s4-20261003-140448` |
+| S5 | done | `bun test test/e2e/device-tools.test.ts` (K1 tool listed, none in `ziggy run`; K2 call and result reach the model; K3 offline fails at once; K4 specialist allowlist; K5 a command added online reaches later sessions); recipe K1, K2 `/tmp/ziggy-devices-proof/s5-20261003-141513` |
+| S6 | done | `bun test test/e2e/device-push.test.ts` (U1 broadcast `device:<id>` → `notify`; U2 offline → transport retriable, unpaired → destination-missing; U3 `device_show` on a screen, error without one, chatting device listed as a destination); recipe U1–U3 and web picker `/tmp/ziggy-devices-proof/s6-20261003-142144` |
+| S12 | done | `bun test test/extensions/device-authoring.test.ts` (command names agree with `ZiggyDevice.command`; flagged names are exactly the tools the Profile skips); recipe A1–A3 `/tmp/ziggy-devices-proof/s12-20261003-143043` |
+| S10 | done (images) | `bun test test/devices/image.test.ts` (8 PNG variants equal Pillow's decode; JPEG within 4; fit letterboxes, centres, never crops; rgb565 byte order; format choice); `bun test test/e2e/device-push.test.ts` U5 (rgb565 and jpeg devices, non-image and outside-Profile refused); recipe S3, S4 `/tmp/ziggy-devices-proof/s10-20261003-144148`. MCP Apps views deferred |
+| S8 | done (software) | `bun test test/e2e/device-voice.test.ts` (V1–V3 a 1.5 s recording in chunks → WAV → command → `{turn}`, transcript, reply, and the transcript is the model's user text; V5 too short, too long, silent, failing engine refused without a turn) and `device-chat.test.ts` V6 (no `speech.transcribe` → -32002); recipe with `say` and whisper-cli tiny.en `/tmp/ziggy-devices-proof/s8-20261003-145555`. PTT on the board waits for S7 |
+| S9 | done (software) | `bun test test/e2e/device-voice.test.ts` V4 (a long spoken reply arrives as one MP3 stream over several chunks; a typed turn's reply is not spoken; clips in order); recipe with `say` + ffmpeg as the speaker, the saved MP3 transcribed back by whisper-cli to the reply's text, `/tmp/ziggy-devices-proof/s9-20261003-150121`. Playback on the board waits for S7 |
+| S7, S11 | not started | Need a BOX-3 on the desk and ESP-IDF |
 
 ## Open decisions
 
-- STT: local whisper.cpp or cloud. Needed by S8.
+- STT: decided as "a command the Profile names"; whisper.cpp locally is what we prove with. A
+  default model and install path are left to the person. Cactus Whistle (`cactus-needle`,
+  Apache-2.0, 17 MB, CPU) is proven as the same kind of command on Linux; it has no TTS.
 - First board: ESP32-S3-BOX-3 assumed. Needed by S7.
 - Remote access: tunnel product, if any. Not needed before M1 (LAN is enough).
 - Gadget SDK Terms: we use Meta's code under Apache-2.0 and none of their service; confirm the
